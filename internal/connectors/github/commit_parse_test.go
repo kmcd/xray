@@ -20,9 +20,9 @@ func TestParseSubjectRevert(t *testing.T) {
 }
 
 func TestParseRevertsSHA(t *testing.T) {
-	body := "feat: add stuff\n\nThis reverts commit deadbeefcafe1234567890abcdef1234567890abcd.\n"
+	body := "feat: add stuff\n\nThis reverts commit deadbeefcafe1234567890abcdef12345678ab.\n"
 	got := parseRevertsSHA(body)
-	if got != "deadbeefcafe1234567890abcdef1234567890abcd" {
+	if got != "deadbeefcafe1234567890abcdef12345678ab" {
 		t.Errorf("parseRevertsSHA = %q", got)
 	}
 	if parseRevertsSHA("nothing here") != "" {
