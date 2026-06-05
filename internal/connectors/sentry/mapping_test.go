@@ -39,7 +39,7 @@ func TestMapIssue_BasicFields(t *testing.T) {
 		"status": "resolved",
 		"level": "error",
 		"culprit": "app/services/widget.rb in process",
-		"message": "NoMethodError: undefined method `foo'",
+		"message": "NoMethodError: undefined method foo",
 		"count": "42",
 		"firstSeen": "2025-02-15T10:00:00Z",
 		"lastSeen":  "2025-03-20T11:00:00Z",
