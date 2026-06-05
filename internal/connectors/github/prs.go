@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -352,6 +353,13 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 		prov.RowsReturned["prs"]++
 	}
 
+	// Defect emission from PR title and body. opened_at is the PR's
+	// opened_at; closed_at is the merge time (nil if not merged) — see
+	// the defects table semantics in CLAUDE.md. Body is parsed here
+	// before the local goes out of scope, per the no-raw-bodies rule.
+	scopeID := strconv.Itoa(prNum)
+	emitDefects(sink, repo.Slug, "pr_title", scopeID, title, row.OpenedAt, row.MergedAt, prov)
+	emitDefects(sink, repo.Slug, "pr_body", scopeID, body, row.OpenedAt, row.MergedAt, prov)
 }
 
 // paginatePRCommits drains additional commit pages for PRs with more than

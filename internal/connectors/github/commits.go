@@ -83,6 +83,13 @@ func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, win
 			prov.RowsReturned["commits"]++
 		}
 
+		// Defect emission: parse ticket references out of the commit
+		// subject and body, then discard the body text (per the no-raw-
+		// bodies rule). Commit-only references use committed_at as
+		// opened_at and leave closed_at null.
+		emitDefects(sink, repo.Slug, "commit_message", rec.SHA,
+			rec.Subject+"\n"+rec.Body, rec.CommittedAt, nil, prov)
+
 		// Per-file rows.
 		for _, f := range rec.Files {
 			cf := model.CommitFile{
