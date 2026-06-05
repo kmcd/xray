@@ -40,7 +40,7 @@ func (c *Connector) extractReleases(ctx context.Context, repo connector.Repo, si
 			if tag == "" {
 				continue
 			}
-			createdAt := r.GetCreatedAt().Time.UTC()
+			createdAt := r.GetCreatedAt().UTC()
 			sha := resolveReleaseSHA(ctx, c.rest, owner, name, r)
 
 			relRow := model.Release{

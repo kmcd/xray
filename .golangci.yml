@@ -1,8 +1,10 @@
+version: "2"
+
 run:
   timeout: 5m
 
 linters:
-  disable-all: true
+  default: none
   enable:
     - errcheck
     - gosec
@@ -12,32 +14,45 @@ linters:
     - revive
     - staticcheck
     - unused
-
-linters-settings:
-  revive:
+  settings:
+    errcheck:
+      exclude-functions:
+        # Stdio writes and defer-close are idiomatic; their errors are not
+        # actionable in xray's CLI surface.
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Fprint
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Stmt).Close
+        - (*archive/tar.Writer).Close
+        - (*compress/gzip.Writer).Close
+    revive:
+      rules:
+        - name: var-naming
+        - name: package-comments
+        - name: blank-imports
+        - name: context-as-argument
+        - name: error-return
+        - name: error-strings
+        - name: increment-decrement
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: indent-error-flow
+        - name: errorf
+    gosec:
+      excludes:
+        # G104: Audit errors not checked. Covered more precisely by errcheck.
+        - G104
+        # G122: TOCTOU symlink race in filepath.Walk callbacks. We walk our
+        # own per-run clone directory; symlink TOCTOU is not a threat here.
+        - G122
+  exclusions:
     rules:
-      - name: var-naming
-      - name: package-comments
-      - name: exported
-      - name: blank-imports
-      - name: context-as-argument
-      - name: error-return
-      - name: error-strings
-      - name: increment-decrement
-      - name: range
-      - name: receiver-naming
-      - name: time-naming
-      - name: indent-error-flow
-      - name: errorf
-  gosec:
-    excludes:
-      # G104: Audit errors not checked. Covered more precisely by errcheck;
-      # gosec's heuristic flags too many false positives on log/print calls.
-      - G104
-
-issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - errcheck
-        - gosec
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec

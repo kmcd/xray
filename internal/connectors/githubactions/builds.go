@@ -138,11 +138,11 @@ func mapBuild(run *github.WorkflowRun, repoSlug string) model.Build {
 
 	var startedAt, completedAt *time.Time
 	if run.RunStartedAt != nil {
-		t := run.RunStartedAt.Time.UTC()
+		t := run.RunStartedAt.UTC()
 		startedAt = &t
 	}
 	if run.UpdatedAt != nil {
-		t := run.UpdatedAt.Time.UTC()
+		t := run.UpdatedAt.UTC()
 		completedAt = &t
 	}
 	var durationSeconds *int
@@ -156,7 +156,7 @@ func mapBuild(run *github.WorkflowRun, repoSlug string) model.Build {
 
 	createdAt := time.Time{}
 	if run.CreatedAt != nil {
-		createdAt = run.CreatedAt.Time.UTC()
+		createdAt = run.CreatedAt.UTC()
 	}
 
 	var prNumber *int

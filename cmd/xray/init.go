@@ -58,6 +58,8 @@ func newInitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// #nosec G703 -- opts.out is the user-supplied --out path; writing
+			// to it is the intended behaviour of `xray init`.
 			if err := os.WriteFile(opts.out, []byte(body), 0o600); err != nil {
 				return fmt.Errorf("writing %s: %w", opts.out, err)
 			}

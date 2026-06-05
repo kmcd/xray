@@ -1,3 +1,4 @@
+// Package main implements the xray CLI subcommands.
 package main
 
 import (

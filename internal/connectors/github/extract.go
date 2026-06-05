@@ -86,7 +86,7 @@ func (c *Connector) insertRepoRow(ctx context.Context, repo connector.Repo, wind
 		if err == nil && r != nil {
 			row.PrimaryLanguage = r.GetLanguage()
 			if r.CreatedAt != nil {
-				t := r.CreatedAt.Time.UTC()
+				t := r.CreatedAt.UTC()
 				row.CreatedAt = &t
 			}
 			row.IsFork = r.GetFork()

@@ -15,6 +15,8 @@ import (
 // archive. Files are written in name-in-archive sort order for
 // deterministic output.
 func WriteTarGz(outPath string, files map[string]string) error {
+	// #nosec G304 -- outPath comes from the run orchestrator (defaults to
+	// ./xray-export-<timestamp>.tar.gz; --out is the documented override).
 	out, err := os.Create(outPath)
 	if err != nil {
 		return fmt.Errorf("archive: create %s: %w", outPath, err)
@@ -44,6 +46,7 @@ func WriteTarGz(outPath string, files map[string]string) error {
 }
 
 func writeFile(tw *tar.Writer, diskPath, archiveName string) error {
+	// #nosec G304 -- diskPath is an internal path under the per-run temp dir.
 	f, err := os.Open(diskPath)
 	if err != nil {
 		return fmt.Errorf("archive: open %s: %w", diskPath, err)

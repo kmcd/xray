@@ -37,7 +37,7 @@ func (c *Connector) extractReviews(ctx context.Context, repo connector.Repo, num
 			if state == "PENDING" {
 				continue
 			}
-			submitted := r.GetSubmittedAt().Time.UTC()
+			submitted := r.GetSubmittedAt().UTC()
 			row := model.Review{
 				PRNumber:       number,
 				Repo:           repo.Slug,

@@ -46,7 +46,7 @@ func (c *Connector) deploys(
 			}
 			createdAt := time.Time{}
 			if d.CreatedAt != nil {
-				createdAt = d.CreatedAt.Time.UTC()
+				createdAt = d.CreatedAt.UTC()
 			}
 			if !window.Contains(createdAt) {
 				continue

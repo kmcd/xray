@@ -36,7 +36,7 @@ func New(cfg config.GitHubActionsConn, log *slog.Logger) (*Connector, error) {
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: cfg.Token})
 	base := oauth2.NewClient(context.Background(), ts)
 	// Wrap the underlying transport with the shared rate-limit/retry helper.
-	var underlying http.RoundTripper = http.DefaultTransport
+	var underlying = http.DefaultTransport
 	if t, ok := base.Transport.(*oauth2.Transport); ok {
 		if t.Base != nil {
 			underlying = t.Base

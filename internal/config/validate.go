@@ -193,6 +193,7 @@ func hasWhitespace(s string) bool {
 // visible.
 func indexLines(path string) map[string]int {
 	idx := map[string]int{}
+	// #nosec G304 -- path is the config file the user just told us to validate.
 	f, err := os.Open(path)
 	if err != nil {
 		return idx

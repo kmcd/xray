@@ -29,20 +29,20 @@ type prListQuery struct {
 }
 
 type prGraph struct {
-	Number     githubv4.Int
-	Title      githubv4.String
-	Body       githubv4.String
-	CreatedAt  githubv4.DateTime
-	MergedAt   *githubv4.DateTime
-	ClosedAt   *githubv4.DateTime
-	UpdatedAt  githubv4.DateTime
-	IsDraft    githubv4.Boolean
-	Additions  githubv4.Int
-	Deletions  githubv4.Int
+	Number       githubv4.Int
+	Title        githubv4.String
+	Body         githubv4.String
+	CreatedAt    githubv4.DateTime
+	MergedAt     *githubv4.DateTime
+	ClosedAt     *githubv4.DateTime
+	UpdatedAt    githubv4.DateTime
+	IsDraft      githubv4.Boolean
+	Additions    githubv4.Int
+	Deletions    githubv4.Int
 	ChangedFiles githubv4.Int
-	BaseRefName githubv4.String
-	HeadRefName githubv4.String
-	MergeCommit struct {
+	BaseRefName  githubv4.String
+	HeadRefName  githubv4.String
+	MergeCommit  struct {
 		Oid githubv4.String
 	}
 	HeadRefOid githubv4.String
@@ -85,8 +85,8 @@ type prGraph struct {
 }
 
 type timelineNode struct {
-	Typename             githubv4.String `graphql:"__typename"`
-	ReadyForReviewEvent  struct {
+	Typename            githubv4.String `graphql:"__typename"`
+	ReadyForReviewEvent struct {
 		CreatedAt githubv4.DateTime
 	} `graphql:"... on ReadyForReviewEvent"`
 	PullRequestReview struct {
@@ -153,10 +153,10 @@ func (c *Connector) extractPRs(ctx context.Context, repo connector.Repo, window 
 		}
 		stopPaging := false
 		for _, p := range q.Repository.PullRequests.Nodes {
-			created := p.CreatedAt.Time.UTC()
+			created := p.CreatedAt.UTC()
 			// PRs ordered by UPDATED_AT desc; the moment we see a PR whose
 			// UpdatedAt < window.Start we can stop walking.
-			if p.UpdatedAt.Time.Before(window.Start) {
+			if p.UpdatedAt.Before(window.Start) {
 				stopPaging = true
 				break
 			}
@@ -165,7 +165,7 @@ func (c *Connector) extractPRs(ctx context.Context, repo connector.Repo, window 
 				continue
 			}
 			// Skip PRs that closed before window start and never touched it.
-			if p.ClosedAt != nil && p.ClosedAt.Time.Before(window.Start) {
+			if p.ClosedAt != nil && p.ClosedAt.Before(window.Start) {
 				continue
 			}
 
@@ -196,7 +196,7 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 	for _, t := range p.TimelineItems.Nodes {
 		switch t.Typename {
 		case "ReadyForReviewEvent":
-			tt := t.ReadyForReviewEvent.CreatedAt.Time.UTC()
+			tt := t.ReadyForReviewEvent.CreatedAt.UTC()
 			if readyForReviewAt == nil || tt.Before(*readyForReviewAt) {
 				readyForReviewAt = &tt
 			}
@@ -204,22 +204,19 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 			if strings.EqualFold(string(t.PullRequestReview.State), "PENDING") {
 				continue
 			}
-			tt := t.PullRequestReview.CreatedAt.Time.UTC()
+			tt := t.PullRequestReview.CreatedAt.UTC()
 			if firstReviewAtTL == nil || tt.Before(*firstReviewAtTL) {
 				firstReviewAtTL = &tt
 			}
 		case "HeadRefForcePushedEvent":
-			tt := t.HeadRefForcePushedEvent.CreatedAt.Time.UTC()
+			tt := t.HeadRefForcePushedEvent.CreatedAt.UTC()
 			if firstForcePush == nil || tt.Before(*firstForcePush) {
 				firstForcePush = &tt
 			}
 		}
 	}
 
-	forcePushedAfterReview := false
-	if firstForcePush != nil && firstReviewAtTL != nil && firstForcePush.After(*firstReviewAtTL) {
-		forcePushedAfterReview = true
-	}
+	forcePushedAfterReview := firstForcePush != nil && firstReviewAtTL != nil && firstForcePush.After(*firstReviewAtTL)
 
 	// Body shape metrics.
 	checklistTotal := strings.Count(body, "- [ ]") + strings.Count(body, "- [x]") + strings.Count(body, "- [X]")
@@ -311,7 +308,7 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 		Number:                 prNum,
 		Repo:                   repo.Slug,
 		Title:                  title,
-		OpenedAt:               p.CreatedAt.Time.UTC(),
+		OpenedAt:               p.CreatedAt.UTC(),
 		AuthorHandle:           string(p.Author.Login),
 		Additions:              int(p.Additions),
 		Deletions:              int(p.Deletions),
@@ -337,11 +334,11 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 		IssueRefsCount:         issueRefs,
 	}
 	if p.MergedAt != nil {
-		t := p.MergedAt.Time.UTC()
+		t := p.MergedAt.UTC()
 		row.MergedAt = &t
 	}
 	if p.ClosedAt != nil {
-		t := p.ClosedAt.Time.UTC()
+		t := p.ClosedAt.UTC()
 		row.ClosedAt = &t
 	}
 

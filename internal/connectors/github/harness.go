@@ -65,6 +65,8 @@ func harnessArtifacts(ctx context.Context, c *Connector, repo connector.Repo, wi
 		// known AI bot; classifyHarnessPath only flags candidacy.
 		var content []byte
 		if isWorkflowPath(relPosix) {
+			// #nosec G304 -- path is produced by the working-tree walk under
+			// the per-run clone directory.
 			content, err = os.ReadFile(path)
 			if err != nil {
 				return nil
@@ -80,6 +82,8 @@ func harnessArtifacts(ctx context.Context, c *Connector, repo connector.Repo, wi
 		// Load content if not already loaded and we need it.
 		needContent := c.capture
 		if needContent && content == nil {
+			// #nosec G304 -- path is produced by the working-tree walk under
+			// the per-run clone directory.
 			content, err = os.ReadFile(path)
 			if err != nil {
 				logger.Debug("harness read error", slog.String("path", relPosix), slog.String("err", err.Error()))
@@ -89,6 +93,7 @@ func harnessArtifacts(ctx context.Context, c *Connector, repo connector.Repo, wi
 
 		// LineCount: read content if we haven't.
 		if content == nil {
+			// #nosec G304 -- per-run clone directory; see above.
 			content, _ = os.ReadFile(path)
 		}
 		lineCount := countLines(content)

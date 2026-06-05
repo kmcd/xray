@@ -98,8 +98,8 @@ func linkIncidents(ctx context.Context, db *sql.DB, log *slog.Logger) (int, erro
 			ORDER BY deployed_at DESC
 			LIMIT 1
 		`, p.repo, p.ref, p.ref).Scan(&deployID, &commitSHA)
-		switch {
-		case err == nil:
+		switch err {
+		case nil:
 			if _, err := db.ExecContext(ctx, `
 				UPDATE incidents
 				SET deploy_id = ?, commit_sha = ?
@@ -109,7 +109,7 @@ func linkIncidents(ctx context.Context, db *sql.DB, log *slog.Logger) (int, erro
 			}
 			linked++
 			continue
-		case err == sql.ErrNoRows:
+		case sql.ErrNoRows:
 			// fall through to release lookup
 		default:
 			return linked, fmt.Errorf("lookup deploy for incident %s: %w", p.id, err)
@@ -122,8 +122,8 @@ func linkIncidents(ctx context.Context, db *sql.DB, log *slog.Logger) (int, erro
 			FROM releases
 			WHERE repo = ? AND tag = ?
 		`, p.repo, p.ref).Scan(&sha)
-		switch {
-		case err == nil:
+		switch err {
+		case nil:
 			if sha.String == "" {
 				continue
 			}
@@ -135,7 +135,7 @@ func linkIncidents(ctx context.Context, db *sql.DB, log *slog.Logger) (int, erro
 				return linked, fmt.Errorf("update incident %s commit_sha: %w", p.id, err)
 			}
 			linked++
-		case err == sql.ErrNoRows:
+		case sql.ErrNoRows:
 			// nothing matched; leave alone
 		default:
 			return linked, fmt.Errorf("lookup release for incident %s: %w", p.id, err)

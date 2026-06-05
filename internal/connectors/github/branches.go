@@ -47,7 +47,7 @@ func (c *Connector) extractBranches(ctx context.Context, repo connector.Repo, si
 				IsDefault:     strings.EqualFold(b.GetName(), repo.DefaultBranch),
 			}
 			if cm := b.GetCommit(); cm != nil && cm.Commit != nil && cm.Commit.Committer != nil {
-				row.LastCommitAt = cm.Commit.Committer.GetDate().Time.UTC()
+				row.LastCommitAt = cm.Commit.Committer.GetDate().UTC()
 			}
 			if err := sink.InsertBranch(row); err != nil {
 				if prov.Errors["branches"] == "" {

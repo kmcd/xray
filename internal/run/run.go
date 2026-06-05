@@ -74,7 +74,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (string, error) 
 
 	for _, slug := range repos {
 		dest := filepath.Join(tmpDir, "clones", sanitizeSlug(slug))
-		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
 			return "", fmt.Errorf("run: mkdir clones: %w", err)
 		}
 		log.Info("run: cloning", slog.String("repo", slug))
@@ -222,6 +222,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (string, error) 
 	}
 
 	manifestPath := filepath.Join(tmpDir, "manifest.json")
+	// #nosec G304 -- manifestPath is under the per-run temp dir.
 	mf, err := os.Create(manifestPath)
 	if err != nil {
 		_ = st.Close()

@@ -81,6 +81,8 @@ func fileMetrics(ctx context.Context, c *Connector, repo connector.Repo, sink co
 			return nil
 		}
 
+		// #nosec G304 -- path is produced by the working-tree walk under the
+		// per-run clone directory.
 		content, readErr := os.ReadFile(path)
 		if readErr != nil {
 			logger.Debug("file_metrics read error", slog.String("path", relPosix), slog.String("err", readErr.Error()))

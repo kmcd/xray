@@ -83,7 +83,7 @@ func (c *Connector) extractPRReviewRequests(ctx context.Context, repo connector.
 				Repo:            repo.Slug,
 				RequestedHandle: handle,
 				RequestedType:   typ,
-				RequestedAt:     ev.CreatedAt.Time.UTC(),
+				RequestedAt:     ev.CreatedAt.UTC(),
 			}
 			if err := sink.InsertPRReviewRequest(row); err != nil {
 				if prov.Errors["pr_review_requests"] == "" {
