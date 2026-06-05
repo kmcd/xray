@@ -60,9 +60,10 @@ func (c *Connector) extractPRReviewRequests(ctx context.Context, repo connector.
 			return
 		}
 		vars := map[string]any{
-			"owner":  githubv4.String(owner),
-			"name":   githubv4.String(name),
-			"number": githubv4.Int(number),
+			"owner": githubv4.String(owner),
+			"name":  githubv4.String(name),
+			// #nosec G115 -- PR numbers fit comfortably in int32.
+			"number": githubv4.Int(int32(number)),
 			"after":  cursor,
 		}
 		if err := c.gql.Query(ctx, &q, vars); err != nil {

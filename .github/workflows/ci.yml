@@ -21,8 +21,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: tidy
-        run: go mod tidy
       - name: build
         run: go build ./...
       - name: test
@@ -36,8 +34,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: tidy
-        run: go mod tidy
       - uses: golangci/golangci-lint-action@v6
         with:
           version: v1.62.2
@@ -50,8 +46,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: tidy
-        run: go mod tidy
       - name: govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -62,19 +56,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # diff against main needs full history
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - name: tidy
-        run: go mod tidy
       - name: test with coverage
         run: go test ./... -coverprofile=coverage.out -covermode=atomic
-      - name: report uncovered diff lines
+      - name: enforce coverage thresholds
         uses: vladopajic/go-test-coverage@v2
         with:
           config: ./.testcoverage.yml
-          # diff-base is informational on main; gate is on PRs.
-          git-branch: main
-          git-token: ${{ secrets.GITHUB_TOKEN }}

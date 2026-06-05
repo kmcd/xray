@@ -37,6 +37,8 @@ func (c *Client) log() *slog.Logger {
 }
 
 func (c *Client) run(ctx context.Context, dir string, args ...string) (string, error) {
+	// #nosec G204 -- c.bin() is the system `git` binary; args are passed as
+	// argv (not through a shell) and originate from internal callers.
 	cmd := exec.CommandContext(ctx, c.bin(), args...)
 	if dir != "" {
 		cmd.Dir = dir
