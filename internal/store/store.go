@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	// Pure-Go SQLite driver; registers itself under the "sqlite" name.
 	_ "modernc.org/sqlite"
 
 	"github.com/kmcd/xray/internal/model"

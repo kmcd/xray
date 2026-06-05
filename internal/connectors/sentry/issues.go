@@ -285,11 +285,11 @@ func parseSentryTime(s string) (time.Time, error) {
 	}
 	var lastErr error
 	for _, l := range layouts {
-		if t, err := time.Parse(l, s); err == nil {
+		t, err := time.Parse(l, s)
+		if err == nil {
 			return t.UTC(), nil
-		} else {
-			lastErr = err
 		}
+		lastErr = err
 	}
 	return time.Time{}, lastErr
 }
