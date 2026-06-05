@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Pre-push gate. Runs the same three gates CI runs on push (lint, vuln,
+# coverage) so failures surface locally before they cost a CI cycle.
+# Mirrors gauge_intelligence/bin/ship.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+echo "==> make gates"
+exec make gates
