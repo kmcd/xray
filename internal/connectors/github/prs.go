@@ -171,7 +171,7 @@ func (c *Connector) extractPRs(ctx context.Context, repo connector.Repo, window 
 
 			c.emitPR(ctx, repo, p, tpl, sink, prov)
 		}
-		if stopPaging || !q.Repository.PullRequests.PageInfo.HasNextPage {
+		if stopPaging || !bool(q.Repository.PullRequests.PageInfo.HasNextPage) {
 			break
 		}
 		end := q.Repository.PullRequests.PageInfo.EndCursor

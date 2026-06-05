@@ -110,17 +110,18 @@ func buildBranchProtection(repo, branch string, bp *gh.Protection) model.BranchP
 		row.RequiredReviews = &n
 	}
 	if bp.RequiredStatusChecks != nil {
-		if ck := bp.RequiredStatusChecks.Checks; len(ck) > 0 {
-			names := make([]string, 0, len(ck))
-			for _, c := range ck {
+		ck := bp.RequiredStatusChecks.Checks
+		if ck != nil && len(*ck) > 0 {
+			names := make([]string, 0, len(*ck))
+			for _, c := range *ck {
 				if c == nil {
 					continue
 				}
 				names = append(names, c.Context)
 			}
 			row.RequiredChecks = strings.Join(names, ",")
-		} else if ctxs := bp.RequiredStatusChecks.Contexts; len(ctxs) > 0 {
-			row.RequiredChecks = strings.Join(ctxs, ",")
+		} else if ctxs := bp.RequiredStatusChecks.Contexts; ctxs != nil && len(*ctxs) > 0 {
+			row.RequiredChecks = strings.Join(*ctxs, ",")
 		}
 	}
 	if bp.EnforceAdmins != nil {
