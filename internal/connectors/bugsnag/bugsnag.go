@@ -1,0 +1,70 @@
+package bugsnag
+
+import (
+	"log/slog"
+	"net/http"
+
+	"github.com/kmcd/xray/internal/config"
+	"github.com/kmcd/xray/internal/ratelimit"
+)
+
+// DefaultBaseURL is the Bugsnag Data Access API base URL.
+const DefaultBaseURL = "https://api.bugsnag.com"
+
+// APIVersion is the value sent in the X-Version header per Bugsnag's API
+// versioning scheme.
+const APIVersion = "2"
+
+// Connector implements connector.Connector against the Bugsnag Data Access
+// API. It populates `incidents`.
+type Connector struct {
+	httpClient *http.Client
+	log        *slog.Logger
+	token      string
+	baseURL    string
+	// projects maps bugsnag project ID -> repo slug. The TOML field uses the
+	// label "projects" (per the spec sample) but the Bugsnag API addresses
+	// projects by ID; the value the operator pastes in the map key is the
+	// project ID from Bugsnag's URL or API.
+	projects map[string]string
+}
+
+// Config is the connector's input. BaseURL is exposed only for tests.
+type Config struct {
+	Token    string
+	BaseURL  string
+	Projects map[string]string
+}
+
+// New builds a Connector wired to the rate-limit transport.
+func New(cfg config.BugsnagConn, log *slog.Logger) (*Connector, error) {
+	if log == nil {
+		log = slog.Default()
+	}
+	client := &http.Client{
+		Transport: &ratelimit.Transport{
+			Base:   http.DefaultTransport,
+			Policy: ratelimit.DefaultPolicy(),
+			Log:    log,
+		},
+	}
+	return &Connector{
+		httpClient: client,
+		log:        log,
+		token:      cfg.Token,
+		baseURL:    DefaultBaseURL,
+		projects:   cfg.Projects,
+	}, nil
+}
+
+// Name returns the stable connector name used in `source` columns and the
+// manifest's `extraction_provenance` entries.
+func (c *Connector) Name() string { return "bugsnag" }
+
+// authHeader attaches Bugsnag's auth headers to a request. All Data Access
+// API requests use these headers, including /user used for Ping.
+func (c *Connector) authHeader(req *http.Request) {
+	req.Header.Set("Authorization", "token "+c.token)
+	req.Header.Set("X-Version", APIVersion)
+	req.Header.Set("Accept", "application/json")
+}
