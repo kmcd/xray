@@ -80,6 +80,15 @@ func Open(path string, toolVersion string) (*Store, error) {
 	return s, nil
 }
 
+// DB exposes the underlying *sql.DB for cross-cutting passes (postprocess
+// linkage) that need to issue UPDATEs against multiple tables. The store's
+// mutex does not guard direct DB access; callers must coordinate with
+// other writers, which in practice means using DB only after all
+// connector extraction has finished.
+func (s *Store) DB() *sql.DB {
+	return s.db
+}
+
 // Close releases prepared statements and the underlying database handle.
 func (s *Store) Close() error {
 	s.mu.Lock()

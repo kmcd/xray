@@ -20,6 +20,7 @@ import (
 	"github.com/kmcd/xray/internal/gitcli"
 	"github.com/kmcd/xray/internal/manifest"
 	"github.com/kmcd/xray/internal/model"
+	"github.com/kmcd/xray/internal/postprocess"
 	"github.com/kmcd/xray/internal/store"
 )
 
@@ -183,6 +184,22 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (string, error) 
 		}
 		close(ch)
 		wg.Wait()
+	}
+
+	// 3b. Cross-cutting post-extraction linkage. Errors here are recorded
+	// as a synthetic "postprocess" provenance entry but do NOT abort the
+	// run — the artifact still ships with whatever extraction produced.
+	ppProv := connector.NewProvenance("postprocess", "", win)
+	if stats, err := postprocess.Run(ctx, st.DB(), log); err != nil {
+		log.Error("run: postprocess failed", slog.String("error", err.Error()))
+		ppProv.Errors["postprocess"] = err.Error()
+		ppProv.PaginationComplete = false
+		addProv(ppProv)
+	} else {
+		log.Info("run: postprocess",
+			slog.Int("incidents_linked", stats.IncidentsLinked),
+			slog.Int("deploys_rolled_back", stats.DeploysRolledBack),
+		)
 	}
 
 	// 4. Build manifest.
