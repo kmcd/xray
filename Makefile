@@ -12,7 +12,7 @@ LDFLAGS := -s -w \
 
 export CGO_ENABLED := 0
 
-.PHONY: build test lint release-snapshot clean
+.PHONY: build test lint vuln coverage gates release-snapshot clean
 
 build:
 	go build -trimpath -ldflags "$(LDFLAGS)" -o xray ./cmd/xray
@@ -23,8 +23,18 @@ test:
 lint:
 	golangci-lint run
 
+vuln:
+	govulncheck ./...
+
+coverage:
+	go test ./... -coverprofile=coverage.out -covermode=atomic
+	go-test-coverage --config=.testcoverage.yml
+
+# Run every gate the CI pipeline runs. Use before pushing to main.
+gates: lint vuln coverage
+
 release-snapshot:
 	goreleaser release --snapshot --clean
 
 clean:
-	rm -rf xray dist/
+	rm -rf xray dist/ coverage.out

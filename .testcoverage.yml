@@ -1,0 +1,20 @@
+# vladopajic/go-test-coverage config.
+# https://github.com/vladopajic/go-test-coverage
+
+profile: coverage.out
+local-prefix: github.com/kmcd/xray
+
+# v0.1.0 thresholds are intentionally permissive — the goal at this stage is
+# to surface the report on every push, not to block on coverage. Tighten
+# these once the connector test surface stabilises.
+threshold:
+  file: 0
+  package: 0
+  total: 0
+
+exclude:
+  paths:
+    # Generated docs, command surface, and the parent-package doc files are
+    # not worth lining up coverage gates against.
+    - cmd/xray
+    - ^internal/.*/doc\.go$
