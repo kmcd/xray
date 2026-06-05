@@ -53,7 +53,7 @@ xray check xray.toml
 xray run xray.toml
 ```
 
-The full configuration reference and behaviour spec live in [`CLAUDE.md`](./CLAUDE.md).
+The full configuration reference and behaviour spec live in [`CLAUDE.md`](./CLAUDE.md). The output schema is documented in [`docs/schema.md`](./docs/schema.md).
 
 ## Compatibility
 
@@ -61,7 +61,7 @@ The analyser refuses to load artifacts at an unknown `schema_version`. Pre-1.0, 
 
 | xray version | schema_version |
 | ------------ | -------------- |
-| (unreleased) | 1              |
+| 0.1.0        | 1              |
 
 ## Build from source
 
