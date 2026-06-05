@@ -1,0 +1,6 @@
+/xray
+/xray-export-*.tar.gz
+/dist/
+/tmp/
+*.swp
+.DS_Store
