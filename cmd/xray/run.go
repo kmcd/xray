@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kmcd/xray/internal/config"
-	"github.com/kmcd/xray/internal/connector"
 	"github.com/kmcd/xray/internal/run"
 )
 
@@ -50,11 +49,10 @@ func newRunCmd() *cobra.Command {
 			logger := run.NewLogger(flagVerbose, flagQuiet)
 			ctx := withLogger(cmd.Context(), logger)
 
-			// TODO(M3+): build the connector set from cfg and pass them in.
-			// Each connector is constructed from its corresponding cfg.Connectors.*
-			// block. For M1 the slice is empty so run produces a manifest-only
-			// artifact.
-			var connectors []connector.Connector
+			connectors, err := buildConnectors(cfg, logger)
+			if err != nil {
+				return fmt.Errorf("connector setup: %w", err)
+			}
 
 			artifact, err := run.Run(ctx, cfg, run.Options{
 				Out:        outPath,

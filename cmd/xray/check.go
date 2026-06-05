@@ -9,6 +9,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kmcd/xray/internal/config"
+	"github.com/kmcd/xray/internal/gitcli"
+	"github.com/kmcd/xray/internal/run"
 )
 
 func newCheckCmd() *cobra.Command {
@@ -35,28 +37,43 @@ func newCheckCmd() *cobra.Command {
 			}
 			fmt.Fprintln(out, "ok  config valid")
 
-			gitOK := true
+			anyFail := false
 			if _, err := exec.LookPath("git"); err != nil {
-				gitOK = false
+				anyFail = true
 				fmt.Fprintln(out, "FAIL git              not found on PATH")
 			} else {
 				fmt.Fprintln(out, "ok  git              on PATH")
 			}
 
-			// TODO(M3+): wire each configured connector into the registry and
-			// run its Ping(); for now we just list what is configured.
-			for _, name := range configuredConnectors(cfg) {
-				fmt.Fprintf(out, "ok  %-16s pending: connectors not yet wired (waves 2 of impl)\n", name)
+			logger := run.NewLogger(flagVerbose, flagQuiet)
+			conns, err := buildConnectors(cfg, logger)
+			if err != nil {
+				fmt.Fprintf(errOut, "connector setup: %v\n", err)
+				return silentCode(err, 2)
+			}
+			ctx := cmd.Context()
+			for _, c := range conns {
+				if err := c.Ping(ctx); err != nil {
+					anyFail = true
+					fmt.Fprintf(out, "FAIL %-16s %v\n", c.Name(), err)
+				} else {
+					fmt.Fprintf(out, "ok  %-16s authenticated (read-only)\n", c.Name())
+				}
 			}
 
-			// TODO(M3+): run `git ls-remote` per repo to verify clone access.
+			gitClient := &gitcli.Client{Log: logger}
 			repos := cfg.AllRepos()
 			sort.Strings(repos)
 			for _, r := range repos {
-				fmt.Fprintf(out, "ok  %-16s pending: clone-access probe not yet wired\n", r)
+				if err := gitClient.LsRemote(ctx, r); err != nil {
+					anyFail = true
+					fmt.Fprintf(out, "FAIL %-16s %v\n", r, err)
+				} else {
+					fmt.Fprintf(out, "ok  %-16s clone access ok\n", r)
+				}
 			}
 
-			if !gitOK {
+			if anyFail {
 				return silentCode(errors.New("preflight failed"), 2)
 			}
 			return nil
@@ -64,26 +81,3 @@ func newCheckCmd() *cobra.Command {
 	}
 }
 
-func configuredConnectors(cfg *config.Config) []string {
-	var names []string
-	c := cfg.Connectors
-	if c.GitHub != nil {
-		names = append(names, "github")
-	}
-	if c.GitHubActions != nil {
-		names = append(names, "github_actions")
-	}
-	if c.CircleCI != nil {
-		names = append(names, "circleci")
-	}
-	if c.Sentry != nil {
-		names = append(names, "sentry")
-	}
-	if c.Bugsnag != nil {
-		names = append(names, "bugsnag")
-	}
-	if c.Honeycomb != nil {
-		names = append(names, "honeycomb")
-	}
-	return names
-}
