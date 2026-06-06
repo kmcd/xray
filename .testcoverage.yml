@@ -4,17 +4,23 @@
 profile: coverage.out
 local-prefix: github.com/kmcd/xray
 
-# v0.1.0 thresholds are intentionally permissive — the goal at this stage is
-# to surface the report on every push, not to block on coverage. Tighten
-# these once the connector test surface stabilises.
+# v0.2.0 thresholds. Total catches regressions across the project; per-package
+# is lenient because the connectors are HTTP-bound and exhaustive HTTP-path
+# coverage requires VCR-style fixtures we don't yet ship. Per-file threshold
+# stays at 0 to avoid noisy per-file flags.
 threshold:
   file: 0
-  package: 0
-  total: 0
+  package: 50
+  total: 70
 
 exclude:
   paths:
-    # Generated docs, command surface, and the parent-package doc files are
-    # not worth lining up coverage gates against.
-    - cmd/xray
-    - ^internal/.*/doc\.go$
+    # CLI glue — not worth gating; exercised via cobra tests in the same
+    # package which still satisfy the per-package threshold.
+    - ^cmd/xray
+    # doc.go files anywhere — package-comment-only files.
+    - doc\.go$
+    # Parent packages with no executable code of their own.
+    - ^internal/connector/
+    - ^internal/connectors/$
+    - ^internal/archive/
