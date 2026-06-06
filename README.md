@@ -53,7 +53,7 @@ xray check xray.toml
 xray run xray.toml
 ```
 
-The full configuration reference and behaviour spec live in [`CLAUDE.md`](./CLAUDE.md). The output schema is documented in [`docs/schema.md`](./docs/schema.md).
+The full configuration reference and behaviour spec live in [`docs/spec.md`](./docs/spec.md). The output schema is documented in [`docs/schema.md`](./docs/schema.md). Agent-facing constraints (invariants, non-goals, schema-versioning rules) live in [`CLAUDE.md`](./CLAUDE.md).
 
 ## Compatibility
 

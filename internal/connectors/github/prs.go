@@ -354,7 +354,7 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 
 	// Defect emission from PR title and body. opened_at is the PR's
 	// opened_at; closed_at is the merge time (nil if not merged) — see
-	// the defects table semantics in CLAUDE.md. Body is parsed here
+	// the defects table semantics in docs/spec.md. Body is parsed here
 	// before the local goes out of scope, per the no-raw-bodies rule.
 	// Per ADR 019 a ref appearing in both title and body emits one row
 	// with source = "pr_title".

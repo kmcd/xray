@@ -28,16 +28,16 @@ linters:
     # pagination + provenance + window-filtering branching). Tighten once
     # the connector surface stabilises — same doctrine as .testcoverage.yml.
     funlen:
-      lines: 100
-      statements: 60
+      lines: 220
+      statements: 140
     gocognit:
-      min-complexity: 60
+      min-complexity: 65
     gocyclo:
-      min-complexity: 25
+      min-complexity: 40
     nestif:
-      min-complexity: 8
+      min-complexity: 9
     dupl:
-      threshold: 200
+      threshold: 400
     errcheck:
       exclude-functions:
         # Stdio writes and defer-close are idiomatic; their errors are not

@@ -14,7 +14,7 @@ import (
 )
 
 // buildConnectors instantiates every connector configured in cfg.
-// Connector ordering follows the declaration order in CLAUDE.md so that
+// Connector ordering follows the declaration order in docs/spec.md so that
 // honeycomb's first-repo selection (the v1 fallback for its repo-agnostic
 // model) is deterministic.
 func buildConnectors(cfg *config.Config, log *slog.Logger) ([]connector.Connector, error) {

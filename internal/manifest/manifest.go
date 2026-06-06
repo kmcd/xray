@@ -9,7 +9,7 @@ import (
 )
 
 // Manifest is the exact shape written to manifest.json. Field names and
-// nesting must match the spec in CLAUDE.md "manifest.json".
+// nesting must match the spec in docs/spec.md "manifest.json".
 type Manifest struct {
 	ToolVersion    string                 `json:"tool_version"`
 	SchemaVersion  int                    `json:"schema_version"`

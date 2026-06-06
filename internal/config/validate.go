@@ -35,7 +35,7 @@ func (d Diagnostic) Error() string {
 // `_` (e.g. `_redirects`-style artifacts in some toolchains).
 var repoSlugRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._][A-Za-z0-9._-]*$`)
 
-// Validate enforces the schema rules from CLAUDE.md and returns one
+// Validate enforces the schema rules from docs/spec.md and returns one
 // diagnostic per problem found. file is the source path used in diagnostic
 // output.
 //
