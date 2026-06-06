@@ -4,7 +4,28 @@ All notable changes to `xray` per release. Format follows [Keep a Changelog](htt
 
 The analyser refuses to load artifacts at an unknown `schema_version`. See the [compatibility table](./README.md#compatibility) in the README for the binary-to-schema mapping.
 
-## [0.2.0]
+## [0.2.0] — 2026-06-06
+
+Coverage + risk hardening on top of v0.1.0. `schema_version` unchanged at 1 — no DDL changes — but several behavioural definitions tighten. The compatibility table maps `0.2.0 → 1`.
+
+### Behaviour changes
+
+- **Rollback detection requires a non-success predecessor.** `linkDeployRollbacks` previously flagged any `(repo, environment)` triple where `D[i].commit_sha == D[i-2].commit_sha`. Routine re-deploys of a green commit (canary advance, autoscaling) tripped this. The heuristic now additionally requires `D[i-1].status != "success"` so the deploy *being* rolled back is the one that failed. See ADR 017.
+- **Sentry `is_regression` narrowed.** The substring match for `"regression"` across message / title / culprit / tags is removed; `incidents.is_regression` for Sentry rows is now sourced solely from the issue's `isUnhandled` flag. Bugsnag continues to use `reopened_at != nil`. The two definitions are intentionally per-source — analysers should consult `incidents.source` rather than treating the column as cross-source comparable. See ADR 018.
+- **Defects dedup per `(PR, ref)`.** A ticket reference appearing in both a PR's title and body now emits one `defects` row, not two. `source = "pr_title"` when matched in the title; else `pr_body`. Commit-message refs continue to emit one row per `(commit, ref)`. See ADR 019.
+- **`merge_method` derivation tightened.** The classifier no longer relies on parent count alone. 2 parents → `merge`; 1 parent with every PR head commit reachable from the merge SHA → `rebase`; 1 parent with not all reachable → `squash`. Reachability is tested via `git merge-base --is-ancestor` against the per-run clone (new `gitcli.Client.IsAncestor` helper). See ADR 021.
+
+### Test infrastructure
+
+- End-to-end integration test (`internal/run/integration_test.go`) drives `run.Run` against a local bare-repo remote (via git's url-rewrite, no production hook) and a stub connector. Asserts SQLite contents, manifest provenance, postprocess linkage, and failed-connector reporting.
+- `internal/gitcli` lifted from 0% to ~90% coverage with a real-git fixture exercising every parser branch — merges, renames, copies, GPG paths, email-only authors, binary numstat, `--shallow-since` boundary.
+- `cmd/xray` covered by per-subcommand cobra tests (including the `init` → `validate` round-trip that closes the v0.1.0 review gap). `init.go` gains a `newGitHubClient` package-level hook for stubbing in tests; production behaviour unchanged.
+- `internal/model` schema/struct parity test reflect-walks every canonical struct against the DDL; future drift will fail loudly.
+- `internal/connectors/github` HTTP-path coverage from ~20% to ~62%: `extractPRs` (including timeline-derived `force_pushed_after_review` and `template_match`), `extractBranches` (including branch-protection 403 graceful degradation), `Ping`, plus adjacent surface — languages, releases, reviews, comments, review-requests, codeowners. PR-commits pagination beyond 100 is pinned by an HTTP-driven test.
+
+### Tooling
+
+- CI coverage gate engaged. `.testcoverage.yml` enforces `package: 50 / total: 70` (per-file gating stays at 0 to avoid noise). Exclusions: `cmd/xray` (CLI glue), `doc.go` files, and the parent packages with no executable code. The connectors are still in the 6–62% range — exhaustive HTTP-path coverage there needs VCR-style fixtures, which are out of scope for v0.2.0.
 
 ### Known limitations
 

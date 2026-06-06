@@ -62,6 +62,7 @@ The analyser refuses to load artifacts at an unknown `schema_version`. Pre-1.0, 
 | xray version | schema_version |
 | ------------ | -------------- |
 | 0.1.0        | 1              |
+| 0.2.0        | 1              |
 
 ## Build from source
 
