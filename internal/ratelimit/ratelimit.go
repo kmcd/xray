@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
@@ -19,10 +21,26 @@ type Policy struct {
 	CumulativeBudget time.Duration
 }
 
-// DefaultPolicy returns the spec-mandated 3-attempt / 60s policy.
+// DefaultPolicy returns the spec-mandated 3-attempt / 120s policy. The
+// budget was raised from the original 60s to fit a single secondary-rate-
+// limit retry (which sleeps ~30-60s) within one attempt without exhausting
+// the cumulative wait.
 func DefaultPolicy() Policy {
-	return Policy{MaxAttempts: 3, CumulativeBudget: 60 * time.Second}
+	return Policy{MaxAttempts: 3, CumulativeBudget: 120 * time.Second}
 }
+
+// secondaryRateLimitWait is the default wait applied when a response is
+// recognised as GitHub's secondary (anti-burst) rate limit and no
+// Retry-After header was supplied. GitHub documents "a few minutes" as
+// the recommended wait; 45s strikes a balance between honouring the
+// suggestion and keeping total wall time low.
+const secondaryRateLimitWait = 45 * time.Second
+
+// peekLimit caps how many bytes of a 4xx response body we read for
+// rate-limit-signature detection before re-attaching the body for the
+// caller. 4 KB covers GitHub's JSON error envelope and keeps the cost
+// trivial on the happy path.
+const peekLimit = 4096
 
 // ErrBudgetExceeded is returned when the cumulative wait budget would be
 // exceeded before another retry could complete.
@@ -70,10 +88,11 @@ func Do(ctx context.Context, p Policy, log *slog.Logger, fn func() (*http.Respon
 		} else {
 			lastResp = resp
 			lastErr = nil
-			if !shouldRetry(resp.StatusCode) {
-				// Success or non-429 4xx: hand the response back to the
-				// caller untouched. Permanent 4xx errors are surfaced as
-				// the raw response so the caller sees status/headers/body.
+			if !shouldRetryResp(resp) {
+				// Success or non-retryable 4xx: hand the response back to
+				// the caller untouched. Permanent 4xx errors are surfaced
+				// as the raw response so the caller sees status/headers/
+				// body.
 				return resp, nil
 			}
 			if attempt == p.MaxAttempts {
@@ -114,18 +133,47 @@ func Do(ctx context.Context, p Policy, log *slog.Logger, fn func() (*http.Respon
 	return nil, lastErr
 }
 
-func shouldRetry(status int) bool {
-	if status == http.StatusTooManyRequests {
+// shouldRetryResp decides whether a response is transient and worth a
+// retry. Beyond the obvious 429 and 5xx cases it also recognises GitHub's
+// secondary (anti-burst) rate limit, which returns 403 with a JSON body
+// whose message contains "secondary rate limit". The body is peeked up to
+// peekLimit bytes and re-attached so the caller still sees it on the
+// terminal attempt.
+func shouldRetryResp(resp *http.Response) bool {
+	if resp == nil {
+		return false
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
 		return true
 	}
-	if status >= 500 && status <= 599 {
+	if resp.StatusCode >= 500 && resp.StatusCode <= 599 {
+		return true
+	}
+	if resp.StatusCode == http.StatusForbidden && isSecondaryRateLimited(resp) {
 		return true
 	}
 	return false
 }
 
+// isSecondaryRateLimited reads (and re-attaches) up to peekLimit bytes of
+// the response body to look for GitHub's signature. Returns true on match.
+func isSecondaryRateLimited(resp *http.Response) bool {
+	if resp.Body == nil {
+		return false
+	}
+	buf, _ := io.ReadAll(io.LimitReader(resp.Body, peekLimit))
+	// Re-attach for the caller. If there's more to read after peekLimit,
+	// it's beyond the error envelope we care about and is lost — but the
+	// retry path drains and discards bodies anyway.
+	resp.Body = io.NopCloser(bytes.NewReader(buf))
+	return strings.Contains(strings.ToLower(string(buf)), "secondary rate limit")
+}
+
 // nextWait computes how long to wait before the next attempt, preferring
-// Retry-After and X-RateLimit-Reset hints from the response.
+// Retry-After and X-RateLimit-Reset hints from the response. When the
+// response carries the secondary-rate-limit signature and no header hint
+// is supplied, fall back to secondaryRateLimitWait — the exponential
+// backoff calculator's ~10s cap is too short for that case.
 func nextWait(resp *http.Response, bo *backoff.ExponentialBackOff) time.Duration {
 	if resp != nil {
 		if d, ok := parseRetryAfter(resp.Header.Get("Retry-After")); ok {
@@ -133,6 +181,9 @@ func nextWait(resp *http.Response, bo *backoff.ExponentialBackOff) time.Duration
 		}
 		if d, ok := parseRateLimitReset(resp.Header.Get("X-RateLimit-Reset")); ok {
 			return d
+		}
+		if resp.StatusCode == http.StatusForbidden && isSecondaryRateLimited(resp) {
+			return secondaryRateLimitWait
 		}
 	}
 	d := bo.NextBackOff()

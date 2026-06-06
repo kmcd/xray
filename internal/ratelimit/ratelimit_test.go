@@ -1,6 +1,7 @@
 package ratelimit_test
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -11,6 +12,14 @@ import (
 
 	"github.com/kmcd/xray/internal/ratelimit"
 )
+
+// mkRespBody is like mkResp but lets the test attach a body the
+// secondary-rate-limit detector can read.
+func mkRespBody(status int, headers map[string]string, body string) *http.Response {
+	r := mkResp(status, headers)
+	r.Body = io.NopCloser(bytes.NewReader([]byte(body)))
+	return r
+}
 
 func mkResp(status int, headers map[string]string) *http.Response {
 	r := &http.Response{
@@ -65,6 +74,75 @@ func TestRetryOn5xx(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&calls); got != 3 {
 		t.Errorf("calls: got %d want 3", got)
+	}
+}
+
+// GitHub's secondary (anti-burst) rate limit returns 403 with a JSON body
+// whose message contains "secondary rate limit". The transport must
+// recognise it and retry, since the underlying token is fine — only the
+// burst rate was exceeded.
+func TestRetryOnSecondaryRateLimit(t *testing.T) {
+	const body = `{"documentation_url":"https://docs.github.com/graphql/overview/rate-limits-and-node-limits-for-the-graphql-api#secondary-rate-limits","message":"You have exceeded a secondary rate limit."}`
+	var calls int32
+	fn := func() (*http.Response, error) {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			return mkRespBody(403, map[string]string{"Retry-After": "0"}, body), nil
+		}
+		return mkResp(200, nil), nil
+	}
+	p := ratelimit.Policy{MaxAttempts: 3, CumulativeBudget: 5 * time.Second}
+	resp, err := ratelimit.Do(context.Background(), p, nil, fn)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("final status = %d, want 200", resp.StatusCode)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("attempts = %d, want 2", got)
+	}
+}
+
+// A 403 with no rate-limit signature stays a permanent failure (a real
+// permission error, not throttling).
+func TestNoRetryOnPlain403(t *testing.T) {
+	var calls int32
+	fn := func() (*http.Response, error) {
+		atomic.AddInt32(&calls, 1)
+		return mkRespBody(403, nil, `{"message":"Forbidden"}`), nil
+	}
+	p := ratelimit.Policy{MaxAttempts: 3, CumulativeBudget: 5 * time.Second}
+	resp, err := ratelimit.Do(context.Background(), p, nil, fn)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	if resp.StatusCode != 403 {
+		t.Errorf("final status = %d, want 403", resp.StatusCode)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("attempts = %d, want 1 (no retry on permanent 403)", got)
+	}
+}
+
+// Body is re-attached after the secondary-rate-limit detector peeks at
+// it, so the terminal-attempt caller can still read the full error.
+func TestSecondaryRateLimitBodyReattached(t *testing.T) {
+	const body = `{"message":"You have exceeded a secondary rate limit."}`
+	var calls int32
+	fn := func() (*http.Response, error) {
+		atomic.AddInt32(&calls, 1)
+		// Always 403 — exhaust the retry budget.
+		return mkRespBody(403, map[string]string{"Retry-After": "0"}, body), nil
+	}
+	p := ratelimit.Policy{MaxAttempts: 2, CumulativeBudget: 5 * time.Second}
+	resp, err := ratelimit.Do(context.Background(), p, nil, fn)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	got, _ := io.ReadAll(resp.Body)
+	if string(got) != body {
+		t.Errorf("body after peek = %q, want %q", string(got), body)
 	}
 }
 
