@@ -57,7 +57,7 @@ The full configuration reference and behaviour spec live in [`CLAUDE.md`](./CLAU
 
 ## Compatibility
 
-The analyser refuses to load artifacts at an unknown `schema_version`. Pre-1.0, expect schema bumps as the model settles.
+The analyser refuses to load artifacts at an unknown `schema_version`. Pre-1.0, expect schema bumps as the model settles. Per-release changes that affect downstream consumers are tracked in [`CHANGELOG.md`](./CHANGELOG.md).
 
 | xray version | schema_version |
 | ------------ | -------------- |
