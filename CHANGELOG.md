@@ -8,6 +8,8 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 Five bug fixes surfaced by the v0.2.0 smoke test against `goreleaser/chglog`. No schema change; `schema_version` stays at 1.
 
+Verified against `goreleaser/chglog` post-fix (~18-month window): 65 commits with non-zero numstat, 64 PRs with shape signals, 6 releases each with their own tag-resolved commit SHA, `tool_version` populated, no slug diagnostic on `<org>/.github`.
+
 ### Fixes
 
 - **`gitcli` numstat preserved.** `git log --numstat --name-status` silently dropped numstat output on modern git (`--name-status` wins). Every `commits.additions` / `commits.deletions` / `commit_files.additions` / `commit_files.deletions` was 0 — hotspot and change-size analysis was impossible. Parser switched to `--numstat --raw`, which compose. Regression guard added in `internal/gitcli/gitcli_test.go`. ([#55])
