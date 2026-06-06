@@ -125,6 +125,44 @@ func TestNoRetryOnPlain403(t *testing.T) {
 	}
 }
 
+// Secondary-RL waits charge against SecondaryRateLimitBudget; transient
+// (429 / 5xx) waits charge against CumulativeBudget. The split lets the
+// caller exhaust one without exhausting the other.
+func TestPerErrorClassBudgets(t *testing.T) {
+	const body = `{"message":"You have exceeded a secondary rate limit"}`
+	// First call: 429 (transient). Second: secondary-RL 403. Third: 200.
+	var calls int32
+	fn := func() (*http.Response, error) {
+		n := atomic.AddInt32(&calls, 1)
+		switch n {
+		case 1:
+			return mkResp(429, map[string]string{"Retry-After": "0"}), nil
+		case 2:
+			return mkRespBody(403, map[string]string{"Retry-After": "0"}, body), nil
+		default:
+			return mkResp(200, nil), nil
+		}
+	}
+	// Tight transient budget, generous secondary-RL budget. If they
+	// shared a single counter, the secondary-RL retry would push us over
+	// the 1s CumulativeBudget. With per-class accounting both retries fit.
+	p := ratelimit.Policy{
+		MaxAttempts:              5,
+		CumulativeBudget:         1 * time.Second,
+		SecondaryRateLimitBudget: 5 * time.Second,
+	}
+	resp, err := ratelimit.Do(context.Background(), p, nil, fn)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("final status = %d, want 200", resp.StatusCode)
+	}
+	if got := atomic.LoadInt32(&calls); got != 3 {
+		t.Errorf("attempts = %d, want 3", got)
+	}
+}
+
 // Body is re-attached after the secondary-rate-limit detector peeks at
 // it, so the terminal-attempt caller can still read the full error.
 func TestSecondaryRateLimitBodyReattached(t *testing.T) {

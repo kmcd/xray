@@ -15,17 +15,34 @@ import (
 	"github.com/cenkalti/backoff/v4"
 )
 
-// Policy bounds retry behaviour. Defaults: 3 attempts, 60s cumulative wait.
+// Policy bounds retry behaviour. Defaults: 3 attempts shared, separate
+// cumulative budgets per error class.
+//
+// CumulativeBudget covers ordinary transient errors (429 primary rate
+// limit, 5xx server errors). These resolve fast — typically a few seconds
+// to a minute — so a tight budget is fine.
+//
+// SecondaryRateLimitBudget covers GitHub's anti-burst 403s, whose
+// cooldown is much longer (60s+ per retry). Keeping the budget separate
+// means a single 60s secondary-RL wait doesn't eat the budget for
+// subsequent transient retries, and gives realistic headroom for
+// hammered-token cooldowns.
 type Policy struct {
-	MaxAttempts      int
-	CumulativeBudget time.Duration
+	MaxAttempts              int
+	CumulativeBudget         time.Duration
+	SecondaryRateLimitBudget time.Duration
 }
 
-// DefaultPolicy returns the 3-attempt / 180s policy. The budget covers two
-// 60s secondary-rate-limit retries (the documented per-incident wait)
-// with a small margin for the request itself.
+// DefaultPolicy returns the 3-attempt policy with per-error-class budgets:
+// 60s for transient errors (429 / 5xx), 600s for secondary rate limits
+// (GitHub anti-burst cooldowns). The split lets a long secondary-RL wait
+// run without starving the transient-error budget — and vice versa.
 func DefaultPolicy() Policy {
-	return Policy{MaxAttempts: 3, CumulativeBudget: 180 * time.Second}
+	return Policy{
+		MaxAttempts:              3,
+		CumulativeBudget:         60 * time.Second,
+		SecondaryRateLimitBudget: 600 * time.Second,
+	}
 }
 
 // secondaryRateLimitWait is the default wait applied when a response is
@@ -56,6 +73,9 @@ func Do(ctx context.Context, p Policy, log *slog.Logger, fn func() (*http.Respon
 	if p.CumulativeBudget <= 0 {
 		p.CumulativeBudget = 60 * time.Second
 	}
+	if p.SecondaryRateLimitBudget <= 0 {
+		p.SecondaryRateLimitBudget = 600 * time.Second
+	}
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
@@ -66,7 +86,9 @@ func Do(ctx context.Context, p Policy, log *slog.Logger, fn func() (*http.Respon
 	bo.MaxElapsedTime = 0 // we enforce budget ourselves
 	bo.Reset()
 
-	var spent time.Duration
+	// Per-error-class spent counters. Secondary-RL waits don't deplete
+	// the transient-error budget.
+	var spent, spentSecondary time.Duration
 	var lastResp *http.Response
 	var lastErr error
 
@@ -99,19 +121,34 @@ func Do(ctx context.Context, p Policy, log *slog.Logger, fn func() (*http.Respon
 			}
 		}
 
-		wait := nextWait(lastResp, bo)
-		if spent+wait > p.CumulativeBudget {
+		wait, isSecondaryRL := nextWait(lastResp, bo)
+		var (
+			thisBudget    time.Duration
+			thisSpent     *time.Duration
+			budgetLabel   string
+		)
+		if isSecondaryRL {
+			thisBudget = p.SecondaryRateLimitBudget
+			thisSpent = &spentSecondary
+			budgetLabel = "secondary"
+		} else {
+			thisBudget = p.CumulativeBudget
+			thisSpent = &spent
+			budgetLabel = "transient"
+		}
+		if *thisSpent+wait > thisBudget {
 			if lastResp != nil {
 				return lastResp, ErrBudgetExceeded
 			}
 			return nil, fmt.Errorf("%w: %v", ErrBudgetExceeded, lastErr)
 		}
-		spent += wait
+		*thisSpent += wait
 
 		log.Info("ratelimit: waiting before retry",
 			slog.Int("attempt", attempt),
 			slog.Duration("wait", wait),
-			slog.Duration("budget_spent", spent),
+			slog.String("budget", budgetLabel),
+			slog.Duration("budget_spent", *thisSpent),
 		)
 
 		t := time.NewTimer(wait)
@@ -176,28 +213,37 @@ func isSecondaryRateLimited(resp *http.Response) bool {
 		strings.Contains(body, "exceeded a rate limit")
 }
 
-// nextWait computes how long to wait before the next attempt, preferring
-// Retry-After and X-RateLimit-Reset hints from the response. When the
-// response carries the secondary-rate-limit signature and no header hint
-// is supplied, fall back to secondaryRateLimitWait — the exponential
-// backoff calculator's ~10s cap is too short for that case.
-func nextWait(resp *http.Response, bo *backoff.ExponentialBackOff) time.Duration {
+// nextWait computes how long to wait before the next attempt and whether
+// it is a secondary-rate-limit wait (so the caller can charge the
+// appropriate budget).
+//
+// Preference order: Retry-After header, X-RateLimit-Reset header,
+// secondary-RL signature in the body (returns secondaryRateLimitWait),
+// then exponential backoff. A 403 with the secondary-RL body always
+// counts as a secondary-RL retry, even when Retry-After was supplied —
+// the wait amount honours the header, but the budget accounting reflects
+// the actual cause.
+func nextWait(resp *http.Response, bo *backoff.ExponentialBackOff) (time.Duration, bool) {
+	isSecondaryRL := resp != nil &&
+		resp.StatusCode == http.StatusForbidden &&
+		isSecondaryRateLimited(resp)
+
 	if resp != nil {
 		if d, ok := parseRetryAfter(resp.Header.Get("Retry-After")); ok {
-			return d
+			return d, isSecondaryRL
 		}
 		if d, ok := parseRateLimitReset(resp.Header.Get("X-RateLimit-Reset")); ok {
-			return d
+			return d, isSecondaryRL
 		}
-		if resp.StatusCode == http.StatusForbidden && isSecondaryRateLimited(resp) {
-			return secondaryRateLimitWait
+		if isSecondaryRL {
+			return secondaryRateLimitWait, true
 		}
 	}
 	d := bo.NextBackOff()
 	if d == backoff.Stop {
-		return 0
+		return 0, false
 	}
-	return d
+	return d, false
 }
 
 func parseRetryAfter(v string) (time.Duration, bool) {

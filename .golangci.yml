@@ -6,15 +6,38 @@ run:
 linters:
   default: none
   enable:
+    - dupl
     - errcheck
+    - funlen
+    - gocognit
+    - gocyclo
     - gosec
     - govet
     - ineffassign
     - misspell
+    - nestif
     - revive
     - staticcheck
     - unused
   settings:
+    # Practitioner-named sensors for AI-generated code (Böckeler,
+    # Thoughtworks). Catch oversized functions, deep nesting, and copy-paste
+    # blocks that default linter presets miss. Thresholds are set above the
+    # v0.2.0 baseline so the sensor fires on *regressions* without forcing
+    # a refactor sweep on existing connector code (which has legitimate
+    # pagination + provenance + window-filtering branching). Tighten once
+    # the connector surface stabilises — same doctrine as .testcoverage.yml.
+    funlen:
+      lines: 100
+      statements: 60
+    gocognit:
+      min-complexity: 60
+    gocyclo:
+      min-complexity: 25
+    nestif:
+      min-complexity: 8
+    dupl:
+      threshold: 200
     errcheck:
       exclude-functions:
         # Stdio writes and defer-close are idiomatic; their errors are not
@@ -56,3 +79,8 @@ linters:
         linters:
           - errcheck
           - gosec
+          - dupl
+          - funlen
+          - gocognit
+          - gocyclo
+          - nestif

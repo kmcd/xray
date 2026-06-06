@@ -33,6 +33,9 @@ func fileMetrics(ctx context.Context, c *Connector, repo connector.Repo, sink co
 		logger = slog.Default()
 	}
 
+	prog := newProgress(logger, repo.Slug, "file_metrics")
+	defer prog.done()
+
 	_ = filepath.Walk(root, func(path string, info fs.FileInfo, err error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -116,6 +119,7 @@ func fileMetrics(ctx context.Context, c *Connector, repo connector.Repo, sink co
 		if err := sink.InsertFileMetric(fm); err == nil {
 			prov.RowsReturned["file_metrics"]++
 		}
+		prog.tick()
 		return nil
 	})
 }

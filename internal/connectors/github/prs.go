@@ -136,6 +136,8 @@ func (c *Connector) extractPRs(ctx context.Context, repo connector.Repo, window 
 		"after": (*githubv4.String)(nil),
 	}
 
+	prog := newProgress(c.log, repo.Slug, "prs")
+	defer prog.done()
 	for {
 		if ctx.Err() != nil {
 			prov.PaginationComplete = false
@@ -169,6 +171,7 @@ func (c *Connector) extractPRs(ctx context.Context, repo connector.Repo, window 
 			}
 
 			c.emitPR(ctx, repo, p, tpl, sink, prov)
+			prog.tick()
 		}
 		if stopPaging || !bool(q.Repository.PullRequests.PageInfo.HasNextPage) {
 			break

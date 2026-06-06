@@ -52,11 +52,14 @@ func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, win
 		}
 	}
 
+	prog := newProgress(c.log, repo.Slug, "commits")
+	defer prog.done()
 	for _, rec := range records {
 		if ctx.Err() != nil {
 			prov.PaginationComplete = false
 			return
 		}
+		prog.tick()
 
 		row := model.Commit{
 			SHA:             rec.SHA,
