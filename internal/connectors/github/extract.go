@@ -49,7 +49,7 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 	c.extractCodeowners(ctx, repo, sink, &prov)
 
 	// Releases + deploys
-	c.extractReleases(ctx, repo, sink, &prov)
+	c.extractReleases(ctx, repo, window, sink, &prov)
 
 	// Commits, commit_files, commit_coauthors (driven by git log)
 	c.extractCommits(ctx, repo, window, sink, &prov)

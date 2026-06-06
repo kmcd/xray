@@ -109,16 +109,23 @@ func TestExtractLanguages(t *testing.T) {
 }
 
 func TestExtractReleases(t *testing.T) {
+	// Three releases: one inside the window, one before, one after. Only
+	// the in-window release should land. The in-window release uses tag
+	// resolution (#57), the older one's request is expected because the
+	// connector keeps paging until it sees the boundary.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/kmcd/foo/releases", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`[
-			{"tag_name":"v1.0.0","name":"first","created_at":"2025-03-01T00:00:00Z","target_commitish":"0123456789abcdef0123456789abcdef01234567","prerelease":false},
-			{"tag_name":"v0.9.0","name":"prev","created_at":"2025-02-01T00:00:00Z","target_commitish":"main","prerelease":true}
+			{"tag_name":"v2.0.0","name":"future","created_at":"2026-03-01T00:00:00Z","target_commitish":"main","prerelease":false},
+			{"tag_name":"v1.0.0","name":"in-window","created_at":"2025-06-15T00:00:00Z","target_commitish":"main","prerelease":false},
+			{"tag_name":"v0.9.0","name":"ancient","created_at":"2024-06-15T00:00:00Z","target_commitish":"main","prerelease":true}
 		]`))
 	})
-	mux.HandleFunc("/repos/kmcd/foo/commits/main", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Accept", "application/vnd.github.sha")
-		_, _ = w.Write([]byte("abcdef0123456789abcdef0123456789abcdef01"))
+	mux.HandleFunc("/repos/kmcd/foo/commits/v2.0.0", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ffffffffffffffffffffffffffffffffffffffff"))
+	})
+	mux.HandleFunc("/repos/kmcd/foo/commits/v1.0.0", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("1111111111111111111111111111111111111111"))
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -126,12 +133,19 @@ func TestExtractReleases(t *testing.T) {
 	c := newTestConnector(t, srv)
 	sink := &extraSink{}
 	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
-	c.extractReleases(context.Background(), connector.Repo{Slug: "kmcd/foo"}, sink, &prov)
-	if len(sink.releases) != 2 {
-		t.Fatalf("expected 2 releases, got %d", len(sink.releases))
+	c.extractReleases(context.Background(), connector.Repo{Slug: "kmcd/foo"}, standardWindow(), sink, &prov)
+
+	if len(sink.releases) != 1 {
+		t.Fatalf("expected 1 release inside window, got %d: %+v", len(sink.releases), sink.releases)
 	}
-	if len(sink.deploys) != 2 {
-		t.Errorf("expected 2 deploys, got %d", len(sink.deploys))
+	if got := sink.releases[0].Tag; got != "v1.0.0" {
+		t.Errorf("wrong release tag landed: %q", got)
+	}
+	if got := sink.releases[0].SHA; got != "1111111111111111111111111111111111111111" {
+		t.Errorf("release SHA = %q; want the tag-resolved SHA (issue #57), not HEAD-of-main", got)
+	}
+	if len(sink.deploys) != 1 {
+		t.Errorf("expected 1 deploy, got %d", len(sink.deploys))
 	}
 }
 
