@@ -41,7 +41,7 @@ func (c *Connector) extractReviews(ctx context.Context, repo connector.Repo, num
 			row := model.Review{
 				PRNumber:       number,
 				Repo:           repo.Slug,
-				ReviewerHandle: r.GetUser().GetLogin(),
+				ReviewerHandle: hashHandle(canonicalLogin(r.GetUser().GetLogin())),
 				SubmittedAt:    submitted,
 				State:          state,
 				BodyLength:     len(r.GetBody()),

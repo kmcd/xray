@@ -4,6 +4,16 @@ All notable changes to `xray` per release. Format follows [Keep a Changelog](htt
 
 The analyser refuses to load artifacts at an unknown `schema_version`. See the [compatibility table](./README.md#compatibility) in the README for the binary-to-schema mapping.
 
+## [0.3.0] — unreleased
+
+Breaking: `schema_version` bumps `1 → 2`. Author-identity columns now hold opaque `h_<15 digits>` tokens, not raw logins or git idents. Analysers built for `schema_version = 1` must be updated (assay v1.1.0 already reads the new form).
+
+### Author alias resolution via `.mailmap` (assay v1.1 contract #20, Tornhill Ch 13)
+
+- **`.mailmap` canonicalisation at extract time.** The repo's top-level `.mailmap` is parsed once per run into an in-memory resolution table; every commit (and Co-authored-by trailer) identity is rewritten to its canonical `Name <email>` before hashing. Pure-Go parser supports all four standard line shapes; smoke-tested against `git check-mailmap` in `internal/gitcli/mailmap_test.go`. The alias triple from the prompt (`Alice <alice@old>` / `Alice <alice@new>` / `Alice <alice@old>` with a `new → old` mapping) emits one canonical handle across all three commits.
+- **Author handles hashed to opaque tokens.** `commits.author_handle`, `commits.committer_handle`, `commit_coauthors.handle`, `prs.author_handle`, `reviews.reviewer_handle`, `pr_comments.author_handle` switched from raw login/git ident to `h_<15 digits>` (low 64 bits of sha256 mod 10^15, zero-padded). The shape matches assay's `^h_\d{15}$` boundary check. See [ADR 023](./tmp/adr.md#023--author-handles-hashed-at-the-boundary-bumps-schema_version-1-2) for the bump rationale.
+- **`manifest.mailmap_applied` (new).** Bool aggregated across all repos in the run. `true` iff every repo carried a non-empty, cleanly parsed `.mailmap` that was applied to every author-handle table. `false` flips assay-side metrics like `knowledge_concentration` and `communication_paths` to surface the Tornhill alias caveat.
+
 ## [0.2.2] — 2026-06-06
 
 Performance + observability pass. No schema change; `schema_version` stays at 1. Validated against `goreleaser/chglog` post-fix: 65 commits with full enrichment (`signature_verified` + `landed_via_pr` populated on every row), 2:20 wall time.

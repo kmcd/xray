@@ -13,11 +13,11 @@ import (
 var coauthorTrailerRe = regexp.MustCompile(`(?im)^\s*Co-authored-by:\s*([^<]+?)\s*<([^>]+)>\s*$`)
 
 // trailerCoauthors parses Co-authored-by trailers from a commit body and
-// returns CommitCoauthor rows with source="trailer". The "handle" stored
-// is the trailer's "Name" component verbatim — there is no reliable
-// mapping from email to GitHub handle without an API round-trip per
-// trailer, which is too expensive at extract time.
-func trailerCoauthors(rec gitcli.CommitRecord, repo string) []model.CommitCoauthor {
+// returns CommitCoauthor rows with source="trailer". The handle stored is
+// the hashed canonical identity after .mailmap resolution; bot-vs-human
+// classification still runs against the pre-hash name+email so the kind
+// signal isn't lost.
+func trailerCoauthors(rec gitcli.CommitRecord, repo string, mm *gitcli.Mailmap) []model.CommitCoauthor {
 	matches := coauthorTrailerRe.FindAllStringSubmatch(rec.Body, -1)
 	if len(matches) == 0 {
 		return nil
@@ -30,15 +30,19 @@ func trailerCoauthors(rec gitcli.CommitRecord, repo string) []model.CommitCoauth
 		if name == "" {
 			continue
 		}
-		key := strings.ToLower(name) + "|" + strings.ToLower(email)
-		if seen[key] {
+		canonName, canonEmail := mm.Resolve(name, email)
+		handle := hashHandle(canonicalCommitIdent(canonName, canonEmail))
+		if handle == "" {
 			continue
 		}
-		seen[key] = true
+		if seen[handle] {
+			continue
+		}
+		seen[handle] = true
 		out = append(out, model.CommitCoauthor{
 			CommitSHA: rec.SHA,
 			Repo:      repo,
-			Handle:    name,
+			Handle:    handle,
 			Source:    "trailer",
 			Kind:      kindFor(name, email),
 		})
@@ -49,18 +53,26 @@ func trailerCoauthors(rec gitcli.CommitRecord, repo string) []model.CommitCoauth
 // committerDistinctCoauthor emits a source="api" coauthor row when the
 // committer differs from the author. Tools, web UI, and bots commit under
 // separate identities; this captures that signal without an API call.
-func committerDistinctCoauthor(rec gitcli.CommitRecord, repo string) (model.CommitCoauthor, bool) {
-	if strings.EqualFold(rec.AuthorHandle, rec.CommitterHandle) &&
-		strings.EqualFold(rec.AuthorEmail, rec.CommitterEmail) {
+// Mailmap resolution applies before hashing so a single human committing
+// under multiple emails doesn't reappear as a distinct coauthor.
+func committerDistinctCoauthor(rec gitcli.CommitRecord, repo string, mm *gitcli.Mailmap) (model.CommitCoauthor, bool) {
+	authorName, authorEmail := mm.Resolve(rec.AuthorHandle, rec.AuthorEmail)
+	committerName, committerEmail := mm.Resolve(rec.CommitterHandle, rec.CommitterEmail)
+	if strings.EqualFold(authorName, committerName) &&
+		strings.EqualFold(authorEmail, committerEmail) {
 		return model.CommitCoauthor{}, false
 	}
-	if rec.CommitterHandle == "" {
+	if committerName == "" && committerEmail == "" {
+		return model.CommitCoauthor{}, false
+	}
+	handle := hashHandle(canonicalCommitIdent(committerName, committerEmail))
+	if handle == "" {
 		return model.CommitCoauthor{}, false
 	}
 	return model.CommitCoauthor{
 		CommitSHA: rec.SHA,
 		Repo:      repo,
-		Handle:    rec.CommitterHandle,
+		Handle:    handle,
 		Source:    "api",
 		Kind:      kindFor(rec.CommitterHandle, rec.CommitterEmail),
 	}, true

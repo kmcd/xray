@@ -4,7 +4,13 @@ import "time"
 
 // SchemaVersion is bumped on any breaking change to the canonical model.
 // See CLAUDE.md "Schema versioning" for the bump rules.
-const SchemaVersion = 1
+//
+// v2 (ADR 023): author-identity columns — commits.author_handle,
+// commits.committer_handle, commit_coauthors.handle, prs.author_handle,
+// reviews.reviewer_handle, pr_comments.author_handle — shifted from raw
+// login / git ident to the opaque "h_<digits>" form assay's boundary check
+// enforces. The column types and names are unchanged; the semantics are not.
+const SchemaVersion = 2
 
 type Repo struct {
 	Slug             string

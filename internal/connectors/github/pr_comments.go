@@ -32,12 +32,12 @@ func (c *Connector) extractPRComments(ctx context.Context, repo connector.Repo, 
 			break
 		}
 		for _, cm := range comments {
-			handle := cm.GetUser().GetLogin()
+			login := cm.GetUser().GetLogin()
 			row := model.PRComment{
 				PRNumber:     number,
 				Repo:         repo.Slug,
-				AuthorHandle: handle,
-				AuthorIsBot:  isBot(handle),
+				AuthorHandle: hashHandle(canonicalLogin(login)),
+				AuthorIsBot:  isBot(login),
 				CreatedAt:    cm.GetCreatedAt().UTC(),
 				Kind:         "issue_comment",
 				BodyLength:   len(cm.GetBody()),
@@ -72,12 +72,12 @@ func (c *Connector) extractPRComments(ctx context.Context, repo connector.Repo, 
 			return
 		}
 		for _, cm := range comments {
-			handle := cm.GetUser().GetLogin()
+			login := cm.GetUser().GetLogin()
 			row := model.PRComment{
 				PRNumber:     number,
 				Repo:         repo.Slug,
-				AuthorHandle: handle,
-				AuthorIsBot:  isBot(handle),
+				AuthorHandle: hashHandle(canonicalLogin(login)),
+				AuthorIsBot:  isBot(login),
 				CreatedAt:    cm.GetCreatedAt().UTC(),
 				Kind:         "review_comment",
 				BodyLength:   len(cm.GetBody()),

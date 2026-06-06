@@ -37,6 +37,11 @@ type Provenance struct {
 	RateLimitTruncated bool                      `json:"rate_limit_truncated"`
 	Errors             map[string]string         `json:"errors"`
 	Endpoints          map[string]EndpointStatus `json:"endpoints,omitempty"`
+	// Flags carries boolean per-extraction signals the manifest aggregates
+	// across repos. Currently used for "mailmap_applied". A flag absent from
+	// the map reads as false; the aggregator ANDs across all provenances of
+	// the same connector to derive the manifest-wide value.
+	Flags map[string]bool `json:"flags,omitempty"`
 }
 
 func NewProvenance(name, repo string, w Window) Provenance {
@@ -48,6 +53,7 @@ func NewProvenance(name, repo string, w Window) Provenance {
 		PaginationComplete: true,
 		Errors:             map[string]string{},
 		Endpoints:          map[string]EndpointStatus{},
+		Flags:              map[string]bool{},
 	}
 }
 

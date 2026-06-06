@@ -218,6 +218,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (string, error) 
 		Repos:          buildRepoMetas(clones),
 		ConnectorsUsed: derivedConnectorsUsed(provs),
 		Counts:         sumCounts(provs),
+		MailmapApplied: aggregateMailmapApplied(provs),
 		Provenance:     sortProvs(provs),
 	}
 
@@ -356,6 +357,28 @@ func hasErrors(provs []connector.Provenance) bool {
 		}
 	}
 	return false
+}
+
+// aggregateMailmapApplied collapses per-repo "mailmap_applied" flags into a
+// single run-level boolean. The semantics mirror assay's expectation: true
+// only when every repo that produced commit data also carried a parsed,
+// non-empty .mailmap. Synthetic "clone" / "postprocess" provenance entries
+// don't carry the flag and are skipped.
+func aggregateMailmapApplied(provs []connector.Provenance) bool {
+	saw := false
+	for _, p := range provs {
+		if p.Connector == "clone" || p.Connector == "postprocess" {
+			continue
+		}
+		if _, ok := p.Flags["mailmap_applied"]; !ok {
+			continue
+		}
+		saw = true
+		if !p.Flags["mailmap_applied"] {
+			return false
+		}
+	}
+	return saw
 }
 
 // newRunID returns a sortable, opaque run identifier. We don't depend on a

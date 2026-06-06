@@ -56,8 +56,8 @@ func fixtureTime() time.Time {
 }
 
 func TestDDL_SchemaVersionConstant(t *testing.T) {
-	if model.SchemaVersion != 1 {
-		t.Fatalf("SchemaVersion = %d, want 1 (bump this assertion deliberately when changing the schema)", model.SchemaVersion)
+	if model.SchemaVersion != 2 {
+		t.Fatalf("SchemaVersion = %d, want 2 (bump this assertion deliberately when changing the schema)", model.SchemaVersion)
 	}
 }
 

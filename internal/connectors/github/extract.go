@@ -8,6 +8,7 @@ import (
 	gh "github.com/google/go-github/v66/github"
 
 	"github.com/kmcd/xray/internal/connector"
+	"github.com/kmcd/xray/internal/gitcli"
 	"github.com/kmcd/xray/internal/model"
 )
 
@@ -20,6 +21,26 @@ import (
 // out so the manifest records the truncation.
 func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window connector.Window, sink connector.Sink) connector.Provenance {
 	prov := connector.NewProvenance(c.Name(), repo.Slug, window)
+
+	// Read the repo's .mailmap once per extraction. Failure modes:
+	//   - file absent       -> zero-value Mailmap, prov.Flags["mailmap_applied"] = false
+	//   - file present + ok -> populated Mailmap, flag = true iff non-empty
+	//   - read or parse err -> zero-value Mailmap, flag = false, error recorded
+	// canonicalCommitIdent + hashHandle still run on every identity so the
+	// "h_<digits>" boundary contract holds whether or not aliases were
+	// resolved.
+	mm, err := c.git.ReadMailmap(ctx, repo.Clone)
+	if err != nil {
+		if prov.Errors["mailmap"] == "" {
+			prov.Errors["mailmap"] = err.Error()
+		}
+		c.log.Warn("github: read mailmap",
+			slog.String("repo", repo.Slug),
+			slog.String("error", err.Error()),
+		)
+		mm = &gitcli.Mailmap{}
+	}
+	prov.Flags["mailmap_applied"] = mm.Applied()
 
 	// Insert the repos row first so foreign-key-ish joins downstream have
 	// something to anchor on. Fetch repo metadata via REST; tolerate
@@ -52,7 +73,7 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 	c.extractReleases(ctx, repo, window, sink, &prov)
 
 	// Commits, commit_files, commit_coauthors (driven by git log)
-	c.extractCommits(ctx, repo, window, sink, &prov)
+	c.extractCommits(ctx, repo, window, sink, &prov, mm)
 
 	// PRs + pr_commits + reviews + pr_comments + pr_review_requests + pr_labels
 	c.extractPRs(ctx, repo, window, sink, &prov)

@@ -65,6 +65,7 @@ The analyser refuses to load artifacts at an unknown `schema_version`. Pre-1.0, 
 | 0.2.0        | 1              |
 | 0.2.1        | 1              |
 | 0.2.2        | 1              |
+| 0.3.0        | 2              |
 
 ## Build from source
 

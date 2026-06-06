@@ -1,8 +1,21 @@
-# xray metrics.sqlite schema (schema_version = 1)
+# xray metrics.sqlite schema (schema_version = 2)
 
 Generated from `internal/model/schema.go`. The canonical row structs are in `internal/model/types.go`. This document mirrors the DDL applied at store-open time.
 
 Every timestamp is stored as a UTC ISO-8601 (`RFC3339`) string. Booleans are stored as `INTEGER` (0/1). `NULL` means **unknown** — never *absent*. The `extraction_provenance` block in `manifest.json` records which endpoints were inaccessible so that `NULL` can be interpreted correctly.
+
+## Author handles (`*_handle` columns)
+
+Every `author_handle` / `committer_handle` / `reviewer_handle` / `commit_coauthors.handle` value is an **opaque token of the form `h_<15 digits>`** (regex `^h_\d{15}$`). The pre-image is one of two namespaces:
+
+- **commit identities** — `Name <email>` after `.mailmap` canonicalisation, hashed via sha256, low 64 bits modulo 10^15.
+- **GitHub logins** — lowercased login prefixed with `@`, hashed the same way.
+
+The `@`-prefix on login canonicalisation keeps the two namespaces disjoint, so a login `alice` and a commit name `alice` (with no email) hash to distinct tokens. Without per-user email resolution there is no way to link them safely; fusing them silently would merge unrelated people.
+
+`manifest.mailmap_applied` reports whether the run resolved aliases through a `.mailmap`. When `false`, downstream analysers should treat alias-derived metrics (truck factor, `main_author_share`, Conway's-law signals) as inflated and surface a Tornhill Ch 13 caveat.
+
+`pr_review_requests.requested_handle` and `codeowners.owner_handle` carry the raw user/team identifier — these tables do not feed authorship analysis and the team-vs-user distinction is load-bearing.
 
 ## `_schema`
 
@@ -10,7 +23,7 @@ Single-row table written at store-open. The analyser must refuse to load artifac
 
 | column           | type    | notes |
 | ---------------- | ------- | ----- |
-| `schema_version` | INTEGER | this document covers `1` |
+| `schema_version` | INTEGER | this document covers `2` |
 | `tool_version`   | TEXT    | xray binary version that produced the artifact |
 | `applied_at`     | TEXT    | UTC RFC3339 |
 

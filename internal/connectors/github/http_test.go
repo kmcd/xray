@@ -252,7 +252,7 @@ func TestExtractPRs_BasicShape(t *testing.T) {
 		t.Fatalf("expected 1 PR row, got %d", len(sink.prs))
 	}
 	row := sink.prs[0]
-	if row.Number != 42 || row.Title != "Add new endpoint" || row.AuthorHandle != "alice" {
+	if row.Number != 42 || row.Title != "Add new endpoint" || row.AuthorHandle != hashHandle(canonicalLogin("alice")) {
 		t.Errorf("unexpected row: %+v", row)
 	}
 	if row.HasRiskMarker {

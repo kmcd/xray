@@ -10,6 +10,13 @@ import (
 
 // Manifest is the exact shape written to manifest.json. Field names and
 // nesting must match the spec in docs/spec.md "manifest.json".
+//
+// MailmapApplied is true iff every repo in the run carried a non-empty
+// .mailmap that parsed cleanly and was applied across every author-handle
+// table. Any repo missing a mailmap, or any per-repo parse failure, flips
+// the run-level value to false — assay treats false as "aliases may inflate
+// the author universe" and appends the Tornhill Ch 13 caveat to the
+// truck-factor finding.
 type Manifest struct {
 	ToolVersion    string                 `json:"tool_version"`
 	SchemaVersion  int                    `json:"schema_version"`
@@ -21,6 +28,7 @@ type Manifest struct {
 	Repos          []RepoMeta             `json:"repos"`
 	ConnectorsUsed []string               `json:"connectors_used"`
 	Counts         map[string]int         `json:"counts"`
+	MailmapApplied bool                   `json:"mailmap_applied"`
 	Provenance     []connector.Provenance `json:"extraction_provenance"`
 }
 

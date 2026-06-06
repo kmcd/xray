@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/kmcd/xray/internal/connector"
+	"github.com/kmcd/xray/internal/gitcli"
 	"github.com/kmcd/xray/internal/model"
 )
 
@@ -12,7 +13,11 @@ import (
 // commit_files, and commit_coauthors rows. Signature verification and
 // landed_via_pr are filled in via a single batched GraphQL request per
 // ~100 commits (see enrich.go and issue #64).
-func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, window connector.Window, sink connector.Sink, prov *connector.Provenance) {
+//
+// mm canonicalises (name, email) identities through the repo's .mailmap
+// before the hashHandle helper emits the opaque "h_<digits>" token; bot
+// classification still consults the pre-hash name so the signal isn't lost.
+func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, window connector.Window, sink connector.Sink, prov *connector.Provenance, mm *gitcli.Mailmap) {
 	if repo.Clone == "" {
 		// No clone -> no commits. Caller already recorded the clone failure.
 		return
@@ -61,11 +66,13 @@ func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, win
 		}
 		prog.tick()
 
+		authorName, authorEmail := mm.Resolve(rec.AuthorHandle, rec.AuthorEmail)
+		committerName, committerEmail := mm.Resolve(rec.CommitterHandle, rec.CommitterEmail)
 		row := model.Commit{
 			SHA:             rec.SHA,
 			Repo:            repo.Slug,
-			AuthorHandle:    rec.AuthorHandle,
-			CommitterHandle: rec.CommitterHandle,
+			AuthorHandle:    hashHandle(canonicalCommitIdent(authorName, authorEmail)),
+			CommitterHandle: hashHandle(canonicalCommitIdent(committerName, committerEmail)),
 			AuthoredAt:      rec.AuthoredAt,
 			CommittedAt:     rec.CommittedAt,
 			MessageSubject:  rec.Subject,
@@ -125,7 +132,7 @@ func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, win
 		}
 
 		// Coauthor rows.
-		for _, ca := range trailerCoauthors(rec, repo.Slug) {
+		for _, ca := range trailerCoauthors(rec, repo.Slug, mm) {
 			if err := sink.InsertCommitCoauthor(ca); err != nil {
 				if prov.Errors["commit_coauthors"] == "" {
 					prov.Errors["commit_coauthors"] = err.Error()
@@ -134,7 +141,7 @@ func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, win
 				prov.RowsReturned["commit_coauthors"]++
 			}
 		}
-		if ca, ok := committerDistinctCoauthor(rec, repo.Slug); ok {
+		if ca, ok := committerDistinctCoauthor(rec, repo.Slug, mm); ok {
 			if err := sink.InsertCommitCoauthor(ca); err != nil {
 				if prov.Errors["commit_coauthors"] == "" {
 					prov.Errors["commit_coauthors"] = err.Error()
