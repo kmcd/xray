@@ -55,11 +55,12 @@ func newRunCmd() *cobra.Command {
 			}
 
 			artifact, err := run.Run(ctx, cfg, run.Options{
-				Out:        outPath,
-				Workers:    opts.workers,
-				KeepClones: opts.keepClones,
-				Connectors: connectors,
-				Logger:     logger,
+				Out:         outPath,
+				Workers:     opts.workers,
+				KeepClones:  opts.keepClones,
+				Connectors:  connectors,
+				Logger:      logger,
+				ToolVersion: version,
 			})
 			if err != nil {
 				return fmt.Errorf("run: %w", err)
