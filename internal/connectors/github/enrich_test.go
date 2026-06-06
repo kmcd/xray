@@ -92,12 +92,14 @@ func TestEnrichCommits_HappyPath(t *testing.T) {
 	}
 }
 
-// TestEnrichCommits_Batching exercises the batch-size split. Use 105 SHAs;
-// expect exactly two POSTs.
+// TestEnrichCommits_Batching exercises the batch-size split. POST count
+// should equal ceil(len / enrichBatchSize); we compute the expected value
+// rather than hard-code it so changing the constant doesn't break the
+// test.
 func TestEnrichCommits_Batching(t *testing.T) {
-	shas := make([]string, 105)
+	const n = 105
+	shas := make([]string, n)
 	for i := range shas {
-		// 40 hex chars, alternating digits so isFullSHA passes
 		shas[i] = "abcdef0123456789abcdef0123456789abcdef01"
 	}
 
@@ -105,8 +107,6 @@ func TestEnrichCommits_Batching(t *testing.T) {
 	var posts int
 	mux.HandleFunc("/graphql", func(w http.ResponseWriter, _ *http.Request) {
 		posts++
-		// Echo an empty repository for both batches; absence is treated
-		// as unknown.
 		_, _ = w.Write([]byte(`{"data":{"repository":{}}}`))
 	})
 	srv := httptest.NewServer(mux)
@@ -116,8 +116,9 @@ func TestEnrichCommits_Batching(t *testing.T) {
 	if _, err := c.enrichCommits(context.Background(), "kmcd", "foo", shas); err != nil {
 		t.Fatalf("enrichCommits: %v", err)
 	}
-	if posts != 2 {
-		t.Errorf("graphql POSTs = %d, want 2 (105 / batch size 100)", posts)
+	want := (n + enrichBatchSize - 1) / enrichBatchSize
+	if posts != want {
+		t.Errorf("graphql POSTs = %d, want %d (%d / batch size %d)", posts, want, n, enrichBatchSize)
 	}
 }
 

@@ -13,9 +13,11 @@ import (
 )
 
 // enrichBatchSize is the maximum number of commits batched into a single
-// GraphQL query. GitHub allows much higher alias counts but ~100 keeps the
-// payload reasonable and bounds the cost of a single retry on a failure.
-const enrichBatchSize = 100
+// GraphQL query. Empirically GitHub's GraphQL backend 502s on 100-alias
+// queries that include the associatedPullRequests connection — they
+// exceed the ~10s server-side timeout. 25 aliases keeps each query under
+// the timeout while still cutting per-commit REST calls by 25x.
+const enrichBatchSize = 25
 
 // enrichBatchDelay is a small pause between consecutive batched GraphQL
 // POSTs. GitHub's GraphQL API has a *secondary* rate limit that triggers
