@@ -156,7 +156,12 @@ func shouldRetryResp(resp *http.Response) bool {
 }
 
 // isSecondaryRateLimited reads (and re-attaches) up to peekLimit bytes of
-// the response body to look for GitHub's signature. Returns true on match.
+// the response body to look for any of GitHub's anti-burst signatures.
+// Returns true on match. Patterns covered:
+//
+//   - "secondary rate limit" — current REST + GraphQL phrasing
+//   - "abuse detection"      — older REST phrasing, still seen occasionally
+//   - "exceeded a rate limit" — fallback catch-all
 func isSecondaryRateLimited(resp *http.Response) bool {
 	if resp.Body == nil {
 		return false
@@ -166,7 +171,10 @@ func isSecondaryRateLimited(resp *http.Response) bool {
 	// it's beyond the error envelope we care about and is lost — but the
 	// retry path drains and discards bodies anyway.
 	resp.Body = io.NopCloser(bytes.NewReader(buf))
-	return strings.Contains(strings.ToLower(string(buf)), "secondary rate limit")
+	body := strings.ToLower(string(buf))
+	return strings.Contains(body, "secondary rate limit") ||
+		strings.Contains(body, "abuse detection") ||
+		strings.Contains(body, "exceeded a rate limit")
 }
 
 // nextWait computes how long to wait before the next attempt, preferring
