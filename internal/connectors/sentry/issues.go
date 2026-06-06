@@ -234,6 +234,13 @@ func mapIssue(iss issue, repoSlug string, window connector.Window) (model.Incide
 		}
 	}
 
+	// is_regression for Sentry is sourced solely from issue.isUnhandled
+	// per ADR 018. The previous heuristic OR'd in a substring match for
+	// "regression" across message/title/culprit/tag values, but that
+	// conflates user-named tags (e.g. a team labelling errors
+	// "regression-candidate") with source-level state and would flood the
+	// column with false positives. Bugsnag keeps its own per-source rule
+	// (reopened_at != nil); the two definitions are intentionally distinct.
 	return model.Incident{
 		ID:             iss.ID,
 		Repo:           repoSlug,
@@ -246,28 +253,9 @@ func mapIssue(iss issue, repoSlug string, window connector.Window) (model.Incide
 		DeployID:       "",
 		CommitSHA:      "",
 		AcknowledgedAt: nil,
-		IsRegression:   regressionHeuristic(iss),
+		IsRegression:   iss.IsUnhandled,
 		CulpritRef:     iss.Culprit,
 	}, true
-}
-
-// regressionHeuristic is the documented best-effort flag. True when Sentry
-// marks the issue as unhandled, or when "regression" appears in the message,
-// title, culprit, or any tag value.
-func regressionHeuristic(iss issue) bool {
-	if iss.IsUnhandled {
-		return true
-	}
-	hay := strings.ToLower(iss.Message + " " + iss.Title + " " + iss.Culprit)
-	if strings.Contains(hay, "regression") {
-		return true
-	}
-	for _, t := range iss.Tags {
-		if strings.Contains(strings.ToLower(t.Value), "regression") {
-			return true
-		}
-	}
-	return false
 }
 
 // parseSentryTime accepts the ISO-8601 timestamps Sentry emits. Sentry

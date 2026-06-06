@@ -119,43 +119,54 @@ func TestMapIssue_OccurrencesParsing(t *testing.T) {
 	}
 }
 
-func TestMapIssue_RegressionHeuristic(t *testing.T) {
-	tests := []struct {
-		name string
-		body string
-		want bool
-	}{
-		{
-			name: "isUnhandled true",
-			body: `{"id":"1","level":"error","firstSeen":"2025-02-01T00:00:00Z","count":"1","isUnhandled":true}`,
-			want: true,
-		},
-		{
-			name: "regression in message",
-			body: `{"id":"1","level":"error","firstSeen":"2025-02-01T00:00:00Z","count":"1","message":"Regression: foo broke"}`,
-			want: true,
-		},
-		{
-			name: "regression in tag value",
-			body: `{"id":"1","level":"error","firstSeen":"2025-02-01T00:00:00Z","count":"1","tags":[{"key":"category","value":"Regression"}]}`,
-			want: true,
-		},
-		{
-			name: "no signal",
-			body: `{"id":"1","level":"error","firstSeen":"2025-02-01T00:00:00Z","count":"1","message":"timeout calling api"}`,
-			want: false,
-		},
+// TestMapIssue_RegressionFromUnhandled asserts the only remaining signal for
+// is_regression: Sentry's issue.isUnhandled (ADR 018).
+func TestMapIssue_RegressionFromUnhandled(t *testing.T) {
+	body := `{"id":"1","level":"error","firstSeen":"2025-02-01T00:00:00Z","count":"1","isUnhandled":true}`
+	inc, ok := mapIssue(decodeIssue(t, body), "kmcd/foo", testWindow(t))
+	if !ok {
+		t.Fatalf("mapping failed")
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			inc, ok := mapIssue(decodeIssue(t, tc.body), "kmcd/foo", testWindow(t))
-			if !ok {
-				t.Fatalf("mapping failed")
-			}
-			if inc.IsRegression != tc.want {
-				t.Errorf("IsRegression = %v, want %v", inc.IsRegression, tc.want)
-			}
-		})
+	if !inc.IsRegression {
+		t.Errorf("IsRegression = false, want true for isUnhandled=true")
+	}
+}
+
+// TestMapIssue_NotRegressionWhenTagged is the case ADR 018 explicitly calls
+// out: a user-named "regression" substring in message/title/culprit/tags must
+// NOT promote a handled issue to is_regression. This is the false-positive
+// vector the old substring path created.
+func TestMapIssue_NotRegressionWhenTagged(t *testing.T) {
+	body := `{
+		"id":"1",
+		"level":"error",
+		"firstSeen":"2025-02-01T00:00:00Z",
+		"count":"1",
+		"isUnhandled":false,
+		"message":"Regression: foo broke",
+		"title":"Regression in widget",
+		"culprit":"app/regression_suite.rb",
+		"tags":[{"key":"category","value":"regression-candidate"}]
+	}`
+	inc, ok := mapIssue(decodeIssue(t, body), "kmcd/foo", testWindow(t))
+	if !ok {
+		t.Fatalf("mapping failed")
+	}
+	if inc.IsRegression {
+		t.Errorf("IsRegression = true, want false: substring 'regression' in tags/message/title/culprit must not flip the flag (ADR 018)")
+	}
+}
+
+// TestMapIssue_NotRegressionWhenClean is the negative baseline: handled and
+// no substring noise -> not a regression.
+func TestMapIssue_NotRegressionWhenClean(t *testing.T) {
+	body := `{"id":"1","level":"error","firstSeen":"2025-02-01T00:00:00Z","count":"1","isUnhandled":false,"message":"timeout calling api"}`
+	inc, ok := mapIssue(decodeIssue(t, body), "kmcd/foo", testWindow(t))
+	if !ok {
+		t.Fatalf("mapping failed")
+	}
+	if inc.IsRegression {
+		t.Errorf("IsRegression = true, want false for handled clean issue")
 	}
 }
 
