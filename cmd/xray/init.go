@@ -75,12 +75,18 @@ func newInitCmd() *cobra.Command {
 	return cmd
 }
 
+// newGitHubClient builds an authenticated go-github client. It is a package
+// variable so tests can swap in a client pointed at httptest.NewServer.
+var newGitHubClient = func(ctx context.Context, token string) *github.Client {
+	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+	tc := oauth2.NewClient(ctx, ts)
+	return github.NewClient(tc)
+}
+
 // listOrgRepos paginates the GitHub REST repos-by-org listing and returns
 // owner/repo slugs in stable order.
 func listOrgRepos(ctx context.Context, token, org string) ([]string, error) {
-	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
-	tc := oauth2.NewClient(ctx, ts)
-	client := github.NewClient(tc)
+	client := newGitHubClient(ctx, token)
 
 	var out []string
 	opt := &github.RepositoryListByOrgOptions{

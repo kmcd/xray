@@ -23,6 +23,9 @@ func isSilent(err error) bool {
 }
 
 func exitCodeFor(err error) int {
+	if err == nil {
+		return 0
+	}
 	var s *silentErr
 	if errors.As(err, &s) {
 		return s.code
