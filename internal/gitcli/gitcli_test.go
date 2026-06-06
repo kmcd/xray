@@ -487,6 +487,46 @@ func TestClient_LogPath(t *testing.T) {
 	}
 }
 
+func TestClient_IsAncestor(t *testing.T) {
+	fx := setupRepo(t)
+	c := newClient()
+	ctx := context.Background()
+
+	head := strings.TrimSpace(runShell(t, fx.dir, nil, "rev-parse", "HEAD"))
+	t.Run("ancestor_true", func(t *testing.T) {
+		got, err := c.IsAncestor(ctx, fx.dir, fx.initialSHA, head)
+		if err != nil {
+			t.Fatalf("IsAncestor: %v", err)
+		}
+		if !got {
+			t.Errorf("expected initial -> HEAD to be ancestor; got false")
+		}
+	})
+	t.Run("ancestor_false", func(t *testing.T) {
+		// HEAD is not an ancestor of the initial commit.
+		got, err := c.IsAncestor(ctx, fx.dir, head, fx.initialSHA)
+		if err != nil {
+			t.Fatalf("IsAncestor: %v", err)
+		}
+		if got {
+			t.Errorf("expected HEAD -> initial NOT to be ancestor; got true")
+		}
+	})
+	t.Run("empty_ref", func(t *testing.T) {
+		if _, err := c.IsAncestor(ctx, fx.dir, "", head); err == nil {
+			t.Errorf("expected error on empty ancestor")
+		}
+	})
+	t.Run("unknown_ref", func(t *testing.T) {
+		// Triggers a git error (non-zero non-1 exit) which IsAncestor
+		// surfaces as a wrapped error.
+		_, err := c.IsAncestor(ctx, fx.dir, "0000000000000000000000000000000000000000", head)
+		if err == nil {
+			t.Errorf("expected error for unknown commit")
+		}
+	})
+}
+
 func TestClient_LsRemote_Failure(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")

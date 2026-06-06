@@ -73,6 +73,36 @@ func (c *Client) Clone(ctx context.Context, slug, dest string, shallowSince time
 	return err
 }
 
+// IsAncestor reports whether `ancestor` is an ancestor of (or equal to)
+// `descendant` in clonePath. Implemented via `git merge-base --is-ancestor`,
+// which exits 0 when true and 1 when false; any other exit code is surfaced
+// as an error. Added to support ADR-021's merge-method derivation in the
+// github connector: rebase vs squash is the reachability of the PR's head
+// commits from the merge commit.
+func (c *Client) IsAncestor(ctx context.Context, clonePath, ancestor, descendant string) (bool, error) {
+	if ancestor == "" || descendant == "" {
+		return false, fmt.Errorf("gitcli: empty ref")
+	}
+	// #nosec G204 -- c.bin() is the system git binary; args are argv.
+	cmd := exec.CommandContext(ctx, c.bin(), "merge-base", "--is-ancestor", ancestor, descendant)
+	cmd.Dir = clonePath
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			switch exitErr.ExitCode() {
+			case 1:
+				return false, nil
+			default:
+				return false, fmt.Errorf("git merge-base --is-ancestor: %w: %s", err, strings.TrimSpace(stderr.String()))
+			}
+		}
+		return false, fmt.Errorf("git merge-base --is-ancestor: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return true, nil
+}
+
 // LsRemote verifies clone access without cloning.
 func (c *Client) LsRemote(ctx context.Context, slug string) error {
 	url := fmt.Sprintf("https://github.com/%s.git", slug)

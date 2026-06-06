@@ -316,7 +316,7 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 		BaseBranch:             string(p.BaseRefName),
 		HeadSHA:                string(p.HeadRefOid),
 		MergeSHA:               string(p.MergeCommit.Oid),
-		MergeMethod:            c.fetchMergeMethod(ctx, owner, name, prNum),
+		MergeMethod:            c.fetchMergeMethod(ctx, owner, name, prNum, repo.Clone, prHeadOids(p)),
 		IsDraft:                bool(p.IsDraft),
 		ReadyForReviewAt:       readyForReviewAt,
 		FirstReviewAt:          firstReviewAt,
@@ -407,32 +407,92 @@ func (c *Connector) paginatePRCommits(ctx context.Context, owner, name string, n
 	}
 }
 
-// fetchMergeMethod returns "merge" / "squash" / "rebase" or empty. Reads
-// the PR via REST so the underlying merge_method field is exposed; this is
-// the cleanest path that doesn't require a custom GraphQL type.
-func (c *Connector) fetchMergeMethod(ctx context.Context, owner, name string, number int) string {
+// prHeadOids returns the commit OIDs in p.Commits.Nodes as plain strings,
+// for feeding into reachability checks.
+func prHeadOids(p prGraph) []string {
+	out := make([]string, 0, len(p.Commits.Nodes))
+	for _, n := range p.Commits.Nodes {
+		out = append(out, string(n.Commit.Oid))
+	}
+	return out
+}
+
+// deriveMergeMethod infers merge_method from the merge commit's parents and
+// whether the PR head commits are reachable from the merge commit (ADR 021).
+//
+//   - 2 parents          -> "merge"
+//   - 1 parent + all PR head commits reachable -> "rebase"
+//   - 1 parent + at least one not reachable    -> "squash"
+//
+// reachable[oid] == true means oid is an ancestor of (or equal to) the
+// merge commit; the standard test is `git merge-base --is-ancestor <oid>
+// <mergeSHA>`. Returns "" when the merge state is unknown (e.g. an unmerged
+// PR with no merge commit).
+func deriveMergeMethod(mergeParents int, prHeadCommits []string, reachable map[string]bool) string {
+	if mergeParents >= 2 {
+		return "merge"
+	}
+	if mergeParents == 1 {
+		for _, c := range prHeadCommits {
+			if !reachable[c] {
+				return "squash"
+			}
+		}
+		return "rebase"
+	}
+	return ""
+}
+
+// fetchMergeMethod returns "merge" / "squash" / "rebase" or empty. Wraps
+// deriveMergeMethod with the network and git lookups required to populate
+// its inputs.
+//
+//   - Parent count comes from the REST commit lookup against the merge SHA.
+//   - Reachability per PR head commit comes from `git merge-base
+//     --is-ancestor` against the per-run clone; when no clone is available
+//     (clonePath == "") the function falls back to the historical
+//     parent-count-only heuristic (1 parent -> "squash") so behaviour is
+//     defined in test-only paths that exercise the connector without a
+//     working tree.
+func (c *Connector) fetchMergeMethod(ctx context.Context, owner, name string, number int, clonePath string, prHeadCommits []string) string {
 	pr, _, err := c.rest.PullRequests.Get(ctx, owner, name, number)
 	if err != nil || pr == nil {
 		return ""
 	}
-	// go-github exposes Merged + an undocumented PullRequest.MergeMethod is
-	// not present; the squash/rebase signal is exposed via the events API.
-	// As a pragmatic shortcut, infer from base/head/merge_commit shape:
-	//   - no merge commit -> "rebase"
-	//   - merge commit with one parent -> "squash"
-	//   - merge commit with two parents -> "merge"
 	if !pr.GetMerged() {
 		return ""
 	}
-	if pr.MergeCommitSHA == nil || pr.GetMergeCommitSHA() == "" {
+	mergeSHA := pr.GetMergeCommitSHA()
+	if mergeSHA == "" {
+		// No merge commit recorded — treat as rebase per ADR 021's
+		// 1-parent + reachable branch (every PR head commit lands as-is).
 		return "rebase"
 	}
-	rc, _, err := c.rest.Repositories.GetCommit(ctx, owner, name, pr.GetMergeCommitSHA(), nil)
-	if err != nil || rc == nil || rc.Commit == nil {
+	rc, _, err := c.rest.Repositories.GetCommit(ctx, owner, name, mergeSHA, nil)
+	if err != nil || rc == nil {
 		return ""
 	}
-	if len(rc.Parents) >= 2 {
-		return "merge"
+	parents := len(rc.Parents)
+
+	reachable := map[string]bool{}
+	if clonePath != "" && c.git != nil {
+		for _, oid := range prHeadCommits {
+			if oid == "" {
+				continue
+			}
+			ok, ierr := c.git.IsAncestor(ctx, clonePath, oid, mergeSHA)
+			if ierr != nil {
+				// Treat lookup failures as not-reachable; the squash branch
+				// is the safer classification when we cannot confirm.
+				reachable[oid] = false
+				continue
+			}
+			reachable[oid] = ok
+		}
+	} else if parents == 1 {
+		// No clone available: fall back to the historical parent-count
+		// heuristic. 1 parent -> "squash"; we cannot distinguish rebase.
+		return "squash"
 	}
-	return "squash"
+	return deriveMergeMethod(parents, prHeadCommits, reachable)
 }
