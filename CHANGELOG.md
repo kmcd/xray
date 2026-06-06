@@ -4,6 +4,24 @@ All notable changes to `xray` per release. Format follows [Keep a Changelog](htt
 
 The analyser refuses to load artifacts at an unknown `schema_version`. See the [compatibility table](./README.md#compatibility) in the README for the binary-to-schema mapping.
 
+## [0.2.1] — 2026-06-06
+
+Five bug fixes surfaced by the v0.2.0 smoke test against `goreleaser/chglog`. No schema change; `schema_version` stays at 1.
+
+### Fixes
+
+- **`gitcli` numstat preserved.** `git log --numstat --name-status` silently dropped numstat output on modern git (`--name-status` wins). Every `commits.additions` / `commits.deletions` / `commit_files.additions` / `commit_files.deletions` was 0 — hotspot and change-size analysis was impossible. Parser switched to `--numstat --raw`, which compose. Regression guard added in `internal/gitcli/gitcli_test.go`. ([#55])
+- **`releases` filtered by window.** `extractReleases` shipped every release in the repo's history regardless of the configured window — the smoke run produced 19 releases dating back to 2020. Now skipped per `window.Contains` with early-stop paging on the created-at-desc ordering. ([#56])
+- **`releases` / `deploys` get the tagged commit, not HEAD.** `resolveReleaseSHA` resolved `r.TargetCommitish` (typically a branch like `main`), so `GetCommitSHA1` returned the branch HEAD and every release on the same default branch stamped the same SHA. Now resolves the tag itself; falls back to `TargetCommitish` only when the tag is missing. ([#57])
+- **`manifest.tool_version` populated.** `cmd/xray/run.go` never set `run.Options.ToolVersion`, so every artifact shipped with an empty `tool_version` in both `manifest.json` and the `_schema` row. The `-ldflags`-injected `version` now flows through. ([#58])
+- **Config validator accepts `<org>/.github`.** The slug regex forbade leading-dot repo names, so `init` → `validate` round-tripped to a diagnostic on the canonical GitHub org-config repo. Owners still must start with `[A-Za-z0-9]`; only the repo half relaxed. ([#59])
+
+[#55]: https://github.com/kmcd/xray/issues/55
+[#56]: https://github.com/kmcd/xray/issues/56
+[#57]: https://github.com/kmcd/xray/issues/57
+[#58]: https://github.com/kmcd/xray/issues/58
+[#59]: https://github.com/kmcd/xray/issues/59
+
 ## [0.2.0] — 2026-06-06
 
 Coverage + risk hardening on top of v0.1.0. `schema_version` unchanged at 1 — no DDL changes — but several behavioural definitions tighten. The compatibility table maps `0.2.0 → 1`.
@@ -70,5 +88,6 @@ First tagged release. Emits `schema_version` 1.
 - `checksums.txt` signed by cosign in keyless mode against the GitHub OIDC issuer; verification snippet in the [README](./README.md#install).
 - CI gates: build + test (Ubuntu + macOS), lint (`golangci-lint` v2 with `gosec`), `govulncheck`, `go-test-coverage`.
 
+[0.2.1]: https://github.com/kmcd/xray/releases/tag/v0.2.1
 [0.2.0]: https://github.com/kmcd/xray/releases/tag/v0.2.0
 [0.1.0]: https://github.com/kmcd/xray/releases/tag/v0.1.0
