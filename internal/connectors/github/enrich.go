@@ -9,12 +9,21 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // enrichBatchSize is the maximum number of commits batched into a single
 // GraphQL query. GitHub allows much higher alias counts but ~100 keeps the
 // payload reasonable and bounds the cost of a single retry on a failure.
 const enrichBatchSize = 100
+
+// enrichBatchDelay is the pause between consecutive batched GraphQL POSTs.
+// GitHub's GraphQL API has both a per-hour points ceiling (handled by the
+// shared rate-limit transport) and a *secondary* rate limit that triggers
+// on bursts and returns 403 with a "secondary rate limit" body. Spacing
+// batches by a few hundred ms keeps total wall-time low (30 batches *
+// 250 ms = 7.5 s of added delay) while staying under the burst threshold.
+const enrichBatchDelay = 250 * time.Millisecond
 
 // commitEnrichment is the per-SHA data the GraphQL batched query collects.
 // Both fields are pointers so callers can distinguish "not populated"
@@ -37,6 +46,15 @@ func (c *Connector) enrichCommits(ctx context.Context, owner, name string, shas 
 	for i := 0; i < len(shas); i += enrichBatchSize {
 		if ctx.Err() != nil {
 			return out, ctx.Err()
+		}
+		if i > 0 {
+			// Space batches to dodge GitHub's secondary (anti-burst) rate
+			// limit on the GraphQL endpoint.
+			select {
+			case <-time.After(enrichBatchDelay):
+			case <-ctx.Done():
+				return out, ctx.Err()
+			}
 		}
 		end := i + enrichBatchSize
 		if end > len(shas) {
