@@ -4,6 +4,21 @@ All notable changes to `xray` per release. Format follows [Keep a Changelog](htt
 
 The analyser refuses to load artifacts at an unknown `schema_version`. See the [compatibility table](./README.md#compatibility) in the README for the binary-to-schema mapping.
 
+## [0.2.2] — 2026-06-06
+
+Performance + observability pass. No schema change; `schema_version` stays at 1. Validated against `goreleaser/chglog` post-fix: 65 commits with full enrichment (`signature_verified` + `landed_via_pr` populated on every row), 2:20 wall time.
+
+### Performance
+
+- **Batched GraphQL commit enrichment.** Per-commit REST calls for `signature_verified` and `landed_via_pr` previously ran serially — 3000 round-trips for 1500 commits, ~36 min at the authenticated rate-limit floor. Now batched into ~25-alias GraphQL queries via `internal/connectors/github/enrich.go`. PostHog-scale enrichment dropped from "never finished" to ~30 s of API time. ([#64])
+- **Batch size pinned to 25 (was 100).** GitHub's GraphQL backend 502s on 100-alias queries with `associatedPullRequests` connections — the query exceeds the ~10 s server-side timeout. 25 aliases keeps each query under the timeout while still cutting per-commit REST calls by 25×.
+- **Per-error-class retry budgets in `ratelimit.Transport`.** `Policy` now carries separate `CumulativeBudget` (60 s, for 429 + 5xx) and `SecondaryRateLimitBudget` (600 s, for GitHub anti-burst 403s). A long secondary-RL wait no longer starves the transient-error budget. ([#65])
+- **Secondary-rate-limit detection.** Transport recognises 403 responses whose body contains `secondary rate limit`, `abuse detection`, or `exceeded a rate limit`; treats them as transient and retries with a documented-minimum 60 s wait per GitHub's docs. Body is peeked once and re-attached so the terminal caller still sees the full error envelope.
+
+### Observability
+
+- **Progress logging in the github connector.** `commits`, `prs`, and `file_metrics` stages emit `github: progress` checkpoints every 100 records or 30 s — whichever first. The "is it stuck?" black-box problem during long extracts is now answerable from the run log alone. ([#62])
+
 ## [0.2.1] — 2026-06-06
 
 Five bug fixes surfaced by the v0.2.0 smoke test against `goreleaser/chglog`. No schema change; `schema_version` stays at 1.
@@ -90,6 +105,7 @@ First tagged release. Emits `schema_version` 1.
 - `checksums.txt` signed by cosign in keyless mode against the GitHub OIDC issuer; verification snippet in the [README](./README.md#install).
 - CI gates: build + test (Ubuntu + macOS), lint (`golangci-lint` v2 with `gosec`), `govulncheck`, `go-test-coverage`.
 
+[0.2.2]: https://github.com/kmcd/xray/releases/tag/v0.2.2
 [0.2.1]: https://github.com/kmcd/xray/releases/tag/v0.2.1
 [0.2.0]: https://github.com/kmcd/xray/releases/tag/v0.2.0
 [0.1.0]: https://github.com/kmcd/xray/releases/tag/v0.1.0
