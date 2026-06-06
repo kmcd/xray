@@ -216,7 +216,8 @@ func TestDeployRollbackLinkage(t *testing.T) {
 	st, db := newTestStore(t)
 
 	// Three deploys in the same env. The third re-deploys the first
-	// commit while skipping the second: classified as a rollback.
+	// commit while skipping the second, and the second failed: classified
+	// as a rollback per ADR 017.
 	deploys := []model.Deploy{
 		{
 			ID: "d-A", Repo: "kmcd/foo", Environment: "production",
@@ -226,7 +227,7 @@ func TestDeployRollbackLinkage(t *testing.T) {
 		{
 			ID: "d-B", Repo: "kmcd/foo", Environment: "production",
 			DeployedAt: mustTime(t, "2025-01-02T00:00:00Z"),
-			CommitSHA:  "sha-B", Source: "github", Status: "success",
+			CommitSHA:  "sha-B", Source: "github", Status: "failed",
 		},
 		{
 			ID: "d-C", Repo: "kmcd/foo", Environment: "production",
@@ -312,6 +313,169 @@ func TestDeployRollback_SkipsEmptyEnvironment(t *testing.T) {
 	}
 	if stats.DeploysRolledBack != 0 {
 		t.Errorf("DeploysRolledBack = %d, want 0", stats.DeploysRolledBack)
+	}
+}
+
+// ADR 017: a re-deploy of a green commit (same SHA pattern) where the
+// intervening deploy succeeded is NOT a rollback. The original heuristic
+// false-positived on canary advance / blue-green flip-back; the tightened
+// heuristic gates on D[i-1].status != "success".
+func TestDeployRollback_PredecessorSuccessNotFlagged(t *testing.T) {
+	st, db := newTestStore(t)
+
+	deploys := []model.Deploy{
+		{
+			ID: "g-A", Repo: "kmcd/foo", Environment: "production",
+			DeployedAt: mustTime(t, "2025-01-01T00:00:00Z"),
+			CommitSHA:  "sha-A", Source: "github", Status: "success",
+		},
+		{
+			ID: "g-B", Repo: "kmcd/foo", Environment: "production",
+			DeployedAt: mustTime(t, "2025-01-02T00:00:00Z"),
+			CommitSHA:  "sha-B", Source: "github", Status: "success",
+		},
+		{
+			ID: "g-C", Repo: "kmcd/foo", Environment: "production",
+			DeployedAt: mustTime(t, "2025-01-03T00:00:00Z"),
+			CommitSHA:  "sha-A", Source: "github", Status: "success",
+		},
+	}
+	for _, d := range deploys {
+		if err := st.InsertDeploy(d); err != nil {
+			t.Fatalf("InsertDeploy %s: %v", d.ID, err)
+		}
+	}
+
+	stats, err := postprocess.Run(context.Background(), db, nullLogger())
+	if err != nil {
+		t.Fatalf("postprocess.Run: %v", err)
+	}
+	if stats.DeploysRolledBack != 0 {
+		t.Errorf("DeploysRolledBack = %d, want 0", stats.DeploysRolledBack)
+	}
+
+	var rolled int
+	if err := db.QueryRow(
+		`SELECT rolled_back FROM deploys WHERE id = ?`, "g-B",
+	).Scan(&rolled); err != nil {
+		t.Fatalf("query g-B: %v", err)
+	}
+	if rolled != 0 {
+		t.Errorf("g-B.rolled_back = %d, want 0 (predecessor succeeded, not a rollback)", rolled)
+	}
+
+	var supersedes sql.NullString
+	if err := db.QueryRow(
+		`SELECT supersedes_deploy_id FROM deploys WHERE id = ?`, "g-C",
+	).Scan(&supersedes); err != nil {
+		t.Fatalf("query g-C: %v", err)
+	}
+	if supersedes.String != "" {
+		t.Errorf("g-C.supersedes_deploy_id = %q, want empty", supersedes.String)
+	}
+}
+
+// ADR 017: a "failed" predecessor satisfies the non-success gate and the
+// rollback is flagged.
+func TestDeployRollback_PredecessorFailedFlagged(t *testing.T) {
+	st, db := newTestStore(t)
+
+	deploys := []model.Deploy{
+		{
+			ID: "f-A", Repo: "kmcd/foo", Environment: "production",
+			DeployedAt: mustTime(t, "2025-01-01T00:00:00Z"),
+			CommitSHA:  "sha-A", Source: "github", Status: "success",
+		},
+		{
+			ID: "f-B", Repo: "kmcd/foo", Environment: "production",
+			DeployedAt: mustTime(t, "2025-01-02T00:00:00Z"),
+			CommitSHA:  "sha-B", Source: "github", Status: "failed",
+		},
+		{
+			ID: "f-C", Repo: "kmcd/foo", Environment: "production",
+			DeployedAt: mustTime(t, "2025-01-03T00:00:00Z"),
+			CommitSHA:  "sha-A", Source: "github", Status: "success",
+		},
+	}
+	for _, d := range deploys {
+		if err := st.InsertDeploy(d); err != nil {
+			t.Fatalf("InsertDeploy %s: %v", d.ID, err)
+		}
+	}
+
+	stats, err := postprocess.Run(context.Background(), db, nullLogger())
+	if err != nil {
+		t.Fatalf("postprocess.Run: %v", err)
+	}
+	if stats.DeploysRolledBack != 1 {
+		t.Errorf("DeploysRolledBack = %d, want 1", stats.DeploysRolledBack)
+	}
+
+	var supersedes string
+	if err := db.QueryRow(
+		`SELECT COALESCE(supersedes_deploy_id,'') FROM deploys WHERE id = ?`, "f-C",
+	).Scan(&supersedes); err != nil {
+		t.Fatalf("query f-C: %v", err)
+	}
+	if supersedes != "f-B" {
+		t.Errorf("f-C.supersedes_deploy_id = %q, want f-B", supersedes)
+	}
+
+	var rolled int
+	if err := db.QueryRow(
+		`SELECT rolled_back FROM deploys WHERE id = ?`, "f-B",
+	).Scan(&rolled); err != nil {
+		t.Fatalf("query f-B: %v", err)
+	}
+	if rolled != 1 {
+		t.Errorf("f-B.rolled_back = %d, want 1", rolled)
+	}
+}
+
+// ADR 017: "error" and "rolled_back" also count as non-success and gate
+// the heuristic to flag the rollback.
+func TestDeployRollback_PredecessorErrorFlagged(t *testing.T) {
+	st, db := newTestStore(t)
+
+	deploys := []model.Deploy{
+		{
+			ID: "x-A", Repo: "kmcd/foo", Environment: "production",
+			DeployedAt: mustTime(t, "2025-01-01T00:00:00Z"),
+			CommitSHA:  "sha-A", Source: "github", Status: "success",
+		},
+		{
+			ID: "x-B", Repo: "kmcd/foo", Environment: "production",
+			DeployedAt: mustTime(t, "2025-01-02T00:00:00Z"),
+			CommitSHA:  "sha-B", Source: "github", Status: "error",
+		},
+		{
+			ID: "x-C", Repo: "kmcd/foo", Environment: "production",
+			DeployedAt: mustTime(t, "2025-01-03T00:00:00Z"),
+			CommitSHA:  "sha-A", Source: "github", Status: "success",
+		},
+	}
+	for _, d := range deploys {
+		if err := st.InsertDeploy(d); err != nil {
+			t.Fatalf("InsertDeploy %s: %v", d.ID, err)
+		}
+	}
+
+	stats, err := postprocess.Run(context.Background(), db, nullLogger())
+	if err != nil {
+		t.Fatalf("postprocess.Run: %v", err)
+	}
+	if stats.DeploysRolledBack != 1 {
+		t.Errorf("DeploysRolledBack = %d, want 1", stats.DeploysRolledBack)
+	}
+
+	var rolled int
+	if err := db.QueryRow(
+		`SELECT rolled_back FROM deploys WHERE id = ?`, "x-B",
+	).Scan(&rolled); err != nil {
+		t.Fatalf("query x-B: %v", err)
+	}
+	if rolled != 1 {
+		t.Errorf("x-B.rolled_back = %d, want 1 (error status is non-success)", rolled)
 	}
 }
 

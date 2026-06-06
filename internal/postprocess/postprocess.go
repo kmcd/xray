@@ -150,17 +150,19 @@ func linkIncidents(ctx context.Context, db *sql.DB, log *slog.Logger) (int, erro
 }
 
 // linkDeployRollbacks walks each (repo, environment) deploy timeline in
-// ascending deployed_at order. The v1 heuristic: a deploy D[i] is
-// classified as a rollback of D[i-1] when D[i].commit_sha == D[i-2].commit_sha
-// AND D[i].commit_sha != D[i-1].commit_sha AND the commit_sha is non-empty.
-// In other words, redeploying an older commit while skipping the
-// immediately prior commit is treated as a rollback. D[i] is updated with
-// supersedes_deploy_id = D[i-1].id; D[i-1] is marked rolled_back.
+// ascending deployed_at order. The heuristic: a deploy D[i] is classified
+// as a rollback of D[i-1] when D[i].commit_sha == D[i-2].commit_sha
+// AND D[i].commit_sha != D[i-1].commit_sha AND the commit_sha is non-empty
+// AND D[i-1].status != "success" (per ADR 017 — the predecessor must be a
+// failed/errored/already-rolled-back deploy for this to be a real rollback
+// rather than a routine re-deploy of a green commit).
+// D[i] is updated with supersedes_deploy_id = D[i-1].id; D[i-1] is marked
+// rolled_back.
 func linkDeployRollbacks(ctx context.Context, db *sql.DB, log *slog.Logger) (int, error) {
 	// Pull every deploy with a non-empty environment in a single scan,
 	// ordered so we can walk groups in place.
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, repo, source, environment, COALESCE(commit_sha, ''), deployed_at
+		SELECT id, repo, source, environment, COALESCE(commit_sha, ''), deployed_at, COALESCE(status, '')
 		FROM deploys
 		WHERE environment IS NOT NULL AND environment != ''
 		ORDER BY repo ASC, environment ASC, deployed_at ASC, id ASC
@@ -170,7 +172,7 @@ func linkDeployRollbacks(ctx context.Context, db *sql.DB, log *slog.Logger) (int
 	}
 
 	type deploy struct {
-		id, repo, source, env, sha, deployedAt string
+		id, repo, source, env, sha, deployedAt, status string
 	}
 	var all []deploy
 	for rows.Next() {
@@ -179,7 +181,7 @@ func linkDeployRollbacks(ctx context.Context, db *sql.DB, log *slog.Logger) (int
 			return 0, ctx.Err()
 		}
 		var d deploy
-		if err := rows.Scan(&d.id, &d.repo, &d.source, &d.env, &d.sha, &d.deployedAt); err != nil {
+		if err := rows.Scan(&d.id, &d.repo, &d.source, &d.env, &d.sha, &d.deployedAt, &d.status); err != nil {
 			_ = rows.Close()
 			return 0, fmt.Errorf("scan deploy: %w", err)
 		}
@@ -207,6 +209,13 @@ func linkDeployRollbacks(ctx context.Context, db *sql.DB, log *slog.Logger) (int
 			p1 := group[k-1]
 			p2 := group[k-2]
 			if d.sha == "" {
+				continue
+			}
+			// ADR 017: gate the heuristic on the predecessor being a
+			// non-success deploy. A re-deploy of a green commit (canary
+			// advance, autoscaling, blue/green flip back) is not a
+			// rollback even when the commit pattern matches.
+			if p1.status == "success" {
 				continue
 			}
 			if d.sha == p2.sha && d.sha != p1.sha {

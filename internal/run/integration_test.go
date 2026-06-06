@@ -364,9 +364,10 @@ func TestRun_PostprocessSurfaced(t *testing.T) {
 	bare := setupFakeRemote(t)
 	installInsteadOf(t, map[string]string{slug: bare})
 
-	// Rollback pattern per the pre-ADR-017 heuristic the postprocess code
-	// currently implements: D[0]=A, D[1]=B, D[2]=A in the same env triggers
-	// the rollback link. deployed_at must be strictly increasing.
+	// Rollback pattern per ADR 017: D[0]=A (success), D[1]=B (failed),
+	// D[2]=A (success) in the same env triggers the rollback link because
+	// the predecessor D[1] is non-success. deployed_at must be strictly
+	// increasing.
 	base := time.Date(2025, 3, 1, 12, 0, 0, 0, time.UTC)
 	deploys := []model.Deploy{
 		{ID: "d0", Environment: "prod", DeployedAt: base, CommitSHA: "shaA", Source: "stub", Status: "success"},
@@ -406,14 +407,13 @@ func TestRun_PostprocessSurfaced(t *testing.T) {
 		t.Fatalf("query d2: %v", err)
 	}
 
-	if rolled != 1 || supersedes.String != "d1" {
-		// Per the issue brief: the existing v1 heuristic does not require
-		// D[i-1] to be a failed deploy (ADR 017 tightens this), so the
-		// test should pass today. If postprocess is changed in a future
-		// commit to require failure, this block documents the expected
-		// shape so the test still surfaces the regression rather than
-		// silently passing.
-		t.Skipf("postprocess linkage did not match expected pre-ADR-017 shape (rolled=%d, supersedes=%q); ADR 017 tightening may have landed and changed the heuristic", rolled, supersedes.String)
+	// Per ADR 017: D[1] failed, so the rollback heuristic triggers and
+	// D[2] supersedes D[1].
+	if rolled != 1 {
+		t.Errorf("d1.rolled_back = %d, want 1", rolled)
+	}
+	if supersedes.String != "d1" {
+		t.Errorf("d2.supersedes_deploy_id = %q, want d1", supersedes.String)
 	}
 }
 
