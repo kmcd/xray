@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 
 	gh "github.com/google/go-github/v66/github"
@@ -88,4 +90,29 @@ func New(cfg config.GitHubConn, log *slog.Logger) (*Connector, error) {
 		git:           &gitcli.Client{Log: log},
 		templateCache: map[string]*template{},
 	}, nil
+}
+
+// setBaseURL retargets the underlying REST and GraphQL clients at the
+// supplied origin (e.g. an httptest.NewServer URL). It is intentionally
+// unexported and exists solely to enable HTTP-path tests in _test.go files
+// in this package to drive the connector against a local fake. Production
+// code paths construct clients pointing at api.github.com via New and never
+// call this. rawURL must be a complete URL ("http://host:port" or similar)
+// without a trailing path — the REST base becomes "<rawURL>/" and the
+// GraphQL endpoint becomes "<rawURL>/graphql".
+func (c *Connector) setBaseURL(rawURL string) error {
+	if rawURL == "" {
+		return fmt.Errorf("github: empty base URL")
+	}
+	if !strings.HasSuffix(rawURL, "/") {
+		rawURL += "/"
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("github: parse base URL: %w", err)
+	}
+	c.rest.BaseURL = u
+	c.rest.UploadURL = u
+	c.gql = githubv4.NewEnterpriseClient(strings.TrimSuffix(rawURL, "/")+"/graphql", c.httpClient)
+	return nil
 }
