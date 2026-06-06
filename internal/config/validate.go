@@ -29,7 +29,11 @@ func (d Diagnostic) Error() string {
 
 // repoSlugRe matches owner/repo. Permissive on the legal characters GitHub
 // allows: alphanumerics, hyphen, underscore, dot.
-var repoSlugRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$`)
+// Owners cannot start with `.` or `-`. Repo names CAN start with `.` —
+// the canonical example is the `<org>/.github` org-config repo, which
+// GitHub treats as a real, listable repo. Repo names also accept leading
+// `_` (e.g. `_redirects`-style artifacts in some toolchains).
+var repoSlugRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._][A-Za-z0-9._-]*$`)
 
 // Validate enforces the schema rules from CLAUDE.md and returns one
 // diagnostic per problem found. file is the source path used in diagnostic

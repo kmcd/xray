@@ -74,6 +74,16 @@ platform = ["not-a-slug"]
 			want: []string{"is not a valid owner/repo slug"},
 		},
 		{
+			// #59: <org>/.github is a real, listable GitHub repo.
+			// Validator must accept leading-dot repo names.
+			name: "org-config repo with leading-dot name is valid",
+			toml: `window = "2025-01-01..2025-06-30"
+[teams]
+platform = ["goreleaser/.github"]
+`,
+			want: nil,
+		},
+		{
 			name: "repo in two teams",
 			toml: `window = "2025-01-01..2025-06-30"
 [teams]
