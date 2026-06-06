@@ -21,20 +21,19 @@ type Policy struct {
 	CumulativeBudget time.Duration
 }
 
-// DefaultPolicy returns the spec-mandated 3-attempt / 120s policy. The
-// budget was raised from the original 60s to fit a single secondary-rate-
-// limit retry (which sleeps ~30-60s) within one attempt without exhausting
-// the cumulative wait.
+// DefaultPolicy returns the 3-attempt / 180s policy. The budget covers two
+// 60s secondary-rate-limit retries (the documented per-incident wait)
+// with a small margin for the request itself.
 func DefaultPolicy() Policy {
-	return Policy{MaxAttempts: 3, CumulativeBudget: 120 * time.Second}
+	return Policy{MaxAttempts: 3, CumulativeBudget: 180 * time.Second}
 }
 
 // secondaryRateLimitWait is the default wait applied when a response is
 // recognised as GitHub's secondary (anti-burst) rate limit and no
-// Retry-After header was supplied. GitHub documents "a few minutes" as
-// the recommended wait; 45s strikes a balance between honouring the
-// suggestion and keeping total wall time low.
-const secondaryRateLimitWait = 45 * time.Second
+// Retry-After header was supplied. GitHub's documentation specifically
+// states "wait for at least one minute before retrying" — anything
+// shorter risks immediately tripping the same limit again.
+const secondaryRateLimitWait = 60 * time.Second
 
 // peekLimit caps how many bytes of a 4xx response body we read for
 // rate-limit-signature detection before re-attaching the body for the
