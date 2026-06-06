@@ -3,6 +3,7 @@ package github
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/kmcd/xray/internal/connector"
@@ -69,6 +70,71 @@ func emitDefects(
 			Repo:      repo,
 			TicketRef: ref,
 			Source:    source,
+			OpenedAt:  openedAt,
+			ClosedAt:  closedAt,
+		}
+		if err := sink.InsertDefect(row); err != nil {
+			if prov.Errors["defects"] == "" {
+				prov.Errors["defects"] = err.Error()
+			}
+			continue
+		}
+		prov.RowsReturned["defects"]++
+	}
+}
+
+// emitPRDefects collects unique ticket refs across a PR's title and body and
+// emits one model.Defect per unique ref. Per ADR 019, refs that match both
+// title and body emit a single row with source = "pr_title" (title wins);
+// refs found only in the body get source = "pr_body". The ID stays stable as
+// repo:source:prNumber:ref so two PRs referencing the same ticket remain two
+// distinct rows.
+func emitPRDefects(
+	sink connector.Sink,
+	repo string,
+	prNumber int,
+	title, body string,
+	openedAt time.Time,
+	closedAt *time.Time,
+	prov *connector.Provenance,
+) {
+	titleRefs := extractTicketRefs(title)
+	bodyRefs := extractTicketRefs(body)
+	if len(titleRefs) == 0 && len(bodyRefs) == 0 {
+		return
+	}
+
+	// Walk title first so title-matched refs win; then body refs not seen
+	// in the title get pr_body. Preserves first-seen order within each
+	// source (title before body).
+	seen := make(map[string]bool, len(titleRefs)+len(bodyRefs))
+	type entry struct {
+		ref    string
+		source string
+	}
+	ordered := make([]entry, 0, len(titleRefs)+len(bodyRefs))
+	for _, ref := range titleRefs {
+		if seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		ordered = append(ordered, entry{ref: ref, source: "pr_title"})
+	}
+	for _, ref := range bodyRefs {
+		if seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		ordered = append(ordered, entry{ref: ref, source: "pr_body"})
+	}
+
+	scopeID := strconv.Itoa(prNumber)
+	for _, e := range ordered {
+		row := model.Defect{
+			ID:        fmt.Sprintf("%s:%s:%s:%s", repo, e.source, scopeID, e.ref),
+			Repo:      repo,
+			TicketRef: e.ref,
+			Source:    e.source,
 			OpenedAt:  openedAt,
 			ClosedAt:  closedAt,
 		}
