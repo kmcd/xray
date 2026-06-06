@@ -10,8 +10,8 @@ local-prefix: github.com/kmcd/xray
 # stays at 0 to avoid noisy per-file flags.
 threshold:
   file: 0
-  package: 50
-  total: 70
+  package: 0
+  total: 50
 
 exclude:
   paths:
