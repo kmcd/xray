@@ -30,6 +30,12 @@ type Connector struct {
 	gql        *githubv4.Client
 	git        *gitcli.Client
 
+	// graphqlURL is the endpoint enrichCommits POSTs to. Held separately
+	// because the batched-alias query is built as a raw string rather than
+	// via shurcooL/githubv4's struct-tag interface. Updated by setBaseURL
+	// alongside the gql client for tests.
+	graphqlURL string
+
 	// per-connector caches that are safe to reuse across repos.
 	mu            sync.Mutex
 	templateCache map[string]*template // repo slug -> parsed template (nil if absent)
@@ -87,6 +93,7 @@ func New(cfg config.GitHubConn, log *slog.Logger) (*Connector, error) {
 		httpClient:    httpClient,
 		rest:          rest,
 		gql:           gql,
+		graphqlURL:    "https://api.github.com/graphql",
 		git:           &gitcli.Client{Log: log},
 		templateCache: map[string]*template{},
 	}, nil
@@ -113,6 +120,7 @@ func (c *Connector) setBaseURL(rawURL string) error {
 	}
 	c.rest.BaseURL = u
 	c.rest.UploadURL = u
-	c.gql = githubv4.NewEnterpriseClient(strings.TrimSuffix(rawURL, "/")+"/graphql", c.httpClient)
+	c.graphqlURL = strings.TrimSuffix(rawURL, "/") + "/graphql"
+	c.gql = githubv4.NewEnterpriseClient(c.graphqlURL, c.httpClient)
 	return nil
 }

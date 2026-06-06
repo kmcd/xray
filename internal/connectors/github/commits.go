@@ -3,9 +3,6 @@ package github
 import (
 	"context"
 	"log/slog"
-	"net/http"
-
-	gh "github.com/google/go-github/v66/github"
 
 	"github.com/kmcd/xray/internal/connector"
 	"github.com/kmcd/xray/internal/model"
@@ -13,7 +10,8 @@ import (
 
 // extractCommits drives git log over the local clone and emits commits,
 // commit_files, and commit_coauthors rows. Signature verification and
-// landed_via_pr are filled in via REST best-effort.
+// landed_via_pr are filled in via a single batched GraphQL request per
+// ~100 commits (see enrich.go and issue #64).
 func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, window connector.Window, sink connector.Sink, prov *connector.Provenance) {
 	if repo.Clone == "" {
 		// No clone -> no commits. Caller already recorded the clone failure.
@@ -30,9 +28,29 @@ func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, win
 	}
 
 	owner, name, slugOK := splitSlug(repo.Slug)
-	// landedCache avoids re-asking the API for the same SHA across PR commit
-	// fan-out; keys are commit SHAs, values are *bool (nil = unknown).
-	landedCache := map[string]*bool{}
+
+	// Batch-enrich every SHA up front so the per-record loop is a pure
+	// in-memory join. Replaces O(commits * 2) REST round-trips with
+	// O(commits / 100) GraphQL POSTs.
+	var enrichment map[string]commitEnrichment
+	if slugOK && len(records) > 0 {
+		shas := make([]string, 0, len(records))
+		for _, rec := range records {
+			shas = append(shas, rec.SHA)
+		}
+		var enrichErr error
+		enrichment, enrichErr = c.enrichCommits(ctx, owner, name, shas)
+		if enrichErr != nil {
+			// enrichCommits already logs per-batch failures; this is only
+			// hit if the entire pass aborted (e.g. context cancelled).
+			// Don't fail the connector — the columns stay nil, which the
+			// analyser treats as unknown.
+			c.log.Warn("github: batched commit enrichment aborted",
+				slog.String("repo", repo.Slug),
+				slog.String("error", enrichErr.Error()),
+			)
+		}
+	}
 
 	for _, rec := range records {
 		if ctx.Err() != nil {
@@ -62,16 +80,9 @@ func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, win
 			row.FilesChanged++
 		}
 
-		// Signature verified + landed_via_pr via REST. Skip silently on
-		// per-commit failure; leave the pointer nil so the analyser reads
-		// the field as unknown rather than false.
-		if slugOK {
-			if v := c.fetchSignatureVerified(ctx, owner, name, rec.SHA); v != nil {
-				row.SignatureVerified = v
-			}
-			if v := c.fetchLandedViaPR(ctx, owner, name, rec.SHA, landedCache); v != nil {
-				row.LandedViaPR = v
-			}
+		if en, ok := enrichment[rec.SHA]; ok {
+			row.SignatureVerified = en.SignatureVerified
+			row.LandedViaPR = en.LandedViaPR
 		}
 
 		if err := sink.InsertCommit(row); err != nil {
@@ -131,41 +142,3 @@ func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, win
 		}
 	}
 }
-
-// fetchSignatureVerified asks the REST API for the verification flag on a
-// single commit. Returns nil on any error or when verification info is
-// absent.
-func (c *Connector) fetchSignatureVerified(ctx context.Context, owner, name, sha string) *bool {
-	// Use Repositories.GetCommit which returns RepositoryCommit including
-	// the inner Commit with Verification. Avoid Git.GetCommit which keys on
-	// tree SHA in some shapes; the repository endpoint is the friendly one.
-	rc, resp, err := c.rest.Repositories.GetCommit(ctx, owner, name, sha, nil)
-	if err != nil {
-		if resp != nil && resp.StatusCode == http.StatusNotFound {
-			return nil
-		}
-		return nil
-	}
-	if rc == nil || rc.Commit == nil || rc.Commit.Verification == nil {
-		return nil
-	}
-	v := rc.Commit.Verification.GetVerified()
-	return &v
-}
-
-// fetchLandedViaPR returns true if any PR's merge or commit list includes
-// the given SHA. Cached per SHA across the run.
-func (c *Connector) fetchLandedViaPR(ctx context.Context, owner, name, sha string, cache map[string]*bool) *bool {
-	if v, ok := cache[sha]; ok {
-		return v
-	}
-	prs, _, err := c.rest.PullRequests.ListPullRequestsWithCommit(ctx, owner, name, sha, &gh.ListOptions{PerPage: 1})
-	if err != nil {
-		cache[sha] = nil
-		return nil
-	}
-	v := len(prs) > 0
-	cache[sha] = &v
-	return &v
-}
-
