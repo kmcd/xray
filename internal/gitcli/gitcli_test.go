@@ -285,6 +285,43 @@ func TestClient_LogNumstat_BasicCommits(t *testing.T) {
 	if len(merge.ParentSHAs) != 2 {
 		t.Errorf("merge commit ParentSHAs len = %d, want 2 (%v)", len(merge.ParentSHAs), merge.ParentSHAs)
 	}
+
+	// Regression guard for issue #55: the initial commit adds README.md +
+	// two text source files + a 16-byte binary. Their text files must
+	// produce non-zero numstat counts. Prior to the --numstat / --raw fix,
+	// --name-status was overriding --numstat and every count came back 0.
+	initialFiles := initial.Files
+	var sawTextAdds bool
+	for _, f := range initialFiles {
+		if strings.HasSuffix(f.Path, ".go") || strings.HasSuffix(f.Path, ".md") {
+			if f.Additions > 0 {
+				sawTextAdds = true
+				break
+			}
+		}
+	}
+	if !sawTextAdds {
+		t.Errorf("initial commit: every text-file numstat had Additions == 0 — issue #55 regression\nfiles: %+v", initialFiles)
+	}
+}
+
+func TestNumstatRenameNewPath(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"foo => bar", "bar"},
+		{"foo", "foo"},
+		{"dir/{old => new}/file", "dir/new/file"},
+		{"dir/{ => new}/file", "dir/new/file"},
+		{"dir/{old => }/file", "dir/file"},
+		{"src/a.go", "src/a.go"},
+	}
+	for _, tc := range tests {
+		got := numstatRenameNewPath(tc.in)
+		if got != tc.want {
+			t.Errorf("numstatRenameNewPath(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
 }
 
 func TestClient_LogNumstat_RenameDetected(t *testing.T) {

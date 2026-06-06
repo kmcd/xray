@@ -182,11 +182,14 @@ func (c *Client) LogNumstat(ctx context.Context, clonePath string, since, until 
 		"%b" + // 9 body (may be multiline)
 		bodySep
 
+	// --numstat gives additions/deletions; --raw gives change_type and the
+	// pre-rename path. They compose; --numstat + --name-status do NOT
+	// (--name-status wins and numstat is dropped silently on modern git).
 	args := []string{
 		"log",
 		"--no-color",
 		"--numstat",
-		"--name-status",
+		"--raw",
 		"--find-renames",
 		"--date=iso-strict",
 		"--since=" + since.UTC().Format(time.RFC3339),
@@ -254,15 +257,23 @@ func parseLog(out string) ([]CommitRecord, error) {
 }
 
 // parseFiles parses the post-header section of a git log entry produced with
-// both --numstat and --name-status. git emits both blocks for each commit:
-// numstat first ("adds\tdels\tpath"), then name-status ("A\tpath" or
-// "R100\told\tnew"). We merge them by path so renames carry prev_path.
+// --numstat and --raw. git emits both blocks for each commit:
+//
+//   raw line:     ":<src_mode> <dst_mode> <src_sha> <dst_sha> <code>\t<path>"
+//                 (rename / copy variants append \t<newpath>: code is Rnn / Cnn)
+//   numstat line: "<adds>\t<dels>\t<path>" or
+//                 "<adds>\t<dels>\t<oldpath> => <newpath>" for renames.
+//
+// We merge them by canonical (new) path so renames carry both prev_path and
+// the numstat counts. Older callers used --name-status, which silently
+// suppresses --numstat output on modern git; the parser is kept tolerant of
+// either block being present in case future flag changes drop one.
 func parseFiles(s string) []FileChange {
 	lines := strings.Split(s, "\n")
 	type entry struct {
-		add, del            int
-		gotNumstat          bool
-		change, path, prev  string
+		add, del           int
+		gotNumstat         bool
+		change, path, prev string
 	}
 	order := []string{}
 	byPath := map[string]*entry{}
@@ -281,21 +292,43 @@ func parseFiles(s string) []FileChange {
 		if line == "" {
 			continue
 		}
+		// raw block: lines begin with ':'.
+		if strings.HasPrefix(line, ":") {
+			parts := strings.Split(line, "\t")
+			// parts[0] = ":<mode> <mode> <sha> <sha> <code>"
+			head := strings.Fields(parts[0])
+			if len(head) < 5 || len(parts) < 2 {
+				continue
+			}
+			code := head[4]
+			switch {
+			case code == "A", code == "M", code == "D", code == "T", code == "U":
+				e := getOrCreate(parts[1])
+				e.change = code
+			case strings.HasPrefix(code, "R"), strings.HasPrefix(code, "C"):
+				if len(parts) >= 3 {
+					e := getOrCreate(parts[2])
+					e.change = string(code[0])
+					e.prev = parts[1]
+				}
+			}
+			continue
+		}
 		parts := strings.Split(line, "\t")
-		// numstat: "<adds>\t<dels>\t<path>" or 4 parts for renames
-		// ("<adds>\t<dels>\t<old>\t<new>" in some git versions; modern
-		// emits "<adds>\t<dels>\t<old> => <new>" or a curly-brace form).
+		// numstat: "<adds>\t<dels>\t<path>".
 		if len(parts) >= 3 && isNumOrDash(parts[0]) && isNumOrDash(parts[1]) {
 			adds, _ := strconv.Atoi(parts[0])
 			dels, _ := strconv.Atoi(parts[1])
-			// path is the last field; renames may span multiple cols.
 			path := parts[len(parts)-1]
+			// Renames in numstat use "<old> => <new>" or "<dir>/{<old> => <new>}/<rest>".
+			// Reduce to the new path so the entry matches the raw block.
+			path = numstatRenameNewPath(path)
 			e := getOrCreate(path)
 			e.add, e.del = adds, dels
 			e.gotNumstat = true
 			continue
 		}
-		// name-status: first field is A/M/D and friends or Rxxx/Cxxx.
+		// Legacy --name-status compatibility: first field is A/M/D or Rxxx/Cxxx.
 		if len(parts) >= 2 {
 			code := parts[0]
 			switch {
@@ -328,6 +361,40 @@ func parseFiles(s string) []FileChange {
 		})
 	}
 	return out
+}
+
+// numstatRenameNewPath collapses git's numstat rename shorthand to the
+// post-rename path so it matches the new path in the --raw block.
+//
+//   "foo => bar"              -> "bar"
+//   "dir/{old => new}/file"   -> "dir/new/file"
+//   "dir/{ => new}/file"      -> "dir/new/file"
+//   "dir/{old => }/file"      -> "dir/file"
+//
+// Anything that doesn't match a rename pattern is returned unchanged.
+func numstatRenameNewPath(s string) string {
+	if i := strings.Index(s, "{"); i >= 0 {
+		j := strings.Index(s[i:], "}")
+		if j < 0 {
+			return s
+		}
+		j += i
+		inner := s[i+1 : j]
+		var newPart string
+		if arrow := strings.Index(inner, " => "); arrow >= 0 {
+			newPart = inner[arrow+4:]
+		} else {
+			newPart = inner
+		}
+		out := s[:i] + newPart + s[j+1:]
+		// Collapse the possible empty-path artifact "dir//file" -> "dir/file".
+		out = strings.ReplaceAll(out, "//", "/")
+		return out
+	}
+	if arrow := strings.Index(s, " => "); arrow >= 0 {
+		return s[arrow+4:]
+	}
+	return s
 }
 
 func isNumOrDash(s string) bool {
