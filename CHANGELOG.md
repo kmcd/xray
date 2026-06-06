@@ -4,6 +4,12 @@ All notable changes to `xray` per release. Format follows [Keep a Changelog](htt
 
 The analyser refuses to load artifacts at an unknown `schema_version`. See the [compatibility table](./README.md#compatibility) in the README for the binary-to-schema mapping.
 
+## [0.2.0]
+
+### Known limitations
+
+- **Honeycomb is repo-agnostic.** Honeycomb has no per-repo dimension, so all deploy markers and SLO burn alerts are attributed to the alphabetically-first repo in the configured set. Multi-repo Honeycomb accounts will see a single repo carry every marker; downstream analysers should treat the `repo` column on `incidents.source = "honeycomb"` and `deploys.source = "honeycomb"` rows as approximate.
+
 ## [0.1.0] — 2026-06-05
 
 First tagged release. Emits `schema_version` 1.
@@ -43,4 +49,5 @@ First tagged release. Emits `schema_version` 1.
 - `checksums.txt` signed by cosign in keyless mode against the GitHub OIDC issuer; verification snippet in the [README](./README.md#install).
 - CI gates: build + test (Ubuntu + macOS), lint (`golangci-lint` v2 with `gosec`), `govulncheck`, `go-test-coverage`.
 
+[0.2.0]: https://github.com/kmcd/xray/releases/tag/v0.2.0
 [0.1.0]: https://github.com/kmcd/xray/releases/tag/v0.1.0

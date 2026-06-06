@@ -258,6 +258,8 @@ Indexed on `(repo, build_id)`.
 
 Indexed on `(repo, environment, deployed_at)`. Rollback heuristic: in chronological order per `(repo, environment)`, a deploy whose `commit_sha` matches `commit_sha[i-2]` and differs from `commit_sha[i-1]` is treated as a rollback. Documented in `internal/postprocess`.
 
+**Honeycomb attribution caveat.** Honeycomb has no per-repo concept, so all `deploys` rows with `source = "honeycomb"` carry the alphabetically-first configured repo as their `repo` value. This is a v1 limitation; analysers should treat `(repo, source = "honeycomb")` as an approximate attribution. The same applies to `incidents` rows from SLO burn alerts.
+
 ### `releases`
 
 `PRIMARY KEY (repo, tag)`. One row per GitHub Release.
