@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,6 +18,42 @@ import (
 	"github.com/kmcd/xray/internal/connector"
 	"github.com/kmcd/xray/internal/model"
 )
+
+// setupCloneWithRemoteRefs creates a tmp git repo with one commit and
+// fakes refs/remotes/origin/<branch> for every name in branches. Returns
+// the repo path. Used by tests that exercise the local-clone read paths
+// added in #72 (branches list, codeowners, languages — codeowners and
+// languages don't actually need the refs, just the dir).
+func setupCloneWithRemoteRefs(t *testing.T, branches []string) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	dir := t.TempDir()
+	run := func(args ...string) {
+		// #nosec G204 -- args are test-controlled literals.
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	run("init", "-q", "-b", "main")
+	run("config", "user.email", "t@example.com")
+	run("config", "user.name", "T")
+	run("config", "commit.gpgsign", "false")
+	// Empty commit so HEAD has a SHA to point refs at.
+	run("commit", "--allow-empty", "-q", "-m", "seed")
+	headOut, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("rev-parse HEAD: %v", err)
+	}
+	sha := strings.TrimSpace(string(headOut))
+	for _, b := range branches {
+		run("update-ref", "refs/remotes/origin/"+b, sha)
+	}
+	return dir
+}
 
 // memSink is an in-memory implementation of connector.Sink for HTTP-path
 // tests. It records every row inserted so test bodies can assert against
@@ -453,10 +490,9 @@ func TestExtractPRs_ClosingIssuesReferences(t *testing.T) {
 }
 
 func TestExtractBranches_ProtectionAccessible(t *testing.T) {
+	clone := setupCloneWithRemoteRefs(t, []string{"main"})
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/kmcd/foo/branches", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprintln(w, `[{"name":"main","commit":{"sha":"deadbeef"}}]`)
-	})
 	mux.HandleFunc("/repos/kmcd/foo/branches/main/protection", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprintln(w, `{"required_pull_request_reviews":{"required_approving_review_count":2},"enforce_admins":{"enabled":true}}`)
 	})
@@ -467,7 +503,7 @@ func TestExtractBranches_ProtectionAccessible(t *testing.T) {
 	c := newTestConnector(t, srv)
 	sink := &memSink{}
 	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
-	c.extractBranches(context.Background(), connector.Repo{Slug: "kmcd/foo", DefaultBranch: "main"}, sink, &prov)
+	c.extractBranches(context.Background(), connector.Repo{Slug: "kmcd/foo", DefaultBranch: "main", Clone: clone}, sink, &prov)
 
 	if len(sink.branches) != 1 {
 		t.Fatalf("expected 1 branch row, got %d", len(sink.branches))
@@ -488,10 +524,9 @@ func TestExtractBranches_ProtectionAccessible(t *testing.T) {
 }
 
 func TestExtractBranches_Protection403(t *testing.T) {
+	clone := setupCloneWithRemoteRefs(t, []string{"main"})
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/kmcd/foo/branches", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprintln(w, `[{"name":"main","commit":{"sha":"deadbeef"}}]`)
-	})
 	mux.HandleFunc("/repos/kmcd/foo/branches/main/protection", func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, `{"message":"forbidden"}`, http.StatusForbidden)
 	})
@@ -502,7 +537,7 @@ func TestExtractBranches_Protection403(t *testing.T) {
 	c := newTestConnector(t, srv)
 	sink := &memSink{}
 	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
-	c.extractBranches(context.Background(), connector.Repo{Slug: "kmcd/foo", DefaultBranch: "main"}, sink, &prov)
+	c.extractBranches(context.Background(), connector.Repo{Slug: "kmcd/foo", DefaultBranch: "main", Clone: clone}, sink, &prov)
 
 	if len(sink.branches) != 1 {
 		t.Fatalf("expected 1 branch row, got %d", len(sink.branches))

@@ -481,6 +481,53 @@ func (c *Client) LogPath(ctx context.Context, clonePath, path string) (string, t
 	return firstSHA, firstAt, lastAt, nil
 }
 
+// RemoteBranch is one row of `git for-each-ref refs/remotes/origin/`.
+// Name is the short ref with the `origin/` prefix stripped.
+type RemoteBranch struct {
+	Name          string
+	LastCommitSHA string
+	LastCommitAt  time.Time
+}
+
+// RemoteBranches enumerates origin's branches from the local clone,
+// returning name, tip SHA, and committer date for each. `origin/HEAD`
+// is filtered out. Replaces a REST ListBranches round-trip; the data
+// is already in the clone after fetch.
+func (c *Client) RemoteBranches(ctx context.Context, clonePath string) ([]RemoteBranch, error) {
+	format := "%(refname:short)" + fieldSep + "%(objectname)" + fieldSep + "%(committerdate:iso-strict)"
+	out, err := c.run(ctx, clonePath, "for-each-ref",
+		"--format="+format,
+		"refs/remotes/origin/",
+	)
+	if err != nil {
+		return nil, err
+	}
+	var rows []RemoteBranch
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, fieldSep, 3)
+		if len(parts) != 3 {
+			return nil, fmt.Errorf("gitcli: malformed for-each-ref line: %q", line)
+		}
+		name := strings.TrimPrefix(parts[0], "origin/")
+		if name == "HEAD" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, parts[2])
+		if err != nil {
+			return nil, fmt.Errorf("gitcli: parse committerdate %q: %w", parts[2], err)
+		}
+		rows = append(rows, RemoteBranch{
+			Name:          name,
+			LastCommitSHA: parts[1],
+			LastCommitAt:  t.UTC(),
+		})
+	}
+	return rows, nil
+}
+
 func splitShaTime(line string) (string, time.Time, error) {
 	parts := strings.SplitN(line, fieldSep, 2)
 	if len(parts) != 2 {

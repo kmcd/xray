@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/kmcd/xray/internal/connector"
@@ -56,25 +58,26 @@ func (s *extraSink) InsertPRReviewRequest(r model.PRReviewRequest) error {
 }
 
 func TestExtractCodeowners(t *testing.T) {
-	mux := http.NewServeMux()
-	// Probes .github/CODEOWNERS first; serve a file there.
-	mux.HandleFunc("/repos/kmcd/foo/contents/.github/CODEOWNERS", func(w http.ResponseWriter, _ *http.Request) {
-		content := "*.go @alice @kmcd/backend\n# comment line\n\n*.md @bob\n"
-		body := fmt.Sprintf(`{"name":"CODEOWNERS","type":"file","encoding":"base64","content":"%s"}`, base64Encode(content))
-		_, _ = w.Write([]byte(body))
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
+	// Connector reads CODEOWNERS off the local clone (#72). Lay the file
+	// down at the highest-priority candidate path and confirm parseCodeowners
+	// emits the expected rows.
+	clone := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(clone, ".github"), 0o755); err != nil {
+		t.Fatalf("mkdir .github: %v", err)
+	}
+	content := "*.go @alice @kmcd/backend\n# comment line\n\n*.md @bob\n"
+	if err := os.WriteFile(filepath.Join(clone, ".github/CODEOWNERS"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write CODEOWNERS: %v", err)
+	}
 
-	c := newTestConnector(t, srv)
+	c := newTestConnector(t, httptest.NewServer(http.NewServeMux()))
 	sink := &extraSink{}
 	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
-	c.extractCodeowners(context.Background(), connector.Repo{Slug: "kmcd/foo"}, sink, &prov)
+	c.extractCodeowners(context.Background(), connector.Repo{Slug: "kmcd/foo", Clone: clone}, sink, &prov)
 
 	if len(sink.codeowners) != 3 {
 		t.Fatalf("expected 3 codeowners rows, got %d: %+v", len(sink.codeowners), sink.codeowners)
 	}
-	// Verify one user + one team classification.
 	gotUser, gotTeam := 0, 0
 	for _, r := range sink.codeowners {
 		switch r.OwnerType {
@@ -87,24 +90,98 @@ func TestExtractCodeowners(t *testing.T) {
 	if gotUser != 2 || gotTeam != 1 {
 		t.Errorf("user/team counts = %d/%d, want 2/1", gotUser, gotTeam)
 	}
+	if ep := prov.Endpoints["codeowners"]; !ep.Accessible {
+		t.Errorf("expected codeowners endpoint Accessible=true, got %+v", ep)
+	}
+}
+
+func TestExtractCodeowners_PathPriority(t *testing.T) {
+	// First-match-wins across the candidate list: .github/CODEOWNERS over
+	// CODEOWNERS at the repo root.
+	clone := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(clone, ".github"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(clone, ".github/CODEOWNERS"), []byte("*.go @primary\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(clone, "CODEOWNERS"), []byte("*.rb @fallback\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	c := newTestConnector(t, httptest.NewServer(http.NewServeMux()))
+	sink := &extraSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
+	c.extractCodeowners(context.Background(), connector.Repo{Slug: "kmcd/foo", Clone: clone}, sink, &prov)
+
+	if len(sink.codeowners) != 1 || sink.codeowners[0].OwnerHandle != "primary" {
+		t.Errorf("expected only .github/CODEOWNERS rule (owner=primary), got %+v", sink.codeowners)
+	}
+}
+
+func TestExtractCodeowners_Missing(t *testing.T) {
+	clone := t.TempDir()
+	c := newTestConnector(t, httptest.NewServer(http.NewServeMux()))
+	sink := &extraSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
+	c.extractCodeowners(context.Background(), connector.Repo{Slug: "kmcd/foo", Clone: clone}, sink, &prov)
+
+	if len(sink.codeowners) != 0 {
+		t.Errorf("expected 0 rows when CODEOWNERS absent, got %+v", sink.codeowners)
+	}
+	if ep := prov.Endpoints["codeowners"]; !ep.Accessible {
+		t.Errorf("missing CODEOWNERS still records endpoint Accessible=true; got %+v", ep)
+	}
 }
 
 func TestExtractLanguages(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/kmcd/foo/languages", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"Go":12345,"Ruby":678}`))
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
+	// extractLanguages walks the local clone (#72) and classifies files with
+	// go-enry. Lay down files with extensions enry recognises and assert
+	// one row per language with on-disk byte counts.
+	clone := t.TempDir()
+	files := map[string]string{
+		"main.go":   "package main\n\nfunc main() {}\n",
+		"helper.go": "package main\n\nfunc h() {}\n",
+		"app.rb":    "puts 'hi'\n",
+	}
+	for rel, content := range files {
+		if err := os.WriteFile(filepath.Join(clone, rel), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
 
-	c := newTestConnector(t, srv)
+	c := newTestConnector(t, httptest.NewServer(http.NewServeMux()))
+	sink := &extraSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
+	if err := c.extractLanguages(context.Background(), connector.Repo{Slug: "kmcd/foo", Clone: clone}, sink, &prov); err != nil {
+		t.Fatalf("extractLanguages: %v", err)
+	}
+	byLang := map[string]int64{}
+	for _, r := range sink.languages {
+		byLang[r.Language] = r.Bytes
+	}
+	if byLang["Go"] == 0 {
+		t.Errorf("expected Go byte count > 0; got rows %+v", sink.languages)
+	}
+	if byLang["Ruby"] == 0 {
+		t.Errorf("expected Ruby byte count > 0; got rows %+v", sink.languages)
+	}
+	// Bytes must equal the sum of file sizes per language.
+	wantGo := int64(len(files["main.go"]) + len(files["helper.go"]))
+	if byLang["Go"] != wantGo {
+		t.Errorf("Go bytes = %d, want %d (sum of file sizes)", byLang["Go"], wantGo)
+	}
+}
+
+func TestExtractLanguages_EmptyClone(t *testing.T) {
+	c := newTestConnector(t, httptest.NewServer(http.NewServeMux()))
 	sink := &extraSink{}
 	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
 	if err := c.extractLanguages(context.Background(), connector.Repo{Slug: "kmcd/foo"}, sink, &prov); err != nil {
 		t.Fatalf("extractLanguages: %v", err)
 	}
-	if len(sink.languages) != 2 {
-		t.Fatalf("expected 2 language rows, got %d", len(sink.languages))
+	if len(sink.languages) != 0 {
+		t.Errorf("expected 0 rows when Clone is empty; got %+v", sink.languages)
 	}
 }
 

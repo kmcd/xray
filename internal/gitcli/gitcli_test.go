@@ -758,6 +758,81 @@ func TestClient_DefaultBranch_Success(t *testing.T) {
 	}
 }
 
+func TestClient_RemoteBranches(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	// Source repo with two branches at distinct commits.
+	srcDir := t.TempDir()
+	runShell(t, srcDir, nil, "init", "-b", "main")
+	runShell(t, srcDir, nil, "config", "user.email", "c@example.com")
+	runShell(t, srcDir, nil, "config", "user.name", "C")
+	runShell(t, srcDir, nil, "config", "commit.gpgsign", "false")
+	writeFile(t, srcDir, "a", "1\n")
+	runShell(t, srcDir, nil, "add", "-A")
+	_, isoMain := fixedDate(0)
+	runShell(t, srcDir, []string{"GIT_AUTHOR_DATE=" + isoMain, "GIT_COMMITTER_DATE=" + isoMain},
+		"commit", "-m", "main commit")
+	mainSHA := strings.TrimSpace(runShell(t, srcDir, nil, "rev-parse", "HEAD"))
+
+	runShell(t, srcDir, nil, "checkout", "-b", "feature")
+	writeFile(t, srcDir, "b", "2\n")
+	runShell(t, srcDir, nil, "add", "-A")
+	_, isoFeat := fixedDate(1)
+	runShell(t, srcDir, []string{"GIT_AUTHOR_DATE=" + isoFeat, "GIT_COMMITTER_DATE=" + isoFeat},
+		"commit", "-m", "feature commit")
+	featSHA := strings.TrimSpace(runShell(t, srcDir, nil, "rev-parse", "HEAD"))
+	runShell(t, srcDir, nil, "checkout", "main")
+
+	cloneDir := filepath.Join(t.TempDir(), "clone")
+	runShell(t, "", nil, "clone", "-q", srcDir, cloneDir)
+
+	c := newClient()
+	got, err := c.RemoteBranches(context.Background(), cloneDir)
+	if err != nil {
+		t.Fatalf("RemoteBranches: %v", err)
+	}
+	by := map[string]RemoteBranch{}
+	for _, r := range got {
+		by[r.Name] = r
+	}
+	if _, ok := by["HEAD"]; ok {
+		t.Errorf("HEAD must be filtered out; got %+v", by)
+	}
+	if r, ok := by["main"]; !ok {
+		t.Errorf("missing main branch; got %+v", by)
+	} else {
+		if r.LastCommitSHA != mainSHA {
+			t.Errorf("main SHA = %q, want %q", r.LastCommitSHA, mainSHA)
+		}
+		if r.LastCommitAt.IsZero() {
+			t.Errorf("main LastCommitAt zero")
+		}
+	}
+	if r, ok := by["feature"]; !ok {
+		t.Errorf("missing feature branch; got %+v", by)
+	} else if r.LastCommitSHA != featSHA {
+		t.Errorf("feature SHA = %q, want %q", r.LastCommitSHA, featSHA)
+	}
+}
+
+func TestClient_RemoteBranches_Empty(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	dir := t.TempDir()
+	runShell(t, dir, nil, "init", "-b", "main")
+	// No remotes configured -> empty result, not an error.
+	c := newClient()
+	got, err := c.RemoteBranches(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("RemoteBranches: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("RemoteBranches on repo with no origin refs = %+v, want empty", got)
+	}
+}
+
 func TestClient_binAndLog_Defaults(t *testing.T) {
 	// Default Client zero-value: bin() falls back to "git" and log()
 	// returns a non-nil logger. Also exercise the non-zero branches.

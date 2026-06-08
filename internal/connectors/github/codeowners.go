@@ -2,8 +2,10 @@ package github
 
 import (
 	"context"
+	"errors"
 	"log/slog"
-	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/kmcd/xray/internal/connector"
@@ -11,9 +13,10 @@ import (
 )
 
 // codeownersPaths lists, in priority order, the locations GitHub recognises
-// for a CODEOWNERS file. We probe each via GetContents until one returns
-// 200; absence at every path is treated as "no codeowners" with the
-// endpoint marked accessible (we could read, there was just nothing there).
+// for a CODEOWNERS file. We probe each via the working-tree clone until one
+// reads successfully; absence at every path is treated as "no codeowners"
+// with the endpoint marked accessible (the filesystem is always reachable
+// once the clone exists).
 var codeownersPaths = []string{
 	".github/CODEOWNERS",
 	"CODEOWNERS",
@@ -21,34 +24,29 @@ var codeownersPaths = []string{
 }
 
 func (c *Connector) extractCodeowners(ctx context.Context, repo connector.Repo, sink connector.Sink, prov *connector.Provenance) {
-	owner, name, ok := splitSlug(repo.Slug)
-	if !ok {
+	_ = ctx
+	if repo.Clone == "" {
 		return
 	}
 	prov.Endpoints["codeowners"] = connector.EndpointStatus{Accessible: true}
 
 	var content string
 	for _, p := range codeownersPaths {
-		file, _, resp, err := c.rest.Repositories.GetContents(ctx, owner, name, p, nil)
+		// #nosec G304 -- path is the per-run clone directory joined with a
+		// hardcoded candidate from codeownersPaths.
+		b, err := os.ReadFile(filepath.Join(repo.Clone, p))
 		if err != nil {
-			if resp != nil && resp.StatusCode == http.StatusNotFound {
+			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
-			c.log.Warn("github: get codeowners",
+			c.log.Warn("github: read codeowners",
 				slog.String("repo", repo.Slug),
 				slog.String("path", p),
 				slog.String("error", err.Error()),
 			)
 			continue
 		}
-		if file == nil {
-			continue
-		}
-		s, err := file.GetContent()
-		if err != nil {
-			continue
-		}
-		content = s
+		content = string(b)
 		break
 	}
 	if content == "" {
