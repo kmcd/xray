@@ -162,6 +162,12 @@ type reviewThreadGraph struct {
 
 // reviewCommentGraph is one PullRequestReviewComment node. ReplyTo is nil
 // for the thread root.
+//
+// DatabaseID and ReplyTo.DatabaseID are int64 rather than githubv4.Int
+// (int32) because GitHub's REST-side comment IDs have exceeded the int32
+// range — observed in the wild at 3,372,977,585 on posthog. shurcooL's
+// query builder uses field tags for variable typing only; result-field
+// types are honoured by encoding/json directly, so int64 here is safe.
 type reviewCommentGraph struct {
 	Author struct {
 		Login githubv4.String
@@ -169,9 +175,9 @@ type reviewCommentGraph struct {
 	CreatedAt  githubv4.DateTime
 	Body       githubv4.String
 	Path       githubv4.String
-	DatabaseID githubv4.Int `graphql:"databaseId"`
+	DatabaseID int64 `graphql:"databaseId"`
 	ReplyTo    *struct {
-		DatabaseID githubv4.Int `graphql:"databaseId"`
+		DatabaseID int64 `graphql:"databaseId"`
 	}
 }
 

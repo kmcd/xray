@@ -60,7 +60,7 @@ func emitReviewCommentNodes(nodes []reviewCommentGraph, prNum int, slug string, 
 			Path:         string(cm.Path),
 		}
 		if cm.ReplyTo != nil {
-			v := int64(cm.ReplyTo.DatabaseID)
+			v := cm.ReplyTo.DatabaseID
 			row.InReplyTo = &v
 		}
 		if err := sink.InsertPRComment(row); err != nil {
