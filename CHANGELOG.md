@@ -8,6 +8,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 Breaking: `schema_version` bumps `1 → 2`. Author-identity columns now hold opaque `h_<15 digits>` tokens, not raw logins or git idents. Analysers built for `schema_version = 1` must be updated (assay v1.1.0 already reads the new form). Smoke-verified against `goreleaser/chglog` (~12-month window): 36 commits + 36 PRs + 68 file_complexity_history rows; `mailmap_applied=false`, `squash_rate=1.0`, all author handles match `^h_\d{15}$`.
 
+### Performance
+
+- **github**: PR enrichment folded into the existing `prListQuery` as a single inline GraphQL walk — drops per-PR REST fan-out for `reviews`, `pr_comments`, `pr_review_requests`, and the merge-method parent-count lookup. Reviews, top-level comments, review threads (with nested comments), and `mergeCommit.parents.totalCount` are read inline at 100 items per inner connection; `timelineItems` adds `REVIEW_REQUESTED_EVENT` so review-request rows come from the same walk. Per-PR overflow paginators fire only when an inner `pageInfo.HasNextPage` is true. Baseline: a 30-day smoke against `posthog/posthog` on the pre-fix path took ~10 hours, dominated by 4–6 REST round-trips per PR; the inline path eliminates that fan-out entirely. Schema unchanged; `schema_version` stays at 2. ([#69])
+
 ### Author alias resolution via `.mailmap` (assay v1.1 contract #20, Tornhill Ch 13)
 
 - **`.mailmap` canonicalisation at extract time.** The repo's top-level `.mailmap` is parsed once per run into an in-memory resolution table; every commit (and Co-authored-by trailer) identity is rewritten to its canonical `Name <email>` before hashing. Pure-Go parser supports all four standard line shapes; smoke-tested against `git check-mailmap` in `internal/gitcli/mailmap_test.go`. The alias triple from the prompt (`Alice <alice@old>` / `Alice <alice@new>` / `Alice <alice@old>` with a `new → old` mapping) emits one canonical handle across all three commits.
@@ -54,6 +58,7 @@ Verified against `goreleaser/chglog` post-fix (~18-month window): 65 commits wit
 - **`manifest.tool_version` populated.** `cmd/xray/run.go` never set `run.Options.ToolVersion`, so every artifact shipped with an empty `tool_version` in both `manifest.json` and the `_schema` row. The `-ldflags`-injected `version` now flows through. ([#58])
 - **Config validator accepts `<org>/.github`.** The slug regex forbade leading-dot repo names, so `init` → `validate` round-tripped to a diagnostic on the canonical GitHub org-config repo. Owners still must start with `[A-Za-z0-9]`; only the repo half relaxed. ([#59])
 
+[#69]: https://github.com/kmcd/xray/issues/69
 [#55]: https://github.com/kmcd/xray/issues/55
 [#56]: https://github.com/kmcd/xray/issues/56
 [#57]: https://github.com/kmcd/xray/issues/57

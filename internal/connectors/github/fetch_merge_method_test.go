@@ -2,72 +2,61 @@ package github
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
+	"io"
+	"log/slog"
 	"testing"
+	"time"
+
+	"github.com/shurcooL/githubv4"
+
+	"github.com/kmcd/xray/internal/config"
 )
 
-// TestFetchMergeMethod_NoCloneFallback exercises the no-clone fallback in
-// fetchMergeMethod: when the PR is merged with one parent and no clone is
-// available, the function returns "squash" (preserving the historical
-// parent-count heuristic).
-func TestFetchMergeMethod_NoCloneFallback(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/kmcd/foo/pulls/1", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"number":1,"merged":true,"merge_commit_sha":"mergesha"}`))
-	})
-	mux.HandleFunc("/repos/kmcd/foo/commits/mergesha", func(w http.ResponseWriter, _ *http.Request) {
-		// One parent.
-		_, _ = w.Write([]byte(`{"sha":"mergesha","parents":[{"sha":"p1"}]}`))
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-	c := newTestConnector(t, srv)
-	got := c.fetchMergeMethod(context.Background(), "kmcd", "foo", 1, "", []string{"oid1"})
-	if got != "squash" {
-		t.Errorf("fetchMergeMethod no-clone fallback = %q, want squash", got)
+// newPureConnector builds a connector for the no-HTTP resolveMergeMethod
+// tests. resolveMergeMethod takes its parent count from the inline GraphQL
+// PR node, so the network is not exercised — we just need a logger.
+func newPureConnector(t *testing.T) *Connector {
+	t.Helper()
+	c, err := New(config.GitHubConn{Token: "test-token"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return c
+}
+
+func TestResolveMergeMethod_Unmerged(t *testing.T) {
+	c := newPureConnector(t)
+	if got := c.resolveMergeMethod(context.Background(), prGraph{}, "", nil); got != "" {
+		t.Errorf("resolveMergeMethod unmerged = %q, want empty", got)
 	}
 }
 
-func TestFetchMergeMethod_TwoParentsMerge(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/kmcd/foo/pulls/2", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"number":2,"merged":true,"merge_commit_sha":"m2"}`))
-	})
-	mux.HandleFunc("/repos/kmcd/foo/commits/m2", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"sha":"m2","parents":[{"sha":"a"},{"sha":"b"}]}`))
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-	c := newTestConnector(t, srv)
-	got := c.fetchMergeMethod(context.Background(), "kmcd", "foo", 2, "", []string{"oid1"})
-	if got != "merge" {
-		t.Errorf("fetchMergeMethod two-parents = %q, want merge", got)
+func TestResolveMergeMethod_NoMergeSHAReturnsRebase(t *testing.T) {
+	c := newPureConnector(t)
+	now := githubv4.DateTime{Time: time.Now()}
+	if got := c.resolveMergeMethod(context.Background(), prGraph{MergedAt: &now}, "", nil); got != "rebase" {
+		t.Errorf("resolveMergeMethod no-merge-sha = %q, want rebase", got)
 	}
 }
 
-func TestFetchMergeMethod_UnmergedReturnsEmpty(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/kmcd/foo/pulls/3", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"number":3,"merged":false}`))
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-	c := newTestConnector(t, srv)
-	if got := c.fetchMergeMethod(context.Background(), "kmcd", "foo", 3, "", nil); got != "" {
-		t.Errorf("fetchMergeMethod unmerged = %q, want empty", got)
+func TestResolveMergeMethod_TwoParentsMerge(t *testing.T) {
+	c := newPureConnector(t)
+	now := githubv4.DateTime{Time: time.Now()}
+	p := prGraph{MergedAt: &now}
+	p.MergeCommit.Oid = "m2"
+	p.MergeCommit.Parents.TotalCount = 2
+	if got := c.resolveMergeMethod(context.Background(), p, "", []string{"oid1"}); got != "merge" {
+		t.Errorf("resolveMergeMethod two-parents = %q, want merge", got)
 	}
 }
 
-func TestFetchMergeMethod_MissingMergeSHARebase(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/kmcd/foo/pulls/4", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"number":4,"merged":true,"merge_commit_sha":""}`))
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-	c := newTestConnector(t, srv)
-	if got := c.fetchMergeMethod(context.Background(), "kmcd", "foo", 4, "", nil); got != "rebase" {
-		t.Errorf("fetchMergeMethod no merge-sha = %q, want rebase", got)
+func TestResolveMergeMethod_NoCloneFallback(t *testing.T) {
+	c := newPureConnector(t)
+	now := githubv4.DateTime{Time: time.Now()}
+	p := prGraph{MergedAt: &now}
+	p.MergeCommit.Oid = "mergesha"
+	p.MergeCommit.Parents.TotalCount = 1
+	if got := c.resolveMergeMethod(context.Background(), p, "", []string{"oid1"}); got != "squash" {
+		t.Errorf("resolveMergeMethod no-clone fallback = %q, want squash", got)
 	}
 }

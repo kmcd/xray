@@ -169,83 +169,6 @@ func TestIsFullSHA(t *testing.T) {
 	}
 }
 
-func TestExtractReviews(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/kmcd/foo/pulls/5/reviews", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[
-			{"state":"APPROVED","submitted_at":"2025-03-02T00:00:00Z","user":{"login":"alice"},"body":"lgtm"},
-			{"state":"PENDING","submitted_at":"2025-03-03T00:00:00Z","user":{"login":"bob"},"body":"draft"}
-		]`))
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	c := newTestConnector(t, srv)
-	sink := &extraSink{}
-	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
-	first := c.extractReviews(context.Background(), connector.Repo{Slug: "kmcd/foo"}, 5, sink, &prov)
-	if len(sink.reviews) != 1 {
-		t.Fatalf("expected 1 review (PENDING excluded), got %d", len(sink.reviews))
-	}
-	if first == nil {
-		t.Errorf("expected non-nil first review timestamp")
-	}
-}
-
-func TestExtractPRComments(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/kmcd/foo/issues/6/comments", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[
-			{"created_at":"2025-03-02T00:00:00Z","user":{"login":"alice"},"body":"hi"}
-		]`))
-	})
-	mux.HandleFunc("/repos/kmcd/foo/pulls/6/comments", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[
-			{"created_at":"2025-03-03T00:00:00Z","user":{"login":"bob"},"body":"nit","path":"foo.go"}
-		]`))
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	c := newTestConnector(t, srv)
-	sink := &extraSink{}
-	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
-	c.extractPRComments(context.Background(), connector.Repo{Slug: "kmcd/foo"}, 6, sink, &prov)
-	if len(sink.comments) != 2 {
-		t.Fatalf("expected 2 comments, got %d: %+v", len(sink.comments), sink.comments)
-	}
-	kinds := map[string]int{}
-	for _, cm := range sink.comments {
-		kinds[cm.Kind]++
-	}
-	if kinds["issue_comment"] != 1 || kinds["review_comment"] != 1 {
-		t.Errorf("comment kinds = %v, want issue:1 review:1", kinds)
-	}
-}
-
-func TestExtractPRReviewRequests(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/graphql", func(w http.ResponseWriter, _ *http.Request) {
-		// Single review-requested event for a user.
-		_, _ = w.Write([]byte(`{"data":{"repository":{"pullRequest":{"timelineItems":{"pageInfo":{"endCursor":"","hasNextPage":false},"nodes":[
-			{"__typename":"ReviewRequestedEvent","createdAt":"2025-03-02T00:00:00Z","requestedReviewer":{"login":"alice"}}
-		]}}}}}`))
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	c := newTestConnector(t, srv)
-	sink := &extraSink{}
-	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
-	c.extractPRReviewRequests(context.Background(), connector.Repo{Slug: "kmcd/foo"}, 7, sink, &prov)
-	if len(sink.reqs) != 1 {
-		t.Fatalf("expected 1 review request row, got %d: %+v", len(sink.reqs), sink.reqs)
-	}
-	if sink.reqs[0].RequestedHandle != "alice" || sink.reqs[0].RequestedType != "user" {
-		t.Errorf("unexpected: %+v", sink.reqs[0])
-	}
-}
-
 func TestRequestedIdentity(t *testing.T) {
 	cases := []struct {
 		name string
@@ -275,5 +198,156 @@ func TestRequestedIdentity(t *testing.T) {
 				t.Errorf("requestedIdentity = (%q, %q), want (%q, %q)", h, ty, c.want.h, c.want.t)
 			}
 		})
+	}
+}
+
+// TestExtractPRs_BulkEnrichment exercises the new inline-GraphQL path:
+// reviews, comments, review threads, and review requests are all carried
+// in the prListQuery response and emit rows from emitPR without any
+// follow-up round-trip.
+func TestExtractPRs_BulkEnrichment(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
+		// Any per-PR overflow query: empty data.
+		if graphqlBodyContains(r, "pullRequest(number:") {
+			fmt.Fprintln(w, `{"data":{"repository":{"pullRequest":{}}}}`)
+			return
+		}
+		// PR list: one PR with one of each inner thing.
+		body := `{"data":{"repository":{"pullRequests":{
+			"pageInfo":{"endCursor":"","hasNextPage":false},
+			"nodes":[{
+				"number":42,
+				"title":"Feature",
+				"body":"## Summary\nWork\n",
+				"createdAt":"2025-03-01T00:00:00Z",
+				"updatedAt":"2025-03-05T00:00:00Z",
+				"baseRefName":"main",
+				"headRefName":"feature",
+				"headRefOid":"abc",
+				"author":{"login":"alice"},
+				"headRepository":{"nameWithOwner":"kmcd/foo"},
+				"commits":{"totalCount":1,"pageInfo":{"endCursor":"","hasNextPage":false},"nodes":[{"commit":{"oid":"deadbeef"}}]},
+				"closingIssuesReferences":{"totalCount":0},
+				"timelineItems":{
+					"pageInfo":{"endCursor":"","hasNextPage":false},
+					"nodes":[
+						{"__typename":"ReviewRequestedEvent","createdAt":"2025-03-02T00:00:00Z","requestedReviewer":{"login":"reviewerA"}}
+					]
+				},
+				"reviews":{
+					"totalCount":1,
+					"pageInfo":{"endCursor":"","hasNextPage":false},
+					"nodes":[
+						{"state":"APPROVED","submittedAt":"2025-03-03T00:00:00Z","body":"lgtm","author":{"login":"reviewerA"}}
+					]
+				},
+				"comments":{
+					"totalCount":1,
+					"pageInfo":{"endCursor":"","hasNextPage":false},
+					"nodes":[
+						{"author":{"login":"bob"},"createdAt":"2025-03-04T00:00:00Z","body":"nice"}
+					]
+				},
+				"reviewThreads":{
+					"totalCount":1,
+					"pageInfo":{"endCursor":"","hasNextPage":false},
+					"nodes":[
+						{"comments":{"totalCount":1,"pageInfo":{"endCursor":"","hasNextPage":false},"nodes":[
+							{"author":{"login":"carol"},"createdAt":"2025-03-04T12:00:00Z","body":"nit","path":"foo.go","databaseId":100,"replyTo":null}
+						]}}
+					]
+				}
+			}]
+		}}}}`
+		fmt.Fprintln(w, body)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestConnector(t, srv)
+	sink := &extraSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
+	c.extractPRs(context.Background(), connector.Repo{Slug: "kmcd/foo"}, standardWindow(), sink, &prov)
+
+	if len(sink.prs) != 1 {
+		t.Fatalf("expected 1 PR row, got %d", len(sink.prs))
+	}
+	if len(sink.reviews) != 1 {
+		t.Errorf("expected 1 review row, got %d: %+v", len(sink.reviews), sink.reviews)
+	}
+	if len(sink.comments) != 2 {
+		t.Errorf("expected 2 pr_comments rows (1 issue, 1 review), got %d: %+v", len(sink.comments), sink.comments)
+	}
+	kinds := map[string]int{}
+	for _, cm := range sink.comments {
+		kinds[cm.Kind]++
+	}
+	if kinds["issue_comment"] != 1 || kinds["review_comment"] != 1 {
+		t.Errorf("comment kinds = %v, want issue:1 review:1", kinds)
+	}
+	if len(sink.reqs) != 1 {
+		t.Errorf("expected 1 pr_review_requests row, got %d: %+v", len(sink.reqs), sink.reqs)
+	}
+	if sink.reviews[0].ReviewerHandle != hashHandle(canonicalLogin("reviewerA")) {
+		t.Errorf("reviewer_handle = %q, want hashed reviewerA", sink.reviews[0].ReviewerHandle)
+	}
+	if sink.prs[0].FirstReviewAt == nil {
+		t.Errorf("expected first_review_at populated from inline reviews")
+	}
+}
+
+// TestExtractPRs_InlineOverflow_Reviews exercises the review-overflow
+// paginator: the PR-list response signals HasNextPage=true on the inline
+// Reviews connection, and the connector follows up with paginatePRReviewsOverflow.
+func TestExtractPRs_InlineOverflow_Reviews(t *testing.T) {
+	overflowHits := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
+		if graphqlBodyContains(r, "pullRequest(number:") {
+			overflowHits++
+			// One more review on overflow.
+			fmt.Fprintln(w, `{"data":{"repository":{"pullRequest":{
+				"reviews":{
+					"pageInfo":{"endCursor":"","hasNextPage":false},
+					"nodes":[
+						{"state":"APPROVED","submittedAt":"2025-03-04T00:00:00Z","body":"second","author":{"login":"second"}}
+					]
+				}
+			}}}}`)
+			return
+		}
+		fmt.Fprintln(w, `{"data":{"repository":{"pullRequests":{
+			"pageInfo":{"endCursor":"","hasNextPage":false},
+			"nodes":[{
+				"number":50,
+				"title":"Big PR",
+				"body":"body",
+				"createdAt":"2025-03-01T00:00:00Z",
+				"updatedAt":"2025-03-05T00:00:00Z",
+				"author":{"login":"alice"},
+				"commits":{"totalCount":1,"pageInfo":{"endCursor":"","hasNextPage":false},"nodes":[]},
+				"reviews":{
+					"pageInfo":{"endCursor":"cursorA","hasNextPage":true},
+					"nodes":[
+						{"state":"APPROVED","submittedAt":"2025-03-03T00:00:00Z","body":"first","author":{"login":"first"}}
+					]
+				}
+			}]
+		}}}}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestConnector(t, srv)
+	sink := &extraSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
+	c.extractPRs(context.Background(), connector.Repo{Slug: "kmcd/foo"}, standardWindow(), sink, &prov)
+
+	if overflowHits != 1 {
+		t.Errorf("expected 1 per-PR overflow GraphQL call, got %d", overflowHits)
+	}
+	if len(sink.reviews) != 2 {
+		t.Fatalf("expected 2 review rows (1 inline + 1 overflow), got %d: %+v", len(sink.reviews), sink.reviews)
 	}
 }

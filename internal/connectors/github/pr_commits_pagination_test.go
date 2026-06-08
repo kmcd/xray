@@ -25,11 +25,7 @@ func TestExtractPRs_PRCommitsPagination(t *testing.T) {
 	var gqlCalls atomic.Int32
 	mux := http.NewServeMux()
 	mux.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
-		// Review-requests follow-up: return empty timeline.
-		if graphqlBodyContains(r, "REVIEW_REQUESTED_EVENT") {
-			fmt.Fprintln(w, `{"data":{"repository":{"pullRequest":{"timelineItems":{"pageInfo":{"endCursor":"","hasNextPage":false},"nodes":[]}}}}}`)
-			return
-		}
+		_ = r
 		n := gqlCalls.Add(1)
 		switch n {
 		case 1:

@@ -467,6 +467,26 @@ no connector.
   attempts per request and 60 seconds cumulative wait. `4xx` responses
   other than `429` are treated as permanent failure (no retry). Rate-limit
   waits are logged at info level so the client can see why a run is slow.
+- **github PR enrichment.** `prListQuery` walks PRs at 50 per page ordered
+  by `UPDATED_AT DESC`, stopping when a node's `updatedAt` falls before
+  `window.start`. Each PR node carries inline GraphQL connections that
+  populate the per-PR child tables in a single round-trip: `reviews(first:
+  100)` → `reviews`, `comments(first: 100)` → `pr_comments` (issue-comment
+  kind), `reviewThreads(first: 100) { comments(first: 100) }` →
+  `pr_comments` (review-comment kind, with `path` and `in_reply_to`), and
+  a `timelineItems` projection that captures `REVIEW_REQUESTED_EVENT` →
+  `pr_review_requests`. The `merge_method` classifier reads
+  `mergeCommit.parents.totalCount` from the same query; the local-clone
+  reachability check (`git merge-base --is-ancestor` against the per-run
+  clone, per ADR 021) is unchanged. Bodies are length-measured at parse
+  time and discarded — they never reach a column. Per-PR overflow
+  paginators fire only when an inner connection's `pageInfo.HasNextPage`
+  is true (more than 100 reviews, 100 top-level comments, 100 review
+  threads, or 100 timeline items on a single PR); rare in practice and
+  bounded by additional GraphQL calls per affected PR. Provenance is per
+  row regardless of which path emitted it; a permission-gated endpoint
+  unreadable inside the inline walk falls back to
+  `EndpointStatus{Accessible: false}` exactly as the previous fan-out did.
 - **Logging.** Logs go to stderr at info level by default; `--verbose` adds
   per-API-call timing; `--quiet` suppresses non-error output. Tokens are
   never logged at any level.

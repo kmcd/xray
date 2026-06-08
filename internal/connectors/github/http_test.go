@@ -208,10 +208,10 @@ func emptyJSONArrayOK(w http.ResponseWriter, _ *http.Request) {
 func TestExtractPRs_BasicShape(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
-		// PR list query and per-PR followups (review requests) all land
-		// here; differentiate by body content.
-		if graphqlBodyContains(r, "REVIEW_REQUESTED_EVENT") {
-			fmt.Fprintln(w, `{"data":{"repository":{"pullRequest":{"timelineItems":{"pageInfo":{"endCursor":"","hasNextPage":false},"nodes":[]}}}}}`)
+		// Bulk prListQuery uses pullRequests(plural); per-PR overflow
+		// paginators use pullRequest(number:). Differentiate on that.
+		if graphqlBodyContains(r, "pullRequest(number:") {
+			fmt.Fprintln(w, `{"data":{"repository":{"pullRequest":{}}}}`)
 			return
 		}
 		fmt.Fprintln(w, buildPRListResponse([]prNodeJSON{{
@@ -560,8 +560,8 @@ func TestPing(t *testing.T) {
 func prsMux(_ *testing.T, nodes []prNodeJSON, template *string, pulls map[int]string, _ bool) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
-		if graphqlBodyContains(r, "REVIEW_REQUESTED_EVENT") {
-			fmt.Fprintln(w, `{"data":{"repository":{"pullRequest":{"timelineItems":{"pageInfo":{"endCursor":"","hasNextPage":false},"nodes":[]}}}}}`)
+		if graphqlBodyContains(r, "pullRequest(number:") {
+			fmt.Fprintln(w, `{"data":{"repository":{"pullRequest":{}}}}`)
 			return
 		}
 		fmt.Fprintln(w, buildPRListResponse(nodes))

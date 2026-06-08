@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/shurcooL/githubv4"
 
@@ -42,7 +41,10 @@ type prGraph struct {
 	BaseRefName  githubv4.String
 	HeadRefName  githubv4.String
 	MergeCommit  struct {
-		Oid githubv4.String
+		Oid     githubv4.String
+		Parents struct {
+			TotalCount githubv4.Int
+		} `graphql:"parents(first: 5)"`
 	}
 	HeadRefOid githubv4.String
 	Author     struct {
@@ -77,10 +79,31 @@ type prGraph struct {
 			HasNextPage githubv4.Boolean
 		}
 		Nodes []timelineNode
-	} `graphql:"timelineItems(first: 100, itemTypes: [READY_FOR_REVIEW_EVENT, PULL_REQUEST_REVIEW, HEAD_REF_FORCE_PUSHED_EVENT])"`
-	// MergeMethod is on closed/merged PR via merged field; githubv4 doesn't
-	// expose it cleanly via PullRequest. We approximate via the merge commit
-	// shape post-hoc; see deriveMergeMethod.
+	} `graphql:"timelineItems(first: 100, itemTypes: [READY_FOR_REVIEW_EVENT, PULL_REQUEST_REVIEW, HEAD_REF_FORCE_PUSHED_EVENT, REVIEW_REQUESTED_EVENT])"`
+	Reviews struct {
+		TotalCount githubv4.Int
+		PageInfo   struct {
+			EndCursor   githubv4.String
+			HasNextPage githubv4.Boolean
+		}
+		Nodes []reviewGraph
+	} `graphql:"reviews(first: 100)"`
+	Comments struct {
+		TotalCount githubv4.Int
+		PageInfo   struct {
+			EndCursor   githubv4.String
+			HasNextPage githubv4.Boolean
+		}
+		Nodes []issueCommentGraph
+	} `graphql:"comments(first: 100)"`
+	ReviewThreads struct {
+		TotalCount githubv4.Int
+		PageInfo   struct {
+			EndCursor   githubv4.String
+			HasNextPage githubv4.Boolean
+		}
+		Nodes []reviewThreadGraph
+	} `graphql:"reviewThreads(first: 100)"`
 }
 
 type timelineNode struct {
@@ -95,6 +118,54 @@ type timelineNode struct {
 	HeadRefForcePushedEvent struct {
 		CreatedAt githubv4.DateTime
 	} `graphql:"... on HeadRefForcePushedEvent"`
+	ReviewRequestedEvent reviewRequestedEvent `graphql:"... on ReviewRequestedEvent"`
+}
+
+// reviewGraph is one PullRequestReview node returned inline on the PR.
+// SubmittedAt is nullable because PENDING reviews have not been submitted.
+type reviewGraph struct {
+	State       githubv4.String
+	SubmittedAt *githubv4.DateTime
+	Body        githubv4.String
+	Author      struct {
+		Login githubv4.String
+	}
+}
+
+// issueCommentGraph is one top-level IssueComment on the PR thread.
+type issueCommentGraph struct {
+	Author struct {
+		Login githubv4.String
+	}
+	CreatedAt githubv4.DateTime
+	Body      githubv4.String
+}
+
+// reviewThreadGraph is one PullRequestReviewThread with its inline comments.
+type reviewThreadGraph struct {
+	Comments struct {
+		TotalCount githubv4.Int
+		PageInfo   struct {
+			EndCursor   githubv4.String
+			HasNextPage githubv4.Boolean
+		}
+		Nodes []reviewCommentGraph
+	} `graphql:"comments(first: 100)"`
+}
+
+// reviewCommentGraph is one PullRequestReviewComment node. ReplyTo is nil
+// for the thread root.
+type reviewCommentGraph struct {
+	Author struct {
+		Login githubv4.String
+	}
+	CreatedAt  githubv4.DateTime
+	Body       githubv4.String
+	Path       githubv4.String
+	DatabaseID githubv4.Int `graphql:"databaseId"`
+	ReplyTo    *struct {
+		DatabaseID githubv4.Int `graphql:"databaseId"`
+	}
 }
 
 // issueRefRe matches Jira-style ticket prefixes and #N issue references.
@@ -181,9 +252,10 @@ func (c *Connector) extractPRs(ctx context.Context, repo connector.Repo, window 
 	}
 }
 
-// emitPR writes the PR row + pr_commits + pr_labels for one PR, then hands
-// off to reviews / comments / review-requests extractors. firstReviewAt
-// is computed from the PR's review listing (REST) so the row reflects it.
+// emitPR writes the PR row + pr_commits + pr_labels for one PR. Reviews,
+// comments, and review-requests are emitted from the inline GraphQL data
+// included in prListQuery. Overflow paginators fire only when an inner
+// connection's pageInfo.HasNextPage is true.
 func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, tpl *template, sink connector.Sink, prov *connector.Provenance) {
 	owner, name, _ := splitSlug(repo.Slug)
 	prNum := int(p.Number)
@@ -191,34 +263,9 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 	body := string(p.Body)
 	title := string(p.Title)
 
-	// Timeline-derived fields.
-	var readyForReviewAt *time.Time
-	var firstReviewAtTL *time.Time
-	var firstForcePush *time.Time
-	for _, t := range p.TimelineItems.Nodes {
-		switch t.Typename {
-		case "ReadyForReviewEvent":
-			tt := t.ReadyForReviewEvent.CreatedAt.UTC()
-			if readyForReviewAt == nil || tt.Before(*readyForReviewAt) {
-				readyForReviewAt = &tt
-			}
-		case "PullRequestReview":
-			if strings.EqualFold(string(t.PullRequestReview.State), "PENDING") {
-				continue
-			}
-			tt := t.PullRequestReview.CreatedAt.UTC()
-			if firstReviewAtTL == nil || tt.Before(*firstReviewAtTL) {
-				firstReviewAtTL = &tt
-			}
-		case "HeadRefForcePushedEvent":
-			tt := t.HeadRefForcePushedEvent.CreatedAt.UTC()
-			if firstForcePush == nil || tt.Before(*firstForcePush) {
-				firstForcePush = &tt
-			}
-		}
-	}
-
-	forcePushedAfterReview := firstForcePush != nil && firstReviewAtTL != nil && firstForcePush.After(*firstReviewAtTL)
+	// Timeline-derived fields. Also emits pr_review_requests rows from any
+	// REVIEW_REQUESTED_EVENT entries in the inline first-100 timeline.
+	readyForReviewAt, firstReviewAtTL, forcePushedAfterReview := emitTimelineDerived(p.TimelineItems.Nodes, prNum, repo.Slug, sink, prov)
 
 	// Body shape metrics.
 	checklistTotal := strings.Count(body, "- [ ]") + strings.Count(body, "- [x]") + strings.Count(body, "- [X]")
@@ -262,22 +309,42 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 		tmplScore = &s
 	}
 
-	// firstReviewAt is determined more reliably via REST (timeline events
-	// include all review events but state values differ on the timeline
-	// type). We still seed with the timeline minimum and let the REST pass
-	// refine it.
+	// firstReviewAt is seeded from the timeline minimum and refined by the
+	// inline review nodes (which carry submittedAt directly).
 	firstReviewAt := firstReviewAtTL
 
-	// Reviews -> rows + earliest submitted_at.
-	if t := c.extractReviews(ctx, repo, prNum, sink, prov); t != nil {
+	// Reviews from the inline GraphQL connection.
+	if t := emitReviewsInline(p.Reviews.Nodes, prNum, repo.Slug, sink, prov); t != nil {
 		if firstReviewAt == nil || t.Before(*firstReviewAt) {
 			firstReviewAt = t
 		}
 	}
+	if bool(p.Reviews.PageInfo.HasNextPage) {
+		if t := c.paginatePRReviewsOverflow(ctx, owner, name, prNum, repo.Slug, string(p.Reviews.PageInfo.EndCursor), sink, prov); t != nil {
+			if firstReviewAt == nil || t.Before(*firstReviewAt) {
+				firstReviewAt = t
+			}
+		}
+	}
 
-	// Comments + review requests + labels.
-	c.extractPRComments(ctx, repo, prNum, sink, prov)
-	c.extractPRReviewRequests(ctx, repo, prNum, sink, prov)
+	// PR comments: issue-style top-level and review-thread inline.
+	emitIssueCommentsInline(p.Comments.Nodes, prNum, repo.Slug, sink, prov)
+	if bool(p.Comments.PageInfo.HasNextPage) {
+		c.paginatePRIssueCommentsOverflow(ctx, owner, name, prNum, repo.Slug, string(p.Comments.PageInfo.EndCursor), sink, prov)
+	}
+	emitReviewThreadsInline(p.ReviewThreads.Nodes, prNum, repo.Slug, sink, prov)
+	if bool(p.ReviewThreads.PageInfo.HasNextPage) {
+		c.paginatePRReviewThreadsOverflow(ctx, owner, name, prNum, repo.Slug, string(p.ReviewThreads.PageInfo.EndCursor), sink, prov)
+	}
+
+	// Timeline overflow picks up any REVIEW_REQUESTED_EVENT past the inline
+	// first 100; the derived fields (ready_for_review_at, first_review_at,
+	// force_pushed_after_review) keep the inline minimum, which is correct
+	// because timeline nodes return in chronological order.
+	if bool(p.TimelineItems.PageInfo.HasNextPage) {
+		c.paginatePRReviewRequestsOverflow(ctx, owner, name, prNum, repo.Slug, string(p.TimelineItems.PageInfo.EndCursor), sink, prov)
+	}
+
 	// pr_labels straight from GraphQL nodes; no extra round-trip.
 	for _, l := range p.Labels.Nodes {
 		row := model.PRLabel{PRNumber: prNum, Repo: repo.Slug, Label: string(l.Name)}
@@ -318,7 +385,7 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 		BaseBranch:             string(p.BaseRefName),
 		HeadSHA:                string(p.HeadRefOid),
 		MergeSHA:               string(p.MergeCommit.Oid),
-		MergeMethod:            c.fetchMergeMethod(ctx, owner, name, prNum, repo.Clone, prHeadOids(p)),
+		MergeMethod:            c.resolveMergeMethod(ctx, p, repo.Clone, prHeadOids(p)),
 		IsDraft:                bool(p.IsDraft),
 		ReadyForReviewAt:       readyForReviewAt,
 		FirstReviewAt:          firstReviewAt,
@@ -445,36 +512,25 @@ func deriveMergeMethod(mergeParents int, prHeadCommits []string, reachable map[s
 	return ""
 }
 
-// fetchMergeMethod returns "merge" / "squash" / "rebase" or empty. Wraps
-// deriveMergeMethod with the network and git lookups required to populate
-// its inputs.
-//
-//   - Parent count comes from the REST commit lookup against the merge SHA.
-//   - Reachability per PR head commit comes from `git merge-base
-//     --is-ancestor` against the per-run clone; when no clone is available
-//     (clonePath == "") the function falls back to the historical
-//     parent-count-only heuristic (1 parent -> "squash") so behaviour is
-//     defined in test-only paths that exercise the connector without a
-//     working tree.
-func (c *Connector) fetchMergeMethod(ctx context.Context, owner, name string, number int, clonePath string, prHeadCommits []string) string {
-	pr, _, err := c.rest.PullRequests.Get(ctx, owner, name, number)
-	if err != nil || pr == nil {
+// resolveMergeMethod returns "merge" / "squash" / "rebase" or empty.
+// Parent count and merge SHA come from the inline GraphQL PR node (no REST
+// round-trip). Reachability per PR head commit comes from `git merge-base
+// --is-ancestor` against the per-run clone; when no clone is available
+// (clonePath == "") the function falls back to the historical
+// parent-count-only heuristic (1 parent -> "squash") so behaviour is
+// defined in test-only paths that exercise the connector without a working
+// tree.
+func (c *Connector) resolveMergeMethod(ctx context.Context, p prGraph, clonePath string, prHeadCommits []string) string {
+	if p.MergedAt == nil {
 		return ""
 	}
-	if !pr.GetMerged() {
-		return ""
-	}
-	mergeSHA := pr.GetMergeCommitSHA()
+	mergeSHA := string(p.MergeCommit.Oid)
 	if mergeSHA == "" {
 		// No merge commit recorded — treat as rebase per ADR 021's
 		// 1-parent + reachable branch (every PR head commit lands as-is).
 		return "rebase"
 	}
-	rc, _, err := c.rest.Repositories.GetCommit(ctx, owner, name, mergeSHA, nil)
-	if err != nil || rc == nil {
-		return ""
-	}
-	parents := len(rc.Parents)
+	parents := int(p.MergeCommit.Parents.TotalCount)
 
 	reachable := map[string]bool{}
 	if clonePath != "" && c.git != nil {
