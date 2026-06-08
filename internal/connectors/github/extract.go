@@ -40,6 +40,13 @@ import (
 func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window connector.Window, sink connector.Sink) connector.Provenance {
 	prov := connector.NewProvenance(c.Name(), repo.Slug, window)
 
+	// Reset GraphQL point counters for this extraction run so successive
+	// Extract calls on the same Connector instance don't accumulate.
+	c.gqlMu.Lock()
+	c.gqlPointsUsed = 0
+	c.gqlPointsRemaining = 0
+	c.gqlMu.Unlock()
+
 	// --- Phase 1: sync prelude --------------------------------------------
 
 	// Read the repo's .mailmap once per extraction. Failure modes:
@@ -113,6 +120,13 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 	if err := ctx.Err(); err != nil {
 		prov.PaginationComplete = false
 	}
+
+	// Copy GraphQL point totals accumulated by the costInterceptor into
+	// provenance so the manifest records how many points this extraction used.
+	c.gqlMu.Lock()
+	prov.GraphQLPointsUsed = c.gqlPointsUsed
+	prov.GraphQLPointsRemaining = c.gqlPointsRemaining
+	c.gqlMu.Unlock()
 
 	return prov
 }

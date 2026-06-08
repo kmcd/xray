@@ -1,8 +1,11 @@
 package github
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -41,6 +44,13 @@ type Connector struct {
 	mu            sync.Mutex
 	templateCache map[string]*template // repo slug -> parsed template (nil if absent)
 
+	// gqlMu guards gqlPointsUsed and gqlPointsRemaining, which are
+	// incremented by the costInterceptor on every GraphQL response and
+	// read+reset at the start/end of each Extract call.
+	gqlMu              sync.Mutex
+	gqlPointsUsed      int
+	gqlPointsRemaining int
+
 	// prefetchMu guards prefetchData. Prefetch is called from run.go's
 	// clone phase (one goroutine per repo) and consumePRPrefetch is called
 	// from Extract (which runs in the workers pool). The lock window is
@@ -57,6 +67,44 @@ type prPrefetchResult struct {
 	nodes []prGraph
 	err   error
 	done  chan struct{}
+}
+
+// costInterceptor wraps an http.RoundTripper and calls onCost after every
+// GitHub GraphQL response. It reads the response body to extract the
+// extensions.cost and extensions.throttleStatus.remaining fields, then
+// reassembles a fresh ReadCloser so the githubv4 decoder can still consume
+// the body. Non-GraphQL responses are passed through unmodified.
+type costInterceptor struct {
+	base   http.RoundTripper
+	onCost func(cost, remaining int)
+}
+
+func (ci *costInterceptor) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := ci.base.RoundTrip(req)
+	if err != nil || resp == nil {
+		return resp, err
+	}
+	if !strings.HasSuffix(req.URL.Path, "/graphql") {
+		return resp, nil
+	}
+	body, readErr := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	if readErr != nil {
+		return resp, nil
+	}
+	var ext struct {
+		Extensions struct {
+			Cost           int `json:"cost"`
+			ThrottleStatus struct {
+				Remaining int `json:"remaining"`
+			} `json:"throttleStatus"`
+		} `json:"extensions"`
+	}
+	if jsonErr := json.Unmarshal(body, &ext); jsonErr == nil && ext.Extensions.Cost > 0 {
+		ci.onCost(ext.Extensions.Cost, ext.Extensions.ThrottleStatus.Remaining)
+	}
+	return resp, nil
 }
 
 // SetCaptureHarnessContent toggles the harness-artifact content-capture
@@ -102,20 +150,38 @@ func New(cfg config.GitHubConn, log *slog.Logger) (*Connector, error) {
 		}
 	}
 
-	rest := gh.NewClient(httpClient)
-	gql := githubv4.NewClient(httpClient)
-
-	return &Connector{
+	c := &Connector{
 		cfg:           cfg,
 		log:           log,
 		httpClient:    httpClient,
-		rest:          rest,
-		gql:           gql,
 		graphqlURL:    "https://api.github.com/graphql",
 		git:           &gitcli.Client{Log: log},
 		templateCache: map[string]*template{},
 		prefetchData:  map[string]*prPrefetchResult{},
-	}, nil
+	}
+
+	// Wrap the outermost transport with the costInterceptor so every GraphQL
+	// response updates the connector's running point totals. The wrap goes
+	// outside oauth2.Transport so it sees the final response after token
+	// injection and retry handling.
+	httpClient.Transport = &costInterceptor{
+		base: httpClient.Transport,
+		onCost: func(cost, remaining int) {
+			c.gqlMu.Lock()
+			c.gqlPointsUsed += cost
+			if remaining > 0 {
+				if c.gqlPointsRemaining == 0 || remaining < c.gqlPointsRemaining {
+					c.gqlPointsRemaining = remaining
+				}
+			}
+			c.gqlMu.Unlock()
+		},
+	}
+
+	c.rest = gh.NewClient(httpClient)
+	c.gql = githubv4.NewClient(httpClient)
+
+	return c, nil
 }
 
 // Prefetch starts a paginated PR walk for the supplied slug and stashes

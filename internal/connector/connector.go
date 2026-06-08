@@ -42,6 +42,14 @@ type Provenance struct {
 	// the map reads as false; the aggregator ANDs across all provenances of
 	// the same connector to derive the manifest-wide value.
 	Flags map[string]bool `json:"flags,omitempty"`
+
+	// GraphQLPointsUsed is the total number of GraphQL rate-limit points
+	// consumed across all requests in this extraction. Zero when no GraphQL
+	// calls were made (e.g. REST-only connectors).
+	GraphQLPointsUsed int `json:"graphql_points_used,omitempty"`
+	// GraphQLPointsRemaining is the remaining GitHub GraphQL rate-limit budget
+	// as of the last observed response. Zero when no GraphQL calls were made.
+	GraphQLPointsRemaining int `json:"graphql_points_remaining,omitempty"`
 }
 
 func NewProvenance(name, repo string, w Window) Provenance {
@@ -104,6 +112,12 @@ func (p *Provenance) Merge(other Provenance) {
 	}
 	if other.RateLimitTruncated {
 		p.RateLimitTruncated = true
+	}
+	p.GraphQLPointsUsed += other.GraphQLPointsUsed
+	if other.GraphQLPointsRemaining > 0 {
+		if p.GraphQLPointsRemaining == 0 || other.GraphQLPointsRemaining < p.GraphQLPointsRemaining {
+			p.GraphQLPointsRemaining = other.GraphQLPointsRemaining
+		}
 	}
 }
 
