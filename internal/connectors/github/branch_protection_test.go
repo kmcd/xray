@@ -3,19 +3,19 @@ package github
 import (
 	"testing"
 
-	gh "github.com/google/go-github/v66/github"
+	"github.com/shurcooL/githubv4"
 )
 
-func TestBuildBranchProtection(t *testing.T) {
-	t.Run("with_required_reviews_and_checks_via_Contexts", func(t *testing.T) {
-		ctxs := []string{"ci/lint", "ci/test"}
-		bp := &gh.Protection{
-			RequiredPullRequestReviews: &gh.PullRequestReviewsEnforcement{RequiredApprovingReviewCount: 2},
-			RequiredStatusChecks:       &gh.RequiredStatusChecks{Contexts: &ctxs},
-			EnforceAdmins:              &gh.AdminEnforcement{Enabled: true},
-			Restrictions:               &gh.BranchRestrictions{},
+func TestBuildBranchProtectionFromRule(t *testing.T) {
+	t.Run("with_required_reviews_and_checks", func(t *testing.T) {
+		rule := branchProtectionRuleGraph{
+			RequiresApprovingReviews:    githubv4.Boolean(true),
+			RequiredApprovingReviewCount: githubv4.Int(2),
+			RequiredStatusCheckContexts: []githubv4.String{"ci/lint", "ci/test"},
+			IsAdminEnforced:             githubv4.Boolean(true),
+			RestrictsPushes:             githubv4.Boolean(true),
 		}
-		row := buildBranchProtection("r", "main", bp)
+		row := buildBranchProtectionFromRule("r", "main", rule)
 		if row.RequiredReviews == nil || *row.RequiredReviews != 2 {
 			t.Errorf("required_reviews = %v", row.RequiredReviews)
 		}
@@ -29,23 +29,22 @@ func TestBuildBranchProtection(t *testing.T) {
 			t.Errorf("restricts_pushes=false")
 		}
 	})
-	t.Run("with_required_checks_via_Checks", func(t *testing.T) {
-		checks := []*gh.RequiredStatusCheck{{Context: "ci/build"}, {Context: "ci/qa"}}
-		bp := &gh.Protection{
-			RequiredStatusChecks: &gh.RequiredStatusChecks{Checks: &checks},
+	t.Run("no_reviews_required", func(t *testing.T) {
+		rule := branchProtectionRuleGraph{
+			RequiresApprovingReviews: githubv4.Boolean(false),
 		}
-		row := buildBranchProtection("r", "main", bp)
-		if row.RequiredChecks != "ci/build,ci/qa" {
-			t.Errorf("required_checks = %q", row.RequiredChecks)
+		row := buildBranchProtectionFromRule("r", "main", rule)
+		if row.RequiredReviews != nil {
+			t.Errorf("required_reviews should be nil when requiresApprovingReviews=false, got %v", row.RequiredReviews)
 		}
 	})
-	t.Run("empty_protection_struct", func(t *testing.T) {
-		row := buildBranchProtection("r", "main", &gh.Protection{})
+	t.Run("empty_rule", func(t *testing.T) {
+		row := buildBranchProtectionFromRule("r", "main", branchProtectionRuleGraph{})
 		if row.RequiredReviews != nil {
 			t.Errorf("required_reviews should be nil")
 		}
 		if row.RequiredChecks != "" || row.EnforceAdmins || row.RestrictsPushes {
-			t.Errorf("expected zero-valued fields on empty Protection")
+			t.Errorf("expected zero-valued fields on empty rule")
 		}
 	})
 }

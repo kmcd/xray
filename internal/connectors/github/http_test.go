@@ -493,8 +493,18 @@ func TestExtractBranches_ProtectionAccessible(t *testing.T) {
 	clone := setupCloneWithRemoteRefs(t, []string{"main"})
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/kmcd/foo/branches/main/protection", func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprintln(w, `{"required_pull_request_reviews":{"required_approving_review_count":2},"enforce_admins":{"enabled":true}}`)
+	mux.HandleFunc("/graphql", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintln(w, `{"data":{"repository":{"branchProtectionRules":{
+			"pageInfo":{"endCursor":"","hasNextPage":false},
+			"nodes":[{
+				"requiresApprovingReviews":true,
+				"requiredApprovingReviewCount":2,
+				"isAdminEnforced":true,
+				"restrictsPushes":false,
+				"requiredStatusCheckContexts":[],
+				"matchingRefs":{"nodes":[{"name":"main"}]}
+			}]
+		}}}}`)
 	})
 
 	srv := httptest.NewServer(mux)
@@ -527,7 +537,7 @@ func TestExtractBranches_Protection403(t *testing.T) {
 	clone := setupCloneWithRemoteRefs(t, []string{"main"})
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/kmcd/foo/branches/main/protection", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/graphql", func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, `{"message":"forbidden"}`, http.StatusForbidden)
 	})
 

@@ -3,20 +3,19 @@ package github
 import (
 	"context"
 	"log/slog"
-	"net/http"
 	"strings"
 
-	gh "github.com/google/go-github/v66/github"
+	"github.com/shurcooL/githubv4"
 
 	"github.com/kmcd/xray/internal/connector"
 	"github.com/kmcd/xray/internal/model"
 )
 
 // extractBranches lists branches from the local clone via `git for-each-ref`
-// and, where the token has admin scope, fetches branch protection settings
-// via REST. A single 403/404 on the protection endpoint causes the connector
-// to mark branch_protection as inaccessible and skip the rest of the
-// protection probes for the repo.
+// and fetches branch protection rules via a single paginated GraphQL query
+// against repository.branchProtectionRules. A GraphQL error (e.g. token lacks
+// admin permission) marks branch_protection inaccessible and skips rows for
+// that endpoint.
 func (c *Connector) extractBranches(ctx context.Context, repo connector.Repo, sink connector.Sink, prov *connector.Provenance) {
 	if repo.Clone == "" || c.git == nil {
 		return
@@ -36,7 +35,6 @@ func (c *Connector) extractBranches(ctx context.Context, repo connector.Repo, si
 		return
 	}
 
-	protectionAccessible := true
 	for _, b := range branches {
 		if ctx.Err() != nil {
 			prov.PaginationComplete = false
@@ -56,74 +54,95 @@ func (c *Connector) extractBranches(ctx context.Context, repo connector.Repo, si
 		} else {
 			prov.RowsReturned["branches"]++
 		}
-
-		if !protectionAccessible {
-			continue
-		}
-		bp, presp, perr := c.rest.Repositories.GetBranchProtection(ctx, owner, name, b.Name)
-		if perr != nil {
-			if presp != nil && (presp.StatusCode == http.StatusForbidden || presp.StatusCode == http.StatusNotFound) {
-				protectionAccessible = false
-				prov.Endpoints["branch_protection"] = connector.EndpointStatus{
-					Accessible: false,
-					Reason:     "token lacks admin permission on repo",
-				}
-				continue
-			}
-			c.log.Warn("github: get branch protection",
-				slog.String("repo", repo.Slug),
-				slog.String("branch", b.Name),
-				slog.String("error", perr.Error()),
-			)
-			continue
-		}
-		if bp != nil {
-			protRow := buildBranchProtection(repo.Slug, b.Name, bp)
-			if err := sink.InsertBranchProtection(protRow); err != nil {
-				if prov.Errors["branch_protection"] == "" {
-					prov.Errors["branch_protection"] = err.Error()
-				}
-			} else {
-				prov.RowsReturned["branch_protection"]++
-			}
-		}
 	}
 
-	if protectionAccessible {
-		prov.Endpoints["branch_protection"] = connector.EndpointStatus{Accessible: true}
-	}
+	c.fetchBranchProtectionRules(ctx, owner, name, sink, prov)
 }
 
-// buildBranchProtection translates a go-github Protection struct into the
-// canonical row shape. Required reviews and check contexts may be nil; we
-// preserve null for required_reviews and emit a comma-joined string for
-// required_checks.
-func buildBranchProtection(repo, branch string, bp *gh.Protection) model.BranchProtection {
+type branchProtectionQuery struct {
+	Repository struct {
+		BranchProtectionRules struct {
+			PageInfo struct {
+				EndCursor   githubv4.String
+				HasNextPage githubv4.Boolean
+			}
+			Nodes []branchProtectionRuleGraph
+		} `graphql:"branchProtectionRules(first: 100, after: $after)"`
+	} `graphql:"repository(owner: $owner, name: $name)"`
+}
+
+type branchProtectionRuleGraph struct {
+	RequiresApprovingReviews     githubv4.Boolean
+	RequiredApprovingReviewCount githubv4.Int
+	IsAdminEnforced              githubv4.Boolean
+	RestrictsPushes              githubv4.Boolean
+	RequiredStatusCheckContexts  []githubv4.String
+	MatchingRefs                 struct {
+		Nodes []struct {
+			Name githubv4.String
+		}
+	} `graphql:"matchingRefs(first: 100)"`
+}
+
+// fetchBranchProtectionRules fetches all branch protection rules for the repo
+// in one paginated GraphQL call and fans out one branch_protection row per
+// matching branch per rule.
+func (c *Connector) fetchBranchProtectionRules(ctx context.Context, owner, name string, sink connector.Sink, prov *connector.Provenance) {
+	vars := map[string]any{
+		"owner": githubv4.String(owner),
+		"name":  githubv4.String(name),
+		"after": (*githubv4.String)(nil),
+	}
+	repoSlug := owner + "/" + name
+	for {
+		if ctx.Err() != nil {
+			prov.PaginationComplete = false
+			return
+		}
+		var q branchProtectionQuery
+		if err := c.gql.Query(ctx, &q, vars); err != nil {
+			prov.Endpoints["branch_protection"] = connector.EndpointStatus{
+				Accessible: false,
+				Reason:     err.Error(),
+			}
+			return
+		}
+		for _, rule := range q.Repository.BranchProtectionRules.Nodes {
+			for _, ref := range rule.MatchingRefs.Nodes {
+				row := buildBranchProtectionFromRule(repoSlug, string(ref.Name), rule)
+				if err := sink.InsertBranchProtection(row); err != nil {
+					if prov.Errors["branch_protection"] == "" {
+						prov.Errors["branch_protection"] = err.Error()
+					}
+				} else {
+					prov.RowsReturned["branch_protection"]++
+				}
+			}
+		}
+		if !bool(q.Repository.BranchProtectionRules.PageInfo.HasNextPage) {
+			break
+		}
+		vars["after"] = githubv4.NewString(q.Repository.BranchProtectionRules.PageInfo.EndCursor)
+	}
+	prov.Endpoints["branch_protection"] = connector.EndpointStatus{Accessible: true}
+}
+
+// buildBranchProtectionFromRule translates a GraphQL BranchProtectionRule node
+// and a matched branch name into the canonical row shape.
+func buildBranchProtectionFromRule(repo, branch string, r branchProtectionRuleGraph) model.BranchProtection {
 	row := model.BranchProtection{Repo: repo, Branch: branch}
-	if bp.RequiredPullRequestReviews != nil {
-		n := bp.RequiredPullRequestReviews.RequiredApprovingReviewCount
+	if bool(r.RequiresApprovingReviews) {
+		n := int(r.RequiredApprovingReviewCount)
 		row.RequiredReviews = &n
 	}
-	if bp.RequiredStatusChecks != nil {
-		ck := bp.RequiredStatusChecks.Checks
-		if ck != nil && len(*ck) > 0 {
-			names := make([]string, 0, len(*ck))
-			for _, c := range *ck {
-				if c == nil {
-					continue
-				}
-				names = append(names, c.Context)
-			}
-			row.RequiredChecks = strings.Join(names, ",")
-		} else if ctxs := bp.RequiredStatusChecks.Contexts; ctxs != nil && len(*ctxs) > 0 {
-			row.RequiredChecks = strings.Join(*ctxs, ",")
+	if len(r.RequiredStatusCheckContexts) > 0 {
+		names := make([]string, len(r.RequiredStatusCheckContexts))
+		for i, ctx := range r.RequiredStatusCheckContexts {
+			names[i] = string(ctx)
 		}
+		row.RequiredChecks = strings.Join(names, ",")
 	}
-	if bp.EnforceAdmins != nil {
-		row.EnforceAdmins = bp.EnforceAdmins.Enabled
-	}
-	if bp.Restrictions != nil {
-		row.RestrictsPushes = true
-	}
+	row.EnforceAdmins = bool(r.IsAdminEnforced)
+	row.RestrictsPushes = bool(r.RestrictsPushes)
 	return row
 }
