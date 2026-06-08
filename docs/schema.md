@@ -385,6 +385,8 @@ The exclusion regex (`internal/connectors/github/complexity_history.go::complexi
 
 Populated via `git ls-files --cached` after each clone — `.gitignore` is honoured naturally; `.git/` is never listed. Symlinks are recorded as file entries; their targets are not followed. No content or metadata beyond the path is stored.
 
+**Note:** `file_metrics` skips symlinks (they are not regular files and have no byte content to scan), so `repo_file` is a superset of `file_metrics` on `(repo, path)`. A LEFT JOIN `repo_file → file_metrics` on `(repo, path)` will produce NULL `file_metrics` columns for symlink rows; this is expected, not missing data.
+
 Consumers: assay-evaluator Stage 3 Tier 1 path-based detectors (AI-tooling presence, harness-discipline signals). Cross-reference `file_metrics` for per-file metadata on the same paths.
 
 | column  | type | notes |

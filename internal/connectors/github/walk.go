@@ -28,7 +28,11 @@ func (c *Connector) extractRepoFiles(ctx context.Context, repo connector.Repo, s
 		return
 	}
 	for _, p := range paths {
-		if err := sink.InsertRepoFile(model.RepoFile{Repo: repo.Slug, Path: p}); err == nil {
+		if err := sink.InsertRepoFile(model.RepoFile{Repo: repo.Slug, Path: p}); err != nil {
+			if prov.Errors["repo_file"] == "" {
+				prov.Errors["repo_file"] = err.Error()
+			}
+		} else {
 			prov.RowsReturned["repo_file"]++
 		}
 	}

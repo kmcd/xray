@@ -145,16 +145,51 @@ func TestExtractRepoFiles_EmptyClone(t *testing.T) {
 }
 
 func TestExtractRepoFiles_MultiRepo(t *testing.T) {
+	// setupRepoFileFixture already skips if git is absent.
 	clone1 := setupRepoFileFixture(t)
-	clone2 := t.TempDir()
+	clone2 := setupMinimalRepo(t, map[string]string{"README.md": "# Repo2\n"})
 
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not on PATH")
+	srv := httptest.NewServer(http.NewServeMux())
+	defer srv.Close()
+	c := newTestConnector(t, srv)
+
+	extractPaths := func(slug, clone string) []string {
+		sink := &repoFileSink{}
+		repo := connector.Repo{Slug: slug, Clone: clone}
+		prov := connector.NewProvenance(c.Name(), slug, standardWindow())
+		c.extractRepoFiles(context.Background(), repo, sink, &prov)
+		for _, f := range sink.files {
+			if f.Repo != slug {
+				t.Errorf("repo mismatch: got %q, want %q", f.Repo, slug)
+			}
+		}
+		paths := make([]string, len(sink.files))
+		for i, f := range sink.files {
+			paths[i] = f.Path
+		}
+		sort.Strings(paths)
+		return paths
 	}
-	run2 := func(args ...string) {
-		// #nosec G204
+
+	paths1 := extractPaths("org/repo1", clone1)
+	paths2 := extractPaths("org/repo2", clone2)
+
+	if len(paths1) == 0 {
+		t.Errorf("repo1: expected paths, got none")
+	}
+	if len(paths2) != 1 || paths2[0] != "README.md" {
+		t.Errorf("repo2: got %v, want [README.md]", paths2)
+	}
+}
+
+// setupMinimalRepo creates a git repo with the given files committed at HEAD.
+func setupMinimalRepo(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	gitRun := func(args ...string) {
+		// #nosec G204 -- args are test-controlled literals.
 		cmd := exec.Command("git", args...)
-		cmd.Dir = clone2
+		cmd.Dir = dir
 		cmd.Env = append(os.Environ(),
 			"GIT_TERMINAL_PROMPT=0",
 			"GIT_CONFIG_GLOBAL=/dev/null",
@@ -168,48 +203,20 @@ func TestExtractRepoFiles_MultiRepo(t *testing.T) {
 			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(clone2, "README.md"), []byte("# Repo2\n"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	run2("init", "-q", "-b", "main")
-	run2("config", "user.email", "t@example.com")
-	run2("config", "user.name", "T")
-	run2("config", "commit.gpgsign", "false")
-	run2("add", ".")
-	run2("commit", "-q", "-m", "init")
-
-	srv := httptest.NewServer(http.NewServeMux())
-	defer srv.Close()
-	c := newTestConnector(t, srv)
-
-	type result struct {
-		slug  string
-		paths []string
-	}
-	var results []result
-	for _, tc := range []struct{ slug, clone string }{
-		{"org/repo1", clone1},
-		{"org/repo2", clone2},
-	} {
-		sink := &repoFileSink{}
-		repo := connector.Repo{Slug: tc.slug, Clone: tc.clone}
-		prov := connector.NewProvenance(c.Name(), repo.Slug, standardWindow())
-		c.extractRepoFiles(context.Background(), repo, sink, &prov)
-		paths := make([]string, len(sink.files))
-		for i, f := range sink.files {
-			if f.Repo != tc.slug {
-				t.Errorf("repo mismatch: got %q, want %q", f.Repo, tc.slug)
-			}
-			paths[i] = f.Path
+	gitRun("init", "-q", "-b", "main")
+	gitRun("config", "user.email", "t@example.com")
+	gitRun("config", "user.name", "T")
+	gitRun("config", "commit.gpgsign", "false")
+	for rel, content := range files {
+		full := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
 		}
-		sort.Strings(paths)
-		results = append(results, result{tc.slug, paths})
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
 	}
-
-	if len(results[0].paths) == 0 {
-		t.Errorf("repo1: expected paths, got none")
-	}
-	if len(results[1].paths) != 1 || results[1].paths[0] != "README.md" {
-		t.Errorf("repo2: got %v, want [README.md]", results[1].paths)
-	}
+	gitRun("add", ".")
+	gitRun("commit", "-q", "-m", "init")
+	return dir
 }
