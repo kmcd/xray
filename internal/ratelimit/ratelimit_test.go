@@ -338,14 +338,17 @@ func TestLowWaterMarkContextCancel(t *testing.T) {
 	}
 
 	start := time.Now()
-	_, err = transport.RoundTrip(req)
+	resp, err := transport.RoundTrip(req)
 	elapsed := time.Since(start)
 
-	if err == nil {
-		t.Fatal("expected error on context cancellation, got nil")
+	// Context cancel during the LWM sleep should return the already-received
+	// valid response (not nil), since the current request succeeded; the sleep
+	// was only to pace future requests.
+	if err != nil {
+		t.Fatalf("RoundTrip: expected nil error on cancel-during-sleep, got %v", err)
 	}
-	if err != context.Canceled {
-		t.Errorf("err: got %v want context.Canceled", err)
+	if resp == nil || resp.StatusCode != http.StatusOK {
+		t.Errorf("expected valid 200 response, got %v", resp)
 	}
 	// Should have returned quickly after cancel (~50ms), not waited 60s.
 	if elapsed > 5*time.Second {

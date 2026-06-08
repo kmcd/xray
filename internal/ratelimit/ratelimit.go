@@ -317,9 +317,10 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if lwm == 0 {
 		lwm = 200
 	}
-	remaining, _ := strconv.Atoi(resp.Header.Get("X-RateLimit-Remaining"))
+	remainingStr := resp.Header.Get("X-RateLimit-Remaining")
+	remaining, _ := strconv.Atoi(remainingStr)
 	resetUnix, _ := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64)
-	if remaining > 0 && resetUnix > 0 && remaining < lwm {
+	if remainingStr != "" && resetUnix > 0 && remaining < lwm {
 		resetAt := time.Unix(resetUnix, 0)
 		sleep := time.Until(resetAt) + 5*time.Second
 		if sleep > 0 {
@@ -334,7 +335,9 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 			select {
 			case <-time.After(sleep):
 			case <-req.Context().Done():
-				return nil, req.Context().Err()
+				// Pacing sleep is for future requests; the current response
+				// was already received. Return it rather than discarding it.
+				return resp, nil
 			}
 		}
 	}

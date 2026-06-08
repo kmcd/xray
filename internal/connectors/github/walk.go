@@ -39,6 +39,10 @@ func (c *Connector) extractWorkingTree(ctx context.Context, repo connector.Repo,
 			return ctx.Err()
 		}
 		if err != nil {
+			if path == root {
+				prov.Errors["walk"] = err.Error()
+				return err
+			}
 			logger.Debug("walk error", slog.String("path", path), slog.String("err", err.Error()))
 			return nil
 		}
@@ -120,6 +124,9 @@ func (c *Connector) extractWorkingTree(ctx context.Context, repo connector.Repo,
 				return nil
 			}
 			tool, kind = botTool, "workflow"
+		}
+		if c.git == nil {
+			return nil
 		}
 		lineCount := countLines(content)
 		firstSHA, firstAt, lastAt, gitErr := c.git.LogPath(ctx, root, relPosix)

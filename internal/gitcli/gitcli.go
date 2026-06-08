@@ -136,11 +136,15 @@ func (c *Client) CatFileBatch(ctx context.Context, clonePath string, refs []stri
 		return fmt.Errorf("gitcli: cat-file --batch: %w", err)
 	}
 	// Write all queries in the background; close stdin when done so git sees EOF.
+	// Return early on write errors so the goroutine terminates promptly if git
+	// exits before all refs are sent (e.g. early error return from the read loop).
 	go func() {
+		defer stdin.Close()
 		for _, ref := range refs {
-			fmt.Fprintln(stdin, ref)
+			if _, err := fmt.Fprintln(stdin, ref); err != nil {
+				return
+			}
 		}
-		stdin.Close()
 	}()
 	r := bufio.NewReader(stdout)
 	for _, ref := range refs {

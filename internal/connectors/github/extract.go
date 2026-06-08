@@ -40,11 +40,13 @@ import (
 func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window connector.Window, sink connector.Sink) connector.Provenance {
 	prov := connector.NewProvenance(c.Name(), repo.Slug, window)
 
-	// Reset GraphQL point counters for this extraction run so successive
-	// Extract calls on the same Connector instance don't accumulate.
+	// Snapshot the connector-wide GQL cost counter before extraction begins.
+	// The delta at exit approximates the points this repo consumed. With
+	// concurrent Extract calls (N worker goroutines, same Connector) the
+	// delta is an approximation — other repos' requests fall in the window —
+	// but the total across all provenances in the manifest is accurate.
 	c.gqlMu.Lock()
-	c.gqlPointsUsed = 0
-	c.gqlPointsRemaining = 0
+	extractStartUsed := c.gqlPointsUsed
 	c.gqlMu.Unlock()
 
 	// --- Phase 1: sync prelude --------------------------------------------
@@ -124,7 +126,7 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 	// Copy GraphQL point totals accumulated by the costInterceptor into
 	// provenance so the manifest records how many points this extraction used.
 	c.gqlMu.Lock()
-	prov.GraphQLPointsUsed = c.gqlPointsUsed
+	prov.GraphQLPointsUsed = c.gqlPointsUsed - extractStartUsed
 	prov.GraphQLPointsRemaining = c.gqlPointsRemaining
 	c.gqlMu.Unlock()
 
