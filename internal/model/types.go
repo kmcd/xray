@@ -280,3 +280,18 @@ type HarnessArtifact struct {
 	LastModifiedAt  time.Time
 	Content         string
 }
+
+// FileComplexityHistory is one per-revision row consumed by assay's
+// stage2.flow.hotspot_complexity_trend. The indent_* fields use the
+// Hindle/Godfrey/Holt 2008 logical-indent proxy (4 spaces or 1 tab = 1
+// level), not the raw-space measure file_metrics uses.
+type FileComplexityHistory struct {
+	CommitSHA   string
+	Repo        string
+	Path        string
+	N           int
+	IndentTotal int
+	IndentMean  float64
+	IndentSD    float64
+	IndentMax   int
+}

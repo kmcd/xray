@@ -73,6 +73,43 @@ func (c *Client) Clone(ctx context.Context, slug, dest string, shallowSince time
 	return err
 }
 
+// ShowFile streams the contents of path at sha from clonePath, equivalent
+// to `git show <sha>:<path>`. Returns os.ErrNotExist if the path is absent
+// at that revision (typical for delete entries). Output is capped at
+// maxShowFileBytes so a runaway blob can't OOM the extractor.
+func (c *Client) ShowFile(ctx context.Context, clonePath, sha, path string) ([]byte, error) {
+	if sha == "" || path == "" {
+		return nil, fmt.Errorf("gitcli: empty sha or path")
+	}
+	// #nosec G204 -- c.bin() is the system git binary; args are argv.
+	cmd := exec.CommandContext(ctx, c.bin(), "show", sha+":"+path)
+	cmd.Dir = clonePath
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		// `git show <sha>:<path>` exits 128 with stderr "fatal: ...: does
+		// not exist..." or "...exists on disk, but not in '<sha>'..." for
+		// missing entries. Surface that as os.ErrNotExist so callers can
+		// distinguish a delete from a real failure.
+		serr := strings.ToLower(stderr.String())
+		if strings.Contains(serr, "does not exist") || strings.Contains(serr, "exists on disk") {
+			return nil, os.ErrNotExist
+		}
+		return nil, fmt.Errorf("git show %s:%s: %w: %s", sha, path, err, strings.TrimSpace(stderr.String()))
+	}
+	out := stdout.Bytes()
+	if len(out) > maxShowFileBytes {
+		out = out[:maxShowFileBytes]
+	}
+	return out, nil
+}
+
+// maxShowFileBytes caps a single git-show read so per-revision walks can't
+// OOM on a checked-in giant. 8 MiB is well above any indent-counted source
+// file; binaries and minified bundles are filtered upstream.
+const maxShowFileBytes = 8 * 1024 * 1024
+
 // IsAncestor reports whether `ancestor` is an ancestor of (or equal to)
 // `descendant` in clonePath. Implemented via `git merge-base --is-ancestor`,
 // which exits 0 when true and 1 when false; any other exit code is surfaced

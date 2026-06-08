@@ -359,3 +359,22 @@ Snapshot at `repos.head_sha`. **No content stored.** Walked at extract time.
 | `first_seen_at`     | TEXT    | |
 | `last_modified_at`  | TEXT    | |
 | `content`           | TEXT    | populated only when `capture_harness_content = true` in the config |
+
+### `file_complexity_history`
+
+`PRIMARY KEY (commit_sha, repo, path)`. One row per touched, non-excluded file per commit in the window. Feeds assay's `stage2.flow.hotspot_complexity_trend` — the `indent_total` series for each hotspot file is fed through `framing.trend_classify` to label trajectories.
+
+Indent measure is the Hindle/Godfrey/Holt 2008 logical-indent proxy: **4 spaces or 1 tab = 1 logical level** (integer division of raw spaces). This is intentionally different from `file_metrics.max_indent` / `mean_indent`, which count raw spaces — analysers must consult the right column for the right metric.
+
+The exclusion regex (`internal/connectors/github/complexity_history.go::complexityHistoryExclusionRe`) drops `vendor/`, `node_modules/`, `__pycache__/`, `build/`, `dist/`, `.venv/`, dependency-lock files, generated files (`*.pb.go`, `_pb2.py`, `*.generated.*`, `*.min.js`), and common binary extensions. **Test files are NOT excluded** — assay computes the test/non-test split downstream.
+
+| column         | type    | notes |
+| -------------- | ------- | ----- |
+| `commit_sha`   | TEXT    | |
+| `repo`         | TEXT    | |
+| `path`         | TEXT    | matches `commit_files.path` exactly so joins work |
+| `n`            | INTEGER | count of lines with `indent_level > 0` |
+| `indent_total` | INTEGER | sum of `indent_level` across those lines |
+| `indent_mean`  | REAL    | `indent_total / n`; `0.0` when `n == 0` |
+| `indent_sd`    | REAL    | sample stddev of per-line levels; `0.0` when `n < 2` |
+| `indent_max`   | INTEGER | headline statistic per Tornhill 2nd ed Ch 5 |

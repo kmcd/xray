@@ -129,6 +129,13 @@ func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, win
 			} else {
 				prov.RowsReturned["commit_files"]++
 			}
+			// Per-revision indent stats for assay's
+			// stage2.flow.hotspot_complexity_trend. Skip deletes (path
+			// gone at this sha) and the exclusion set (vendor / generated
+			// / binaries); see complexity_history.go.
+			if f.ChangeType != "D" {
+				emitComplexityHistory(ctx, c, repo, rec.SHA, f.Path, sink, prov)
+			}
 		}
 
 		// Coauthor rows.

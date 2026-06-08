@@ -186,6 +186,38 @@ func newClient() *Client {
 	return &Client{}
 }
 
+func TestClient_ShowFile(t *testing.T) {
+	fx := setupRepo(t)
+	c := newClient()
+	ctx := context.Background()
+
+	// README.md was created in the initial commit with content "hello\n".
+	got, err := c.ShowFile(ctx, fx.dir, fx.initialSHA, "README.md")
+	if err != nil {
+		t.Fatalf("ShowFile: %v", err)
+	}
+	if string(got) != "hello\n" {
+		t.Errorf("README.md contents = %q, want %q", string(got), "hello\n")
+	}
+}
+
+func TestClient_ShowFile_MissingAtRevision(t *testing.T) {
+	fx := setupRepo(t)
+	c := newClient()
+	ctx := context.Background()
+
+	// src/renamed.go was created by the rename commit; it does not exist at
+	// the initial SHA. ShowFile must surface os.ErrNotExist so callers can
+	// distinguish "deleted at this revision" from a real failure.
+	_, err := c.ShowFile(ctx, fx.dir, fx.initialSHA, "src/renamed.go")
+	if err == nil {
+		t.Fatal("expected error for missing path at revision")
+	}
+	if !os.IsNotExist(err) {
+		t.Errorf("expected os.ErrNotExist, got %v", err)
+	}
+}
+
 func TestClient_HeadSHA(t *testing.T) {
 	fx := setupRepo(t)
 	c := newClient()

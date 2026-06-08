@@ -72,6 +72,7 @@ func TestDDL_ApplyClean(t *testing.T) {
 		"pr_review_requests", "pr_labels",
 		"builds", "build_jobs", "deploys", "releases",
 		"incidents", "defects", "file_metrics", "harness_artifacts",
+		"file_complexity_history",
 	}
 
 	got := map[string]bool{}
@@ -105,6 +106,7 @@ func TestDDL_ApplyClean(t *testing.T) {
 		"idx_deploys_repo_env",
 		"idx_incidents_repo_opened",
 		"idx_defects_repo_ticket",
+		"idx_fch_repo_path",
 	}
 	gotIdx := map[string]bool{}
 	irows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='index'`)
@@ -913,6 +915,7 @@ func TestDDL_NoUnknownColumns(t *testing.T) {
 		{"defects", model.Defect{}},
 		{"file_metrics", model.FileMetric{}},
 		{"harness_artifacts", model.HarnessArtifact{}},
+		{"file_complexity_history", model.FileComplexityHistory{}},
 	}
 
 	for _, c := range cases {

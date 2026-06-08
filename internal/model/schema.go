@@ -309,4 +309,23 @@ CREATE TABLE IF NOT EXISTS harness_artifacts (
     content TEXT,
     PRIMARY KEY (repo, path)
 );
+
+-- Per-revision indent statistics consumed by assay's
+-- stage2.flow.hotspot_complexity_trend metric. One row per (commit_sha, repo,
+-- path) for every touched, non-excluded file. indent_level uses the
+-- Hindle/Godfrey/Holt 2008 proxy: 4 spaces OR 1 tab = 1 logical level. This
+-- table's measure is intentionally distinct from file_metrics.max_indent /
+-- mean_indent, which count raw spaces.
+CREATE TABLE IF NOT EXISTS file_complexity_history (
+    commit_sha    TEXT NOT NULL,
+    repo          TEXT NOT NULL,
+    path          TEXT NOT NULL,
+    n             INTEGER NOT NULL,
+    indent_total  INTEGER NOT NULL,
+    indent_mean   REAL NOT NULL,
+    indent_sd     REAL NOT NULL,
+    indent_max    INTEGER NOT NULL,
+    PRIMARY KEY (commit_sha, repo, path)
+);
+CREATE INDEX IF NOT EXISTS idx_fch_repo_path ON file_complexity_history (repo, path);
 `

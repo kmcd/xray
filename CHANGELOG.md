@@ -19,6 +19,12 @@ Breaking: `schema_version` bumps `1 → 2`. Author-identity columns now hold opa
 - **`manifest.{n_squash_merged_prs, n_total_merged_prs, squash_rate}` (new).** Counts roll up post-extraction via `store.SquashStats()`, which queries `prs.merge_method = 'squash'` against `merged_at IS NOT NULL`. Per-PR classification is unchanged — still ADR 021's parent-count + PR-head reachability — only the aggregation is new. `squash_rate = 0.0` when no PRs merged in the window.
 - assay treats `squash_rate > 0.5` as the Tornhill Ch 9 "Squash Sparingly" caveat threshold and attaches a coupling-derived-metric note. The threshold lives in `assay_evaluator/stage2/flow.py`; xray emits the raw rate.
 
+### Per-revision indent stats (assay v1.1 contract #12, Tornhill Ch 5)
+
+- **`file_complexity_history` table (new, additive).** One row per `(commit_sha, repo, path)` for every in-window commit's touched, non-excluded file. Columns: `n` (lines with `indent_level > 0`), `indent_total` (sum), `indent_mean`, `indent_sd` (sample stddev, `0.0` when `n < 2`), `indent_max`. Indent measure is the Hindle/Godfrey/Holt 2008 logical-indent proxy (4 spaces or 1 tab = 1 level) — intentionally distinct from `file_metrics.max_indent` / `mean_indent`, which count raw spaces. Feeds assay's `hotspot_complexity_trend` so trajectories like "rising indent on a hotspot file" can light up.
+- **`internal/gitcli/Client.ShowFile` (new).** Streams `git show <sha>:<path>` with an 8 MiB output cap; surfaces `os.ErrNotExist` when the path doesn't exist at that revision so the extractor can distinguish deletes from real failures.
+- **Exclusion regex (`internal/connectors/github/complexity_history.go`).** Mirrors assay's `_NONTEST_EXCLUDED_PATH_RE`: `vendor/`, `node_modules/`, `__pycache__/`, `build/`, `dist/`, `.venv/`, dependency-lock files, `*.pb.go`, `_pb2.py`, `*.generated.*`, `*.min.js`, and common binary extensions. Test files are kept — assay computes the test/non-test split downstream.
+
 ## [0.2.2] — 2026-06-06
 
 Performance + observability pass. No schema change; `schema_version` stays at 1. Validated against `goreleaser/chglog` post-fix: 65 commits with full enrichment (`signature_verified` + `landed_via_pr` populated on every row), 2:20 wall time.

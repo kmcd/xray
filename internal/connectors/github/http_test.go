@@ -58,6 +58,9 @@ func (s *memSink) InsertIncident(model.Incident) error               { return ni
 func (s *memSink) InsertDefect(model.Defect) error                   { return nil }
 func (s *memSink) InsertFileMetric(model.FileMetric) error           { return nil }
 func (s *memSink) InsertHarnessArtifact(model.HarnessArtifact) error { return nil }
+func (s *memSink) InsertFileComplexityHistory(model.FileComplexityHistory) error {
+	return nil
+}
 
 // newTestConnector constructs a connector wired against the supplied
 // httptest server. The returned connector uses a stub token; tests inject

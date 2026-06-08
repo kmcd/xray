@@ -44,8 +44,9 @@ type statements struct {
 	release           *sql.Stmt
 	incident          *sql.Stmt
 	defect            *sql.Stmt
-	fileMetric        *sql.Stmt
-	harnessArtifact   *sql.Stmt
+	fileMetric             *sql.Stmt
+	harnessArtifact        *sql.Stmt
+	fileComplexityHistory  *sql.Stmt
 }
 
 // Open opens (or creates) a SQLite database at path, applies the canonical
@@ -120,6 +121,7 @@ func (s *Store) Close() error {
 		s.stmt.prComment, s.stmt.prReviewRequest, s.stmt.prLabel, s.stmt.build,
 		s.stmt.buildJob, s.stmt.deploy, s.stmt.release, s.stmt.incident,
 		s.stmt.defect, s.stmt.fileMetric, s.stmt.harnessArtifact,
+		s.stmt.fileComplexityHistory,
 	} {
 		if stmt != nil {
 			_ = stmt.Close()
@@ -157,6 +159,7 @@ func (s *Store) prepare() error {
 		{&s.stmt.defect, `INSERT OR REPLACE INTO defects (id, repo, ticket_ref, source, opened_at, closed_at) VALUES (?,?,?,?,?,?)`},
 		{&s.stmt.fileMetric, `INSERT OR REPLACE INTO file_metrics (repo, path, snapshot_sha, language, is_binary, is_generated, is_vendored, is_test, is_dependency_manifest, size_bytes, loc_total, loc_code, loc_blank, max_indent, mean_indent, max_line_length, p95_line_length) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`},
 		{&s.stmt.harnessArtifact, `INSERT OR REPLACE INTO harness_artifacts (repo, path, tool, kind, line_count, first_seen_commit, first_seen_at, last_modified_at, content) VALUES (?,?,?,?,?,?,?,?,?)`},
+		{&s.stmt.fileComplexityHistory, `INSERT OR REPLACE INTO file_complexity_history (commit_sha, repo, path, n, indent_total, indent_mean, indent_sd, indent_max) VALUES (?,?,?,?,?,?,?,?)`},
 	} {
 		stmt, err := s.db.Prepare(q.sql)
 		if err != nil {
@@ -440,6 +443,16 @@ func (s *Store) InsertHarnessArtifact(h model.HarnessArtifact) error {
 		h.Repo, h.Path, h.Tool, h.Kind, h.LineCount,
 		nstr(h.FirstSeenCommit), rfc(h.FirstSeenAt), rfc(h.LastModifiedAt),
 		nstr(h.Content),
+	)
+	return err
+}
+
+func (s *Store) InsertFileComplexityHistory(f model.FileComplexityHistory) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.stmt.fileComplexityHistory.Exec(
+		f.CommitSHA, f.Repo, f.Path,
+		f.N, f.IndentTotal, f.IndentMean, f.IndentSD, f.IndentMax,
 	)
 	return err
 }
