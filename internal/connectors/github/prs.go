@@ -582,18 +582,12 @@ func (c *Connector) resolveMergeMethod(ctx context.Context, p prGraph, clonePath
 
 	reachable := map[string]bool{}
 	if clonePath != "" && c.git != nil {
-		for _, oid := range prHeadCommits {
-			if oid == "" {
-				continue
-			}
-			ok, ierr := c.git.IsAncestor(ctx, clonePath, oid, mergeSHA)
-			if ierr != nil {
-				// Treat lookup failures as not-reachable; the squash branch
-				// is the safer classification when we cannot confirm.
-				reachable[oid] = false
-				continue
-			}
-			reachable[oid] = ok
+		var ierr error
+		reachable, ierr = c.git.CheckAncestors(ctx, clonePath, prHeadCommits, mergeSHA)
+		if ierr != nil {
+			// Treat lookup failures as not-reachable; the squash branch
+			// is the safer classification when we cannot confirm.
+			reachable = map[string]bool{}
 		}
 	} else if parents == 1 {
 		// No clone available: fall back to the historical parent-count

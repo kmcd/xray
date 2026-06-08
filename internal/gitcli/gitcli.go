@@ -225,6 +225,50 @@ func (c *Client) IsAncestor(ctx context.Context, clonePath, ancestor, descendant
 	return true, nil
 }
 
+// CheckAncestors reports for each candidate OID whether it is an ancestor of
+// (or equal to) descendant. One `git log` call replaces N separate
+// `git merge-base --is-ancestor` subprocess spawns — the key saving for
+// repos with many single-parent-merge PRs (ADR-021 rebase/squash detection).
+//
+// `git log --pretty=%H <cand1> <cand2> ... ^<descendant>` outputs every
+// commit reachable from any candidate but NOT from descendant. A candidate
+// that appears in the output is therefore NOT an ancestor of descendant;
+// one that is absent IS an ancestor (all its reachable commits are
+// already reachable from descendant).
+func (c *Client) CheckAncestors(ctx context.Context, clonePath string, candidates []string, descendant string) (map[string]bool, error) {
+	result := make(map[string]bool, len(candidates))
+	if len(candidates) == 0 || descendant == "" {
+		return result, nil
+	}
+	args := make([]string, 0, 3+len(candidates))
+	args = append(args, "log", "--no-color", "--pretty=format:%H")
+	for _, c := range candidates {
+		if c != "" {
+			args = append(args, c)
+		}
+	}
+	args = append(args, "^"+descendant)
+
+	out, err := c.run(ctx, clonePath, args...)
+	if err != nil {
+		return nil, fmt.Errorf("gitcli: check ancestors: %w", err)
+	}
+
+	// Build the set of OIDs that are NOT ancestors (they appear in the output).
+	notAncestor := make(map[string]bool)
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			notAncestor[line] = true
+		}
+	}
+	for _, cand := range candidates {
+		if cand != "" {
+			result[cand] = !notAncestor[cand]
+		}
+	}
+	return result, nil
+}
+
 // LsRemote verifies clone access without cloning.
 func (c *Client) LsRemote(ctx context.Context, slug string) error {
 	url := fmt.Sprintf("https://github.com/%s.git", slug)
