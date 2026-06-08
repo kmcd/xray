@@ -64,7 +64,7 @@ type prGraph struct {
 				Oid githubv4.String
 			}
 		}
-	} `graphql:"commits(first: 100)"`
+	} `graphql:"commits(first: 25)"`
 	Labels struct {
 		Nodes []struct {
 			Name githubv4.String
@@ -79,7 +79,7 @@ type prGraph struct {
 			HasNextPage githubv4.Boolean
 		}
 		Nodes []timelineNode
-	} `graphql:"timelineItems(first: 100, itemTypes: [READY_FOR_REVIEW_EVENT, PULL_REQUEST_REVIEW, HEAD_REF_FORCE_PUSHED_EVENT, REVIEW_REQUESTED_EVENT])"`
+	} `graphql:"timelineItems(first: 25, itemTypes: [READY_FOR_REVIEW_EVENT, PULL_REQUEST_REVIEW, HEAD_REF_FORCE_PUSHED_EVENT, REVIEW_REQUESTED_EVENT])"`
 	Reviews struct {
 		TotalCount githubv4.Int
 		PageInfo   struct {
@@ -87,7 +87,7 @@ type prGraph struct {
 			HasNextPage githubv4.Boolean
 		}
 		Nodes []reviewGraph
-	} `graphql:"reviews(first: 100)"`
+	} `graphql:"reviews(first: 25)"`
 	Comments struct {
 		TotalCount githubv4.Int
 		PageInfo   struct {
@@ -95,7 +95,7 @@ type prGraph struct {
 			HasNextPage githubv4.Boolean
 		}
 		Nodes []issueCommentGraph
-	} `graphql:"comments(first: 100)"`
+	} `graphql:"comments(first: 25)"`
 	ReviewThreads struct {
 		TotalCount githubv4.Int
 		PageInfo   struct {
@@ -103,7 +103,7 @@ type prGraph struct {
 			HasNextPage githubv4.Boolean
 		}
 		Nodes []reviewThreadGraph
-	} `graphql:"reviewThreads(first: 100)"`
+	} `graphql:"reviewThreads(first: 25)"`
 }
 
 type timelineNode struct {
