@@ -61,6 +61,21 @@ func Open(path string, toolVersion string) (*Store, error) {
 	// serial to avoid SQLITE_BUSY under the worker pool.
 	db.SetMaxOpenConns(1)
 
+	// WAL mode avoids journal write amplification. NORMAL synchronous
+	// drops per-transaction fsync (safe for a write-once artifact —
+	// data survives OS crashes, not power-loss mid-write). 64 MB page
+	// cache cuts repeated round-trips to the file for large tables.
+	for _, pragma := range []string{
+		`PRAGMA journal_mode=WAL`,
+		`PRAGMA synchronous=NORMAL`,
+		`PRAGMA cache_size=-65536`,
+	} {
+		if _, err := db.Exec(pragma); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("store: %s: %w", pragma, err)
+		}
+	}
+
 	if _, err := db.Exec(model.DDL); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: apply DDL: %w", err)
