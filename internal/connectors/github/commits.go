@@ -10,9 +10,10 @@ import (
 )
 
 // extractCommits drives git log over the local clone and emits commits,
-// commit_files, and commit_coauthors rows. Signature verification and
-// landed_via_pr are filled in via a single batched GraphQL request per
-// ~100 commits (see enrich.go and issue #64).
+// commit_files, and commit_coauthors rows. Signature verification is filled
+// in via a single batched GraphQL request per ~100 commits (see enrich.go
+// and issue #64). landed_via_pr is filled in postprocess from a join
+// against pr_commits (issue #75) and is left nil here.
 //
 // mm canonicalises (name, email) identities through the repo's .mailmap
 // before the hashHandle helper emits the opaque "h_<digits>" token; bot
@@ -92,8 +93,9 @@ func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, win
 
 		if en, ok := enrichment[rec.SHA]; ok {
 			row.SignatureVerified = en.SignatureVerified
-			row.LandedViaPR = en.LandedViaPR
 		}
+		// row.LandedViaPR stays nil here; postprocess fills it via a
+		// join against pr_commits (issue #75).
 
 		if err := sink.InsertCommit(row); err != nil {
 			if prov.Errors["commits"] == "" {

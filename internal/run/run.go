@@ -199,6 +199,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (string, error) 
 		log.Info("run: postprocess",
 			slog.Int("incidents_linked", stats.IncidentsLinked),
 			slog.Int("deploys_rolled_back", stats.DeploysRolledBack),
+			slog.Int("landed_via_pr_matched", stats.LandedViaPRMatched),
 		)
 	}
 

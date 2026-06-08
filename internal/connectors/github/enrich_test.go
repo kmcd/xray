@@ -31,9 +31,9 @@ func TestEnrichCommits_HappyPath(t *testing.T) {
 		lastBody = string(b)
 		// Respond with a payload aliased a0/a1/a2 matching the request shape.
 		_, _ = w.Write([]byte(`{"data":{"repository":{
-			"a0":{"signature":{"isValid":true},"associatedPullRequests":{"totalCount":1}},
-			"a1":{"signature":{"isValid":false},"associatedPullRequests":{"totalCount":0}},
-			"a2":{"signature":null,"associatedPullRequests":{"totalCount":2}}
+			"a0":{"signature":{"isValid":true}},
+			"a1":{"signature":{"isValid":false}},
+			"a2":{"signature":null}
 		}}}`))
 	})
 	srv := httptest.NewServer(mux)
@@ -59,36 +59,27 @@ func TestEnrichCommits_HappyPath(t *testing.T) {
 	if !strings.Contains(lastBody, "signature") {
 		t.Errorf("request body missing signature field")
 	}
-	if !strings.Contains(lastBody, "associatedPullRequests") {
-		t.Errorf("request body missing associatedPullRequests connection")
+	if strings.Contains(lastBody, "associatedPullRequests") {
+		t.Errorf("request body still contains associatedPullRequests; #75 trimmed it (landed_via_pr now derived in postprocess)")
 	}
 	if !strings.Contains(lastBody, "a0") || !strings.Contains(lastBody, "a2") {
 		t.Errorf("request body missing alias labels (a0, a2)")
 	}
 
-	// a0: signed + 1 PR -> both true.
+	// a0: signed -> SignatureVerified *true.
 	a0 := got[shas[0]]
 	if a0.SignatureVerified == nil || !*a0.SignatureVerified {
 		t.Errorf("a0 SignatureVerified want *true, got %v", a0.SignatureVerified)
 	}
-	if a0.LandedViaPR == nil || !*a0.LandedViaPR {
-		t.Errorf("a0 LandedViaPR want *true, got %v", a0.LandedViaPR)
-	}
-	// a1: not signed + 0 PRs -> both false.
+	// a1: not signed -> SignatureVerified *false.
 	a1 := got[shas[1]]
 	if a1.SignatureVerified == nil || *a1.SignatureVerified {
 		t.Errorf("a1 SignatureVerified want *false, got %v", a1.SignatureVerified)
 	}
-	if a1.LandedViaPR == nil || *a1.LandedViaPR {
-		t.Errorf("a1 LandedViaPR want *false, got %v", a1.LandedViaPR)
-	}
-	// a2: signature null (unknown) + 2 PRs -> SignatureVerified nil, LandedViaPR *true.
+	// a2: signature null -> SignatureVerified nil.
 	a2 := got[shas[2]]
 	if a2.SignatureVerified != nil {
 		t.Errorf("a2 SignatureVerified want nil, got %v", *a2.SignatureVerified)
-	}
-	if a2.LandedViaPR == nil || !*a2.LandedViaPR {
-		t.Errorf("a2 LandedViaPR want *true, got %v", a2.LandedViaPR)
 	}
 }
 
@@ -166,7 +157,7 @@ func TestEnrichCommits_PartialErrors(t *testing.T) {
 	mux.HandleFunc("/graphql", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{
 			"data": {"repository": {
-				"a0": {"signature":{"isValid":true},"associatedPullRequests":{"totalCount":1}}
+				"a0": {"signature":{"isValid":true}}
 			}},
 			"errors": [{"message":"a1 unavailable"}]
 		}`))

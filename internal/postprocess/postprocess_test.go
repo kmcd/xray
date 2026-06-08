@@ -515,3 +515,98 @@ func TestDeployRollback_RequiresNonEmptyCommitSHA(t *testing.T) {
 		t.Errorf("DeploysRolledBack = %d, want 0", stats.DeploysRolledBack)
 	}
 }
+
+// TestLandedViaPR_DerivesFromPRCommits inserts three commits — one
+// referenced by a PR in pr_commits (landed via PR), one not referenced
+// (direct push), and one in a different repo where its pr_commits row
+// belongs to another repo (must not cross-match). The derivation must
+// set true for the matched commit, false for the unmatched ones, and
+// return matched_true = 1 in Stats.LandedViaPRMatched.
+func TestLandedViaPR_DerivesFromPRCommits(t *testing.T) {
+	st, db := newTestStore(t)
+
+	commits := []model.Commit{
+		{SHA: "sha-via-pr", Repo: "kmcd/foo", AuthoredAt: mustTime(t, "2025-01-01T00:00:00Z"), CommittedAt: mustTime(t, "2025-01-01T00:00:00Z")},
+		{SHA: "sha-direct", Repo: "kmcd/foo", AuthoredAt: mustTime(t, "2025-01-02T00:00:00Z"), CommittedAt: mustTime(t, "2025-01-02T00:00:00Z")},
+		{SHA: "sha-other-repo", Repo: "kmcd/bar", AuthoredAt: mustTime(t, "2025-01-03T00:00:00Z"), CommittedAt: mustTime(t, "2025-01-03T00:00:00Z")},
+	}
+	for _, c := range commits {
+		if err := st.InsertCommit(c); err != nil {
+			t.Fatalf("InsertCommit %s: %v", c.SHA, err)
+		}
+	}
+
+	// pr_commits entry only for the kmcd/foo / sha-via-pr pair.
+	if err := st.InsertPRCommit(model.PRCommit{PRNumber: 42, Repo: "kmcd/foo", SHA: "sha-via-pr"}); err != nil {
+		t.Fatalf("InsertPRCommit: %v", err)
+	}
+	// A pr_commits row that names sha-other-repo but under kmcd/foo —
+	// must not cross-match because the (repo, sha) tuple doesn't align
+	// with commits.kmcd/bar.
+	if err := st.InsertPRCommit(model.PRCommit{PRNumber: 99, Repo: "kmcd/foo", SHA: "sha-other-repo"}); err != nil {
+		t.Fatalf("InsertPRCommit: %v", err)
+	}
+
+	stats, err := postprocess.Run(context.Background(), db, nullLogger())
+	if err != nil {
+		t.Fatalf("postprocess.Run: %v", err)
+	}
+	if stats.LandedViaPRMatched != 1 {
+		t.Errorf("LandedViaPRMatched = %d, want 1", stats.LandedViaPRMatched)
+	}
+
+	rows := map[string]sql.NullBool{}
+	q, err := db.Query(`SELECT sha, repo, landed_via_pr FROM commits`)
+	if err != nil {
+		t.Fatalf("query commits: %v", err)
+	}
+	for q.Next() {
+		var sha, repo string
+		var b sql.NullBool
+		if err := q.Scan(&sha, &repo, &b); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		rows[repo+"/"+sha] = b
+	}
+	_ = q.Close()
+
+	if got := rows["kmcd/foo/sha-via-pr"]; !got.Valid || !got.Bool {
+		t.Errorf("kmcd/foo/sha-via-pr landed_via_pr = %+v, want true", got)
+	}
+	if got := rows["kmcd/foo/sha-direct"]; !got.Valid || got.Bool {
+		t.Errorf("kmcd/foo/sha-direct landed_via_pr = %+v, want false", got)
+	}
+	if got := rows["kmcd/bar/sha-other-repo"]; !got.Valid || got.Bool {
+		t.Errorf("kmcd/bar/sha-other-repo landed_via_pr = %+v, want false (cross-repo pr_commits must not match)", got)
+	}
+}
+
+// TestLandedViaPR_PreservesPrePopulatedTrue covers the case where the
+// commit row already carries landed_via_pr = true at insert time. The
+// second UPDATE (NULL -> false) must not clobber it.
+func TestLandedViaPR_PreservesPrePopulatedTrue(t *testing.T) {
+	st, db := newTestStore(t)
+
+	pre := true
+	if err := st.InsertCommit(model.Commit{
+		SHA:         "sha-preset",
+		Repo:        "kmcd/foo",
+		AuthoredAt:  mustTime(t, "2025-01-01T00:00:00Z"),
+		CommittedAt: mustTime(t, "2025-01-01T00:00:00Z"),
+		LandedViaPR: &pre,
+	}); err != nil {
+		t.Fatalf("InsertCommit: %v", err)
+	}
+
+	if _, err := postprocess.Run(context.Background(), db, nullLogger()); err != nil {
+		t.Fatalf("postprocess.Run: %v", err)
+	}
+
+	var b sql.NullBool
+	if err := db.QueryRow(`SELECT landed_via_pr FROM commits WHERE sha = ?`, "sha-preset").Scan(&b); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if !b.Valid || !b.Bool {
+		t.Errorf("pre-populated landed_via_pr=true was clobbered: got %+v", b)
+	}
+}

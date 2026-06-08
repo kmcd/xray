@@ -13,38 +13,43 @@ import (
 )
 
 // enrichBatchSize is the maximum number of commits batched into a single
-// GraphQL query. Empirically GitHub's GraphQL backend 502s on 100-alias
-// queries that include the associatedPullRequests connection — they
-// exceed the ~10s server-side timeout. 25 aliases keeps each query under
-// the timeout while still cutting per-commit REST calls by 25x.
-const enrichBatchSize = 25
+// GraphQL query. The earlier 25-alias ceiling was forced by the
+// associatedPullRequests subquery (server-side timeouts at 100). With the
+// query trimmed to signature-only (issue #75), the per-alias cost dropped
+// far enough to restore 100. landed_via_pr is now derived in postprocess
+// via a join against pr_commits, so no PR-association traversal happens
+// during enrichment.
+const enrichBatchSize = 100
 
 // enrichBatchDelay is a small pause between consecutive batched GraphQL
 // POSTs. GitHub's GraphQL API has a *secondary* rate limit that triggers
 // on bursts and returns 403; the ratelimit transport recognises and
 // retries that case, but the delay still helps avoid tripping it in the
-// first place.
-//
-// Total overhead at 30 batches: ~15s. Worth it against ~36 min of
-// per-commit REST round-trips.
-const enrichBatchDelay = 500 * time.Millisecond
+// first place. Shrunk from 500ms to 250ms in #75 — the lighter query
+// (signature only) burns fewer points per request, so the inter-batch
+// gap can be tighter without re-tripping the secondary limit.
+const enrichBatchDelay = 250 * time.Millisecond
 
 // commitEnrichment is the per-SHA data the GraphQL batched query collects.
-// Both fields are pointers so callers can distinguish "not populated"
+// SignatureVerified is a pointer so callers can distinguish "not populated"
 // (analyser reads as unknown) from a fetched false.
+//
+// landed_via_pr used to live here too, derived from associatedPullRequests.
+// As of #75 it is filled in postprocess via a join against pr_commits and
+// no longer carried on this struct.
 type commitEnrichment struct {
 	SignatureVerified *bool
-	LandedViaPR       *bool
 }
 
-// enrichCommits asks GitHub's GraphQL API for signature_verified +
-// landed_via_pr for every supplied commit SHA, in batches of
-// enrichBatchSize aliases per request. Returns a map keyed by SHA; absent
-// keys indicate the API did not return data for that commit (the caller
-// treats the columns as unknown).
+// enrichCommits asks GitHub's GraphQL API for signature_verified for every
+// supplied commit SHA, in batches of enrichBatchSize aliases per request.
+// Returns a map keyed by SHA; absent keys indicate the API did not return
+// data for that commit (the caller treats the column as unknown).
 //
 // Replaces the per-commit REST round-trips that previously made the github
-// connector's commit phase O(commits * 2) round-trips. See issue #64.
+// connector's commit phase O(commits * 2) round-trips. See issue #64. The
+// associatedPullRequests subquery moved out in #75 — landed_via_pr is
+// derived from pr_commits in postprocess.
 func (c *Connector) enrichCommits(ctx context.Context, owner, name string, shas []string) (map[string]commitEnrichment, error) {
 	out := make(map[string]commitEnrichment, len(shas))
 	for i := 0; i < len(shas); i += enrichBatchSize {
@@ -101,7 +106,7 @@ func (c *Connector) enrichOneBatch(ctx context.Context, owner, name string, shas
 		if !isFullSHA(sha) {
 			continue
 		}
-		fmt.Fprintf(&sb, ` a%d: object(oid: "%s") { ... on Commit { signature { isValid } associatedPullRequests(first: 1) { totalCount } } }`, i, sha)
+		fmt.Fprintf(&sb, ` a%d: object(oid: "%s") { ... on Commit { signature { isValid } } }`, i, sha)
 		emitted++
 	}
 	sb.WriteString(` } }`)
@@ -140,9 +145,6 @@ func (c *Connector) enrichOneBatch(ctx context.Context, owner, name string, shas
 				Signature *struct {
 					IsValid bool `json:"isValid"`
 				} `json:"signature"`
-				AssociatedPullRequests *struct {
-					TotalCount int `json:"totalCount"`
-				} `json:"associatedPullRequests"`
 			} `json:"repository"`
 		} `json:"data"`
 		Errors []struct {
@@ -172,10 +174,6 @@ func (c *Connector) enrichOneBatch(ctx context.Context, owner, name string, shas
 		if node.Signature != nil {
 			v := node.Signature.IsValid
 			en.SignatureVerified = &v
-		}
-		if node.AssociatedPullRequests != nil {
-			v := node.AssociatedPullRequests.TotalCount > 0
-			en.LandedViaPR = &v
 		}
 		out[sha] = en
 	}

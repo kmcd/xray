@@ -11,6 +11,7 @@ Breaking: `schema_version` bumps `1 → 2`. Author-identity columns now hold opa
 ### Performance
 
 - **github**: PR enrichment folded into the existing `prListQuery` as a single inline GraphQL walk — drops per-PR REST fan-out for `reviews`, `pr_comments`, `pr_review_requests`, and the merge-method parent-count lookup. Reviews, top-level comments, review threads (with nested comments), and `mergeCommit.parents.totalCount` are read inline at 100 items per inner connection; `timelineItems` adds `REVIEW_REQUESTED_EVENT` so review-request rows come from the same walk. Per-PR overflow paginators fire only when an inner `pageInfo.HasNextPage` is true. Baseline: a 30-day smoke against `posthog/posthog` on the pre-fix path took ~10 hours, dominated by 4–6 REST round-trips per PR; the inline path eliminates that fan-out entirely. Schema unchanged; `schema_version` stays at 2. ([#69])
+- **github**: commit enrichment trimmed to `signature` only — `associatedPullRequests` removed from the alias-batched query. `enrichBatchSize` raised 25 → 100 (the 25-cap was forced by the heavy subquery's server-side timeouts) and `enrichBatchDelay` lowered 500 ms → 250 ms. `landed_via_pr` is now derived in postprocess from a `(repo, sha)` join against `pr_commits` and is window-restricted: a commit whose PR closed before `window.start` reports `false` here where the old global GraphQL form reported `true`. Column type and name unchanged; `schema_version` stays at 2. Expected drop on 50k-commit windows: ~23 min → ~100 s. ([#75])
 
 ### Author alias resolution via `.mailmap` (assay v1.1 contract #20, Tornhill Ch 13)
 
@@ -59,6 +60,7 @@ Verified against `goreleaser/chglog` post-fix (~18-month window): 65 commits wit
 - **Config validator accepts `<org>/.github`.** The slug regex forbade leading-dot repo names, so `init` → `validate` round-tripped to a diagnostic on the canonical GitHub org-config repo. Owners still must start with `[A-Za-z0-9]`; only the repo half relaxed. ([#59])
 
 [#69]: https://github.com/kmcd/xray/issues/69
+[#75]: https://github.com/kmcd/xray/issues/75
 [#55]: https://github.com/kmcd/xray/issues/55
 [#56]: https://github.com/kmcd/xray/issues/56
 [#57]: https://github.com/kmcd/xray/issues/57

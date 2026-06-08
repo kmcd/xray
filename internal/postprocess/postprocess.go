@@ -9,8 +9,9 @@ import (
 
 // Stats is the summary returned by Run.
 type Stats struct {
-	IncidentsLinked   int
-	DeploysRolledBack int
+	IncidentsLinked    int
+	DeploysRolledBack  int
+	LandedViaPRMatched int
 }
 
 // Run executes cross-cutting linkage passes against the populated SQLite
@@ -37,7 +38,64 @@ func Run(ctx context.Context, db *sql.DB, log *slog.Logger) (Stats, error) {
 	}
 	stats.DeploysRolledBack = rolled
 
+	matched, err := deriveLandedViaPR(ctx, db, log)
+	if err != nil {
+		return stats, fmt.Errorf("postprocess: landed_via_pr: %w", err)
+	}
+	stats.LandedViaPRMatched = matched
+
 	return stats, nil
+}
+
+// deriveLandedViaPR fills in commits.landed_via_pr from a join against
+// pr_commits. Replaces the per-commit associatedPullRequests subquery that
+// used to ride along with the signature-verified enrichment (issue #75).
+//
+// Semantic shift from the pre-#75 GraphQL path: that query asked GitHub
+// "has any PR ever included this commit?" — global, lifetime-of-the-repo.
+// This pass asks "does a PR inside the current extraction window include
+// this commit?" — window-restricted. An in-window commit whose PR closed
+// before window.start (or was missed for any reason) reports false here
+// where the old code reported true.
+//
+// Commits unmatched by pr_commits get landed_via_pr = 0 (false), not NULL.
+// pr_commits is a complete listing within the window, so absence is a
+// real "didn't land via PR" signal — analyser should see false, not
+// unknown.
+func deriveLandedViaPR(ctx context.Context, db *sql.DB, log *slog.Logger) (int, error) {
+	// Mark true for any commit whose (repo, sha) appears in pr_commits.
+	res, err := db.ExecContext(ctx, `
+		UPDATE commits
+		SET landed_via_pr = 1
+		WHERE EXISTS (
+			SELECT 1 FROM pr_commits
+			WHERE pr_commits.repo = commits.repo
+			  AND pr_commits.sha = commits.sha
+		)
+	`)
+	if err != nil {
+		return 0, fmt.Errorf("update landed_via_pr=true: %w", err)
+	}
+	matched, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("rows affected (true): %w", err)
+	}
+
+	// Fill the rest with false. landed_via_pr is the only column populated
+	// in postprocess on commits, so any remaining NULL came through the
+	// extractor's nil enrichment slot and is safe to clear to 0.
+	if _, err := db.ExecContext(ctx, `
+		UPDATE commits
+		SET landed_via_pr = 0
+		WHERE landed_via_pr IS NULL
+	`); err != nil {
+		return int(matched), fmt.Errorf("update landed_via_pr=false: %w", err)
+	}
+
+	log.Debug("postprocess: landed_via_pr derived",
+		slog.Int64("matched_true", matched),
+	)
+	return int(matched), nil
 }
 
 // linkIncidents resolves incidents.deploy_id and incidents.commit_sha from

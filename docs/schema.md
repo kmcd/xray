@@ -91,7 +91,7 @@ One row per pattern + owner in the repo's CODEOWNERS file (parsed from `.github/
 | `author_is_bot`      | INTEGER | suffix `[bot]` or known bot accounts |
 | `committer_is_bot`   | INTEGER | |
 | `signature_verified` | INTEGER | nullable; `NULL` when not applicable / not fetched |
-| `landed_via_pr`      | INTEGER | nullable; true if a PR contained this SHA |
+| `landed_via_pr`      | INTEGER | `1` if a PR **inside the extraction window** contained this SHA, `0` otherwise; derived in postprocess from a `(repo, sha)` join against `pr_commits` (#75). Window-restricted: a commit whose PR closed before `window.start` reads `0` here even though the commit historically landed via a PR. |
 | `reverts_sha`        | TEXT    | from `This reverts commit <sha>` in body |
 | `is_revert`          | INTEGER | subject begins with `Revert ` or revert-trailer present |
 | `is_merge`           | INTEGER | parent count > 1 |
