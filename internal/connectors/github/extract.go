@@ -88,15 +88,13 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 	// Goroutine A: clone-bound stages.
 	go func() {
 		defer wg.Done()
-		if err := c.extractLanguages(ctx, repo, sink, &provA); err != nil {
-			provA.Errors["repo_languages"] = err.Error()
-		}
 		c.extractBranches(ctx, repo, sink, &provA)
 		c.extractCodeowners(ctx, repo, sink, &provA)
 		c.extractReleases(ctx, repo, window, sink, &provA)
 		c.extractCommits(ctx, repo, window, sink, &provA, mm)
-		fileMetrics(ctx, c, repo, sink, &provA)
-		harnessArtifacts(ctx, c, repo, window, sink, &provA)
+		// Single walk for languages + file_metrics + harness (replaces three
+		// separate filepath.Walk passes).
+		c.extractWorkingTree(ctx, repo, window, sink, &provA)
 	}()
 
 	// Goroutine B: API-bound PR stage. Uses prefetch cache when present.

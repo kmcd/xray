@@ -1,128 +1,12 @@
 package github
 
 import (
-	"context"
-	"io/fs"
-	"log/slog"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	enry "github.com/go-enry/go-enry/v2"
-
-	"github.com/kmcd/xray/internal/connector"
-	"github.com/kmcd/xray/internal/model"
 )
-
-// fileMetrics walks the working tree at repo.Clone (snapshot = repo.HeadSHA)
-// and emits a model.FileMetric per file. Skips the .git directory; follows
-// symlinks via filepath.Walk's default behaviour (treats them as their
-// stat()'d target). Files larger than maxFileBytes are emitted with only
-// path and size populated and IsBinary=true to avoid loading huge blobs.
-//
-// Assumption about M3's Connector struct: this code only reads c.log. If
-// c.log is nil it falls back to a discard logger to avoid a nil deref.
-func fileMetrics(ctx context.Context, c *Connector, repo connector.Repo, sink connector.Sink, prov *connector.Provenance) {
-	root := repo.Clone
-	if root == "" {
-		return
-	}
-	logger := c.log
-	if logger == nil {
-		logger = slog.Default()
-	}
-
-	prog := newProgress(logger, repo.Slug, "file_metrics")
-	defer prog.done()
-
-	_ = filepath.Walk(root, func(path string, info fs.FileInfo, err error) error {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if err != nil {
-			logger.Debug("file_metrics walk error", slog.String("path", path), slog.String("err", err.Error()))
-			return nil
-		}
-		// Compute path relative to clone root.
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			return nil
-		}
-		// Skip .git directory entirely.
-		if rel == ".git" || strings.HasPrefix(rel, ".git"+string(filepath.Separator)) {
-			if info.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if info.IsDir() {
-			return nil
-		}
-		if !info.Mode().IsRegular() {
-			// skip sockets, fifos, devices; symlinks are followed by Walk
-			// when they target regular files (Walk uses Lstat — but our
-			// resolution above checks the target via Stat). Practically:
-			// non-regular entries are skipped here.
-			return nil
-		}
-
-		relPosix := filepath.ToSlash(rel)
-		fm := model.FileMetric{
-			Repo:        repo.Slug,
-			Path:        relPosix,
-			SnapshotSHA: repo.HeadSHA,
-			SizeBytes:   info.Size(),
-		}
-
-		// Oversize: emit a minimal row marked binary; don't read content.
-		if info.Size() > maxFileBytes {
-			fm.IsBinary = true
-			if err := sink.InsertFileMetric(fm); err == nil {
-				prov.RowsReturned["file_metrics"]++
-			}
-			return nil
-		}
-
-		// #nosec G304 -- path is produced by the working-tree walk under the
-		// per-run clone directory.
-		content, readErr := os.ReadFile(path)
-		if readErr != nil {
-			logger.Debug("file_metrics read error", slog.String("path", relPosix), slog.String("err", readErr.Error()))
-			// Emit metadata-only row.
-			if err := sink.InsertFileMetric(fm); err == nil {
-				prov.RowsReturned["file_metrics"]++
-			}
-			return nil
-		}
-
-		fm.IsBinary = enry.IsBinary(content)
-		fm.IsVendored = enry.IsVendor(relPosix)
-		fm.IsGenerated = enry.IsGenerated(relPosix, content)
-		fm.IsTest = isTestPath(relPosix)
-		fm.IsDependencyManifest = isDependencyManifest(relPosix)
-
-		// Language: extension first, then content classifier.
-		fm.Language = languageFor(relPosix, content, fm.IsBinary)
-
-		if !fm.IsBinary {
-			stats := scanLines(content)
-			fm.LOCTotal = stats.total
-			fm.LOCCode = stats.code
-			fm.LOCBlank = stats.blank
-			fm.MaxIndent = stats.maxIndent
-			fm.MeanIndent = stats.meanIndent
-			fm.MaxLineLength = stats.maxLineLen
-			fm.P95LineLength = stats.p95LineLen
-		}
-
-		if err := sink.InsertFileMetric(fm); err == nil {
-			prov.RowsReturned["file_metrics"]++
-		}
-		prog.tick()
-		return nil
-	})
-}
 
 // maxFileBytes is the per-file size ceiling for full inspection. Files
 // above this are recorded as binary with size/path only.
