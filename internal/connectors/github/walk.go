@@ -14,6 +14,26 @@ import (
 	"github.com/kmcd/xray/internal/model"
 )
 
+// extractRepoFiles inserts one repo_file row per file tracked at HEAD via
+// git ls-files --cached. .gitignore is honoured by git's index; .git/ is
+// never listed. Symlinks are recorded as regular entries; their targets are
+// not followed. Provenance increments repo_file once per inserted row.
+func (c *Connector) extractRepoFiles(ctx context.Context, repo connector.Repo, sink connector.Sink, prov *connector.Provenance) {
+	if repo.Clone == "" || c.git == nil {
+		return
+	}
+	paths, err := c.git.LsFiles(ctx, repo.Clone)
+	if err != nil {
+		prov.Errors["repo_file"] = err.Error()
+		return
+	}
+	for _, p := range paths {
+		if err := sink.InsertRepoFile(model.RepoFile{Repo: repo.Slug, Path: p}); err == nil {
+			prov.RowsReturned["repo_file"]++
+		}
+	}
+}
+
 // extractWorkingTree replaces three separate filepath.Walk passes
 // (extractLanguages, fileMetrics, harnessArtifacts) with one. A single walk
 // means the kernel page cache is warm for every consumer and per-file syscall

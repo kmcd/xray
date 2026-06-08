@@ -281,6 +281,14 @@ type HarnessArtifact struct {
 	Content         string
 }
 
+// RepoFile is one row per file tracked at HEAD per repo, populated from
+// git ls-files. Path is relative to the repo root and uses forward slashes.
+// No content or metadata is stored.
+type RepoFile struct {
+	Repo string
+	Path string
+}
+
 // FileComplexityHistory is one per-revision row consumed by assay's
 // stage2.flow.hotspot_complexity_trend. The indent_* fields use the
 // Hindle/Godfrey/Holt 2008 logical-indent proxy (4 spaces or 1 tab = 1

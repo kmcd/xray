@@ -661,6 +661,24 @@ func (c *Client) RemoteBranches(ctx context.Context, clonePath string) ([]Remote
 	return rows, nil
 }
 
+// LsFiles returns the list of files tracked at HEAD in the cloned repo
+// (git ls-files --cached). Paths are relative to the repo root and use
+// forward slashes. .gitignore is honoured naturally by git's index.
+func (c *Client) LsFiles(ctx context.Context, clonePath string) ([]string, error) {
+	out, err := c.run(ctx, clonePath, "ls-files", "--cached")
+	if err != nil {
+		return nil, err
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	result := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if line != "" {
+			result = append(result, line)
+		}
+	}
+	return result, nil
+}
+
 func splitShaTime(line string) (string, time.Time, error) {
 	parts := strings.SplitN(line, fieldSep, 2)
 	if len(parts) != 2 {

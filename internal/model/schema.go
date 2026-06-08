@@ -328,4 +328,11 @@ CREATE TABLE IF NOT EXISTS file_complexity_history (
     PRIMARY KEY (commit_sha, repo, path)
 );
 CREATE INDEX IF NOT EXISTS idx_fch_repo_path ON file_complexity_history (repo, path);
+
+CREATE TABLE IF NOT EXISTS repo_file (
+    repo TEXT NOT NULL,
+    path TEXT NOT NULL,
+    PRIMARY KEY (repo, path)
+);
+CREATE INDEX IF NOT EXISTS idx_repo_file_path ON repo_file (path);
 `

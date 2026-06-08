@@ -35,4 +35,5 @@ type Sink interface {
 	InsertFileMetric(model.FileMetric) error
 	InsertHarnessArtifact(model.HarnessArtifact) error
 	InsertFileComplexityHistory(model.FileComplexityHistory) error
+	InsertRepoFile(model.RepoFile) error
 }

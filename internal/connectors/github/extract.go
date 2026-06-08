@@ -104,6 +104,7 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 		// Single walk for languages + file_metrics + harness (replaces three
 		// separate filepath.Walk passes).
 		c.extractWorkingTree(ctx, repo, window, sink, &provA)
+		c.extractRepoFiles(ctx, repo, sink, &provA)
 	}()
 
 	// Goroutine B: API-bound PR stage. Uses prefetch cache when present.

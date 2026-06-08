@@ -378,3 +378,16 @@ The exclusion regex (`internal/connectors/github/complexity_history.go::complexi
 | `indent_mean`  | REAL    | `indent_total / n`; `0.0` when `n == 0` |
 | `indent_sd`    | REAL    | sample stddev of per-line levels; `0.0` when `n < 2` |
 | `indent_max`   | INTEGER | headline statistic per Tornhill 2nd ed Ch 5 |
+
+### `repo_file`
+
+`PRIMARY KEY (repo, path)`. One row per file tracked at HEAD per repo. Indexed on `path` to support cross-repo path lookups (e.g. "which repos have a `stryker.conf.json` at HEAD?").
+
+Populated via `git ls-files --cached` after each clone — `.gitignore` is honoured naturally; `.git/` is never listed. Symlinks are recorded as file entries; their targets are not followed. No content or metadata beyond the path is stored.
+
+Consumers: assay-evaluator Stage 3 Tier 1 path-based detectors (AI-tooling presence, harness-discipline signals). Cross-reference `file_metrics` for per-file metadata on the same paths.
+
+| column  | type | notes |
+| ------- | ---- | ----- |
+| `repo`  | TEXT | |
+| `path`  | TEXT | relative to repo root, forward slashes |

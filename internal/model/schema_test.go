@@ -72,7 +72,7 @@ func TestDDL_ApplyClean(t *testing.T) {
 		"pr_review_requests", "pr_labels",
 		"builds", "build_jobs", "deploys", "releases",
 		"incidents", "defects", "file_metrics", "harness_artifacts",
-		"file_complexity_history",
+		"file_complexity_history", "repo_file",
 	}
 
 	got := map[string]bool{}
@@ -107,6 +107,7 @@ func TestDDL_ApplyClean(t *testing.T) {
 		"idx_incidents_repo_opened",
 		"idx_defects_repo_ticket",
 		"idx_fch_repo_path",
+		"idx_repo_file_path",
 	}
 	gotIdx := map[string]bool{}
 	irows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='index'`)
@@ -641,6 +642,20 @@ func TestDDL_RowRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("repo_file", func(t *testing.T) {
+		db := openMemDB(t)
+		mustExec(t, db, `INSERT INTO repo_file (repo, path) VALUES (?,?)`,
+			"kmcd/repo-1", "src/main.go")
+		var got model.RepoFile
+		if err := db.QueryRow(`SELECT repo, path FROM repo_file`).Scan(&got.Repo, &got.Path); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		want := model.RepoFile{Repo: "kmcd/repo-1", Path: "src/main.go"}
+		if got != want {
+			t.Errorf("got %+v want %+v", got, want)
+		}
+	})
+
 	t.Run("harness_artifacts", func(t *testing.T) {
 		db := openMemDB(t)
 		mustExec(t, db,
@@ -916,6 +931,7 @@ func TestDDL_NoUnknownColumns(t *testing.T) {
 		{"file_metrics", model.FileMetric{}},
 		{"harness_artifacts", model.HarnessArtifact{}},
 		{"file_complexity_history", model.FileComplexityHistory{}},
+		{"repo_file", model.RepoFile{}},
 	}
 
 	for _, c := range cases {

@@ -612,6 +612,70 @@ func TestClient_LsRemote_Failure(t *testing.T) {
 	}
 }
 
+func TestClient_LsFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	dir := t.TempDir()
+	run := func(args ...string) {
+		// #nosec G204
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_TERMINAL_PROMPT=0",
+			"GIT_CONFIG_GLOBAL=/dev/null",
+			"GIT_CONFIG_SYSTEM=/dev/null",
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=t@example.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=t@example.com",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	write := func(rel, content string) {
+		full := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	run("init", "-q", "-b", "main")
+	run("config", "user.email", "t@example.com")
+	run("config", "user.name", "T")
+	run("config", "commit.gpgsign", "false")
+	write(".gitignore", "dist/\n")
+	write("main.go", "package main\n")
+	write("sub/util.go", "package sub\n")
+	write("dist/out", "binary\n") // gitignored
+	run("add", ".")
+	run("commit", "-q", "-m", "init")
+
+	c := newClient()
+	paths, err := c.LsFiles(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("LsFiles: %v", err)
+	}
+
+	got := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		got[p] = true
+	}
+	for _, want := range []string{".gitignore", "main.go", "sub/util.go"} {
+		if !got[want] {
+			t.Errorf("expected %q in LsFiles output, got %v", want, paths)
+		}
+	}
+	for _, absent := range []string{"dist/out"} {
+		if got[absent] {
+			t.Errorf("gitignored path %q should not appear in LsFiles output", absent)
+		}
+	}
+}
+
 func TestClient_Clone_DestExists(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")

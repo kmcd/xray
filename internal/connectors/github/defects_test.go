@@ -159,6 +159,7 @@ func (s *defectSink) InsertHarnessArtifact(model.HarnessArtifact) error { return
 func (s *defectSink) InsertFileComplexityHistory(model.FileComplexityHistory) error {
 	return nil
 }
+func (s *defectSink) InsertRepoFile(model.RepoFile) error { return nil }
 
 func newDefectProv() *connector.Provenance {
 	p := connector.NewProvenance("github", "kmcd/foo", connector.Window{})
