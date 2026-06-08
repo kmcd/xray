@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"sync"
 
 	gh "github.com/google/go-github/v66/github"
 
@@ -19,8 +20,27 @@ import (
 // prov.Errors[<table>] but do not abort the rest of the run. Context
 // cancellation does abort: PaginationComplete is flipped false on the way
 // out so the manifest records the truncation.
+//
+// Stages are organised into three phases (see #71):
+//
+//  1. Sync prelude — mailmap + repo row + team mapping. Fast and feeds
+//     downstream state.
+//  2. Parallel block — two goroutines:
+//     A) clone-bound: languages, branches, codeowners, releases, commits,
+//     file_metrics, harness_artifacts. Writes to provA.
+//     B) API-bound:   PRs (prefers prefetch cache when populated by
+//     run.go's clone-phase prefetch goroutine). Writes to provB.
+//  3. Sync postlude — merge provA + provB into prov.
+//
+// The store (sink) is already mutex-guarded for concurrent inserts, so the
+// two goroutines write rows safely. Provenance fragments are disjoint by
+// design (the goroutines own non-overlapping error/row contexts) so the
+// merge is loss-less under the first-wins-per-context policy in
+// (*Provenance).Merge.
 func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window connector.Window, sink connector.Sink) connector.Provenance {
 	prov := connector.NewProvenance(c.Name(), repo.Slug, window)
+
+	// --- Phase 1: sync prelude --------------------------------------------
 
 	// Read the repo's .mailmap once per extraction. Failure modes:
 	//   - file absent       -> zero-value Mailmap, prov.Flags["mailmap_applied"] = false
@@ -58,30 +78,39 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 		}
 	}
 
-	// Languages
-	if err := c.extractLanguages(ctx, repo, sink, &prov); err != nil {
-		prov.Errors["repo_languages"] = err.Error()
-	}
+	// --- Phase 2: parallel block ------------------------------------------
 
-	// Branches + branch protection
-	c.extractBranches(ctx, repo, sink, &prov)
+	provA := connector.NewProvenance(c.Name(), repo.Slug, window)
+	provB := connector.NewProvenance(c.Name(), repo.Slug, window)
+	var wg sync.WaitGroup
+	wg.Add(2)
 
-	// Codeowners
-	c.extractCodeowners(ctx, repo, sink, &prov)
+	// Goroutine A: clone-bound stages.
+	go func() {
+		defer wg.Done()
+		if err := c.extractLanguages(ctx, repo, sink, &provA); err != nil {
+			provA.Errors["repo_languages"] = err.Error()
+		}
+		c.extractBranches(ctx, repo, sink, &provA)
+		c.extractCodeowners(ctx, repo, sink, &provA)
+		c.extractReleases(ctx, repo, window, sink, &provA)
+		c.extractCommits(ctx, repo, window, sink, &provA, mm)
+		fileMetrics(ctx, c, repo, sink, &provA)
+		harnessArtifacts(ctx, c, repo, window, sink, &provA)
+	}()
 
-	// Releases + deploys
-	c.extractReleases(ctx, repo, window, sink, &prov)
+	// Goroutine B: API-bound PR stage. Uses prefetch cache when present.
+	go func() {
+		defer wg.Done()
+		c.extractPRs(ctx, repo, window, sink, &provB)
+	}()
 
-	// Commits, commit_files, commit_coauthors (driven by git log)
-	c.extractCommits(ctx, repo, window, sink, &prov, mm)
+	wg.Wait()
 
-	// PRs + pr_commits + reviews + pr_comments + pr_review_requests + pr_labels
-	c.extractPRs(ctx, repo, window, sink, &prov)
+	// --- Phase 3: sync postlude -------------------------------------------
 
-	// File metrics and harness artifacts. These are implemented by the M4
-	// agent in the same package; forward calls are fine.
-	fileMetrics(ctx, c, repo, sink, &prov)
-	harnessArtifacts(ctx, c, repo, window, sink, &prov)
+	prov.Merge(provA)
+	prov.Merge(provB)
 
 	if err := ctx.Err(); err != nil {
 		prov.PaginationComplete = false

@@ -197,20 +197,42 @@ var (
 	bareURLRe      = regexp.MustCompile(`https?://[^\s)>\]]+`)
 )
 
+// extractPRs is the PR-stage entry point called by Extract. It prefers a
+// prefetch cache hit (populated by Prefetch during the run.go clone phase,
+// #71) and falls back to a live fetch when no cached nodes are available.
+// Emission of rows runs unconditionally.
 func (c *Connector) extractPRs(ctx context.Context, repo connector.Repo, window connector.Window, sink connector.Sink, prov *connector.Provenance) {
-	owner, name, ok := splitSlug(repo.Slug)
-	if !ok {
-		return
+	nodes, cached, err := c.consumePRPrefetch(ctx, repo.Slug)
+	if !cached {
+		nodes, err = c.fetchPRs(ctx, repo, window)
 	}
-
-	// Best-effort template fetch up-front; nil result means template_match
-	// stays nil on each PR row.
-	tpl, err := c.fetchTemplate(ctx, repo.Slug)
 	if err != nil {
-		c.log.Warn("github: fetch PR template",
+		prov.Errors["prs"] = err.Error()
+		c.log.Warn("github: graphql prs",
 			slog.String("repo", repo.Slug),
 			slog.String("error", err.Error()),
 		)
+		// Continue to emission: any nodes collected before the error are
+		// still emit-worthy. fetchPRs returns whatever it gathered up to
+		// the point of failure.
+	}
+	if ctx.Err() != nil {
+		prov.PaginationComplete = false
+		return
+	}
+	c.emitPRs(ctx, repo, nodes, sink, prov)
+}
+
+// fetchPRs walks prListQuery pages and returns in-window PR nodes. No row
+// emission happens here. Same window-filter rules as before: stop paging
+// when UpdatedAt < window.Start (PRs are ordered UPDATED_AT desc); skip
+// PRs that opened after window.End; skip PRs that closed before window.Start.
+// Returns the partial collection plus the first GraphQL error on failure
+// so callers can emit whatever did come back.
+func (c *Connector) fetchPRs(ctx context.Context, repo connector.Repo, window connector.Window) ([]prGraph, error) {
+	owner, name, ok := splitSlug(repo.Slug)
+	if !ok {
+		return nil, nil
 	}
 
 	vars := map[string]any{
@@ -220,48 +242,61 @@ func (c *Connector) extractPRs(ctx context.Context, repo connector.Repo, window 
 		"after": (*githubv4.String)(nil),
 	}
 
-	prog := newProgress(c.log, repo.Slug, "prs")
-	defer prog.done()
+	var nodes []prGraph
 	for {
 		if ctx.Err() != nil {
-			prov.PaginationComplete = false
-			return
+			return nodes, ctx.Err()
 		}
 		var q prListQuery
 		if err := c.gql.Query(ctx, &q, vars); err != nil {
-			prov.Errors["prs"] = err.Error()
-			c.log.Warn("github: graphql prs",
-				slog.String("repo", repo.Slug),
-				slog.String("error", err.Error()),
-			)
-			return
+			return nodes, err
 		}
 		stopPaging := false
 		for _, p := range q.Repository.PullRequests.Nodes {
 			created := p.CreatedAt.UTC()
-			// PRs ordered by UPDATED_AT desc; the moment we see a PR whose
-			// UpdatedAt < window.Start we can stop walking.
 			if p.UpdatedAt.Before(window.Start) {
 				stopPaging = true
 				break
 			}
-			// Skip PRs that opened after the window end.
 			if created.After(window.End) {
 				continue
 			}
-			// Skip PRs that closed before window start and never touched it.
 			if p.ClosedAt != nil && p.ClosedAt.Before(window.Start) {
 				continue
 			}
-
-			c.emitPR(ctx, repo, p, tpl, sink, prov)
-			prog.tick()
+			nodes = append(nodes, p)
 		}
 		if stopPaging || !bool(q.Repository.PullRequests.PageInfo.HasNextPage) {
 			break
 		}
 		end := q.Repository.PullRequests.PageInfo.EndCursor
 		vars["after"] = githubv4.NewString(end)
+	}
+	return nodes, nil
+}
+
+// emitPRs walks the supplied prGraph nodes and emits all PR-side rows
+// (prs, pr_commits, pr_labels, reviews, pr_comments, pr_review_requests).
+// Best-effort template fetch happens here because the template only feeds
+// the per-row emit; lifting it into fetchPRs would burn an extra REST
+// round-trip during the prefetch path with no upside.
+func (c *Connector) emitPRs(ctx context.Context, repo connector.Repo, nodes []prGraph, sink connector.Sink, prov *connector.Provenance) {
+	tpl, err := c.fetchTemplate(ctx, repo.Slug)
+	if err != nil {
+		c.log.Warn("github: fetch PR template",
+			slog.String("repo", repo.Slug),
+			slog.String("error", err.Error()),
+		)
+	}
+	prog := newProgress(c.log, repo.Slug, "prs")
+	defer prog.done()
+	for _, p := range nodes {
+		if ctx.Err() != nil {
+			prov.PaginationComplete = false
+			return
+		}
+		c.emitPR(ctx, repo, p, tpl, sink, prov)
+		prog.tick()
 	}
 }
 

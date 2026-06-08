@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -66,3 +67,69 @@ func TestCountContributors(t *testing.T) {
 
 // silence linter on unused type.
 var _ = repoSink{}
+
+// TestExtractPRs_UsesPrefetchCache verifies the #71 wall-clock optimisation:
+// when Prefetch has been called for a slug, the subsequent extractPRs path
+// does not issue a second GraphQL POST for the PR list. It still emits the
+// PR rows from the cached nodes.
+func TestExtractPRs_UsesPrefetchCache(t *testing.T) {
+	mux := http.NewServeMux()
+	var prListPosts int
+	mux.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
+		// Distinguish the bulk PR list query from any per-PR overflow
+		// queries; only the bulk shape uses pullRequests(plural).
+		if graphqlBodyContains(r, "pullRequest(number:") {
+			fmt.Fprintln(w, `{"data":{"repository":{"pullRequest":{}}}}`)
+			return
+		}
+		prListPosts++
+		fmt.Fprintln(w, buildPRListResponse([]prNodeJSON{{
+			Number:    101,
+			Title:     "cached PR",
+			Body:      "body",
+			CreatedAt: "2025-03-01T00:00:00Z",
+			UpdatedAt: "2025-03-02T00:00:00Z",
+			Author:    loginNode{Login: "alice"},
+			Commits: commitConn{
+				TotalCount: 1,
+				Nodes:      []commitConnNodeWrap{{Commit: oidNode{Oid: "abc"}}},
+			},
+		}}))
+	})
+	// REST endpoints touched by emitPR (template fetch).
+	mux.HandleFunc("/repos/kmcd/foo/contents/.github/PULL_REQUEST_TEMPLATE.md", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	c := newTestConnector(t, srv)
+
+	// Prefetch first.
+	if err := c.Prefetch(context.Background(), "kmcd/foo", standardWindow()); err != nil {
+		t.Fatalf("Prefetch: %v", err)
+	}
+	if prListPosts != 1 {
+		t.Fatalf("after Prefetch: expected 1 PR-list POST, got %d", prListPosts)
+	}
+
+	// extractPRs should consume the cache, not refetch.
+	sink := &extraSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
+	c.extractPRs(context.Background(), connector.Repo{Slug: "kmcd/foo"}, standardWindow(), sink, &prov)
+
+	if prListPosts != 1 {
+		t.Errorf("after extractPRs with cache hit: expected POST count to stay at 1, got %d", prListPosts)
+	}
+	if len(sink.prs) != 1 {
+		t.Errorf("expected 1 PR row emitted from cached nodes, got %d", len(sink.prs))
+	}
+
+	// A second extractPRs (cache already consumed) falls back to live fetch.
+	sink2 := &extraSink{}
+	prov2 := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
+	c.extractPRs(context.Background(), connector.Repo{Slug: "kmcd/foo"}, standardWindow(), sink2, &prov2)
+	if prListPosts != 2 {
+		t.Errorf("after cache-miss extractPRs: expected 2 PR-list POSTs total, got %d", prListPosts)
+	}
+}

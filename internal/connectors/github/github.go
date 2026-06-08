@@ -14,6 +14,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/kmcd/xray/internal/config"
+	"github.com/kmcd/xray/internal/connector"
 	"github.com/kmcd/xray/internal/gitcli"
 	"github.com/kmcd/xray/internal/ratelimit"
 )
@@ -39,6 +40,23 @@ type Connector struct {
 	// per-connector caches that are safe to reuse across repos.
 	mu            sync.Mutex
 	templateCache map[string]*template // repo slug -> parsed template (nil if absent)
+
+	// prefetchMu guards prefetchData. Prefetch is called from run.go's
+	// clone phase (one goroutine per repo) and consumePRPrefetch is called
+	// from Extract (which runs in the workers pool). The lock window is
+	// only around map mutation; the prefetch goroutine writes to the
+	// result struct outside the lock and signals via the result's done
+	// channel.
+	prefetchMu   sync.Mutex
+	prefetchData map[string]*prPrefetchResult // slug -> result
+}
+
+// prPrefetchResult holds the eventually-available output of a single
+// Prefetch call. consumePRPrefetch returns nodes once done is closed.
+type prPrefetchResult struct {
+	nodes []prGraph
+	err   error
+	done  chan struct{}
 }
 
 // SetCaptureHarnessContent toggles the harness-artifact content-capture
@@ -96,7 +114,57 @@ func New(cfg config.GitHubConn, log *slog.Logger) (*Connector, error) {
 		graphqlURL:    "https://api.github.com/graphql",
 		git:           &gitcli.Client{Log: log},
 		templateCache: map[string]*template{},
+		prefetchData:  map[string]*prPrefetchResult{},
 	}, nil
+}
+
+// Prefetch starts a paginated PR walk for the supplied slug and stashes
+// the result for Extract to consume later. Safe to call concurrently for
+// distinct slugs. Returns immediately after the walk completes (the result
+// is held on the connector). The function signature satisfies the
+// connector.Prefetcher interface so run.go can invoke it during the clone
+// phase without a github-specific import.
+func (c *Connector) Prefetch(ctx context.Context, slug string, window connector.Window) error {
+	r := &prPrefetchResult{done: make(chan struct{})}
+	c.prefetchMu.Lock()
+	if existing, ok := c.prefetchData[slug]; ok {
+		// Already prefetching (or prefetched) for this slug; nothing to
+		// do — let the existing result stand. This handles double-call
+		// safety even though run.go won't trigger it today.
+		c.prefetchMu.Unlock()
+		<-existing.done
+		return existing.err
+	}
+	c.prefetchData[slug] = r
+	c.prefetchMu.Unlock()
+
+	r.nodes, r.err = c.fetchPRs(ctx, connector.Repo{Slug: slug}, window)
+	close(r.done)
+	return r.err
+}
+
+// consumePRPrefetch returns (nodes, cached, err) for the prefetch stashed
+// by Prefetch for slug. cached=false means no prefetch ran for this slug
+// — caller falls back to a live fetch. The result struct is removed from
+// the map on consumption so a subsequent Extract for the same slug
+// (re-run with --keep-clones, etc.) hits the live path rather than
+// reusing stale nodes.
+func (c *Connector) consumePRPrefetch(ctx context.Context, slug string) ([]prGraph, bool, error) {
+	c.prefetchMu.Lock()
+	r, ok := c.prefetchData[slug]
+	if ok {
+		delete(c.prefetchData, slug)
+	}
+	c.prefetchMu.Unlock()
+	if !ok {
+		return nil, false, nil
+	}
+	select {
+	case <-r.done:
+		return r.nodes, true, r.err
+	case <-ctx.Done():
+		return nil, true, ctx.Err()
+	}
 }
 
 // setBaseURL retargets the underlying REST and GraphQL clients at the

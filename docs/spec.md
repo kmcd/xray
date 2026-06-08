@@ -487,6 +487,19 @@ no connector.
   row regardless of which path emitted it; a permission-gated endpoint
   unreadable inside the inline walk falls back to
   `EndpointStatus{Accessible: false}` exactly as the previous fan-out did.
+- **PR-fetch / clone overlap.** Connectors may implement the optional
+  `connector.Prefetcher` interface (`Prefetch(ctx, slug, window) error`),
+  in which case `xray run`'s clone phase fires `Prefetch` as a goroutine
+  alongside each repo's `git clone`. The github connector implements it
+  by running the paginated `prListQuery` walk during the clone window
+  and stashing the resulting `prGraph` nodes per slug on the connector;
+  `Extract` consumes the cache when present and falls back to a live
+  fetch on cache miss. The connector contract from ADR 022 is unchanged
+  — `Extract(ctx, repo, window, sink) Provenance` is still the canonical
+  entry point and the row-emit path. Provenance semantics are unchanged
+  too: a new `(*Provenance).Merge` helper folds the two intra-Extract
+  goroutine fragments (clone-bound stages vs PR stage) before returning
+  the result.
 - **Logging.** Logs go to stderr at info level by default; `--verbose` adds
   per-API-call timing; `--quiet` suppresses non-error output. Tokens are
   never logged at any level.

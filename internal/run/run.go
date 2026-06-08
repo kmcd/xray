@@ -72,35 +72,19 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (string, error) 
 	clones := make([]cloned, 0, len(repos))
 	cloneErrors := map[string]error{}
 
+	win := connector.Window{Start: cfg.Window.Start, End: cfg.Window.End}
 	for _, slug := range repos {
 		dest := filepath.Join(tmpDir, "clones", sanitizeSlug(slug))
 		if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
 			return "", fmt.Errorf("run: mkdir clones: %w", err)
 		}
 		log.Info("run: cloning", slog.String("repo", slug))
-		if err := git.Clone(ctx, slug, dest, cfg.Window.Start); err != nil {
-			log.Error("run: clone failed", slog.String("repo", slug), slog.String("error", err.Error()))
-			cloneErrors[slug] = err
-			clones = append(clones, cloned{repo: connector.Repo{Slug: slug, Team: cfg.RepoToTeam(slug)}, err: err})
-			continue
+
+		c := cloneOneRepo(ctx, git, log, slug, dest, cfg, opts, win)
+		if c.err != nil {
+			cloneErrors[slug] = c.err
 		}
-		head, err := git.HeadSHA(ctx, dest)
-		if err != nil {
-			log.Error("run: head-sha failed", slog.String("repo", slug), slog.String("error", err.Error()))
-			cloneErrors[slug] = err
-			clones = append(clones, cloned{repo: connector.Repo{Slug: slug, Team: cfg.RepoToTeam(slug), Clone: dest}, err: err})
-			continue
-		}
-		branch, _ := git.DefaultBranch(ctx, dest)
-		clones = append(clones, cloned{
-			repo: connector.Repo{
-				Slug:          slug,
-				DefaultBranch: branch,
-				HeadSHA:       head,
-				Team:          cfg.RepoToTeam(slug),
-				Clone:         dest,
-			},
-		})
+		clones = append(clones, c)
 	}
 
 	// 2. Open store.
@@ -112,7 +96,6 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (string, error) 
 
 	// 3. Dispatch (repo, connector) pairs across worker pool. Each
 	// connector returns a Provenance; we collect them all.
-	win := connector.Window{Start: cfg.Window.Start, End: cfg.Window.End}
 	type job struct {
 		repo connector.Repo
 		conn connector.Connector
@@ -280,6 +263,66 @@ func cloneTeams(in map[string][]string) map[string][]string {
 type cloned struct {
 	repo connector.Repo
 	err  error
+}
+
+// cloneOneRepo clones slug into dest while concurrently firing each
+// connector's optional Prefetch (#71). Joins the prefetch goroutines before
+// returning so the workers pool downstream sees a consistent state.
+// Any prefetch failures are logged but never propagated — Extract will
+// fall back to a live fetch on a cache miss.
+func cloneOneRepo(ctx context.Context, git *gitcli.Client, log *slog.Logger, slug, dest string, cfg *config.Config, opts Options, win connector.Window) cloned {
+	var pfwg sync.WaitGroup
+	for _, conn := range opts.Connectors {
+		pf, ok := conn.(connector.Prefetcher)
+		if !ok {
+			continue
+		}
+		pfwg.Add(1)
+		go func(pf connector.Prefetcher) {
+			defer pfwg.Done()
+			if err := pf.Prefetch(ctx, slug, win); err != nil {
+				log.Warn("run: prefetch failed",
+					slog.String("repo", slug),
+					slog.String("error", err.Error()),
+				)
+			}
+		}(pf)
+	}
+
+	var cloneErr error
+	if err := git.Clone(ctx, slug, dest, cfg.Window.Start); err != nil {
+		log.Error("run: clone failed", slog.String("repo", slug), slog.String("error", err.Error()))
+		cloneErr = err
+	}
+	var head, branch string
+	if cloneErr == nil {
+		var err error
+		if head, err = git.HeadSHA(ctx, dest); err != nil {
+			log.Error("run: head-sha failed", slog.String("repo", slug), slog.String("error", err.Error()))
+			cloneErr = err
+		} else {
+			branch, _ = git.DefaultBranch(ctx, dest)
+		}
+	}
+	pfwg.Wait()
+
+	if cloneErr != nil {
+		repoRow := connector.Repo{Slug: slug, Team: cfg.RepoToTeam(slug)}
+		if head != "" {
+			repoRow.Clone = dest
+			repoRow.HeadSHA = head
+		}
+		return cloned{repo: repoRow, err: cloneErr}
+	}
+	return cloned{
+		repo: connector.Repo{
+			Slug:          slug,
+			DefaultBranch: branch,
+			HeadSHA:       head,
+			Team:          cfg.RepoToTeam(slug),
+			Clone:         dest,
+		},
+	}
 }
 
 func buildRepoMetas(clones []cloned) []manifest.RepoMeta {

@@ -61,3 +61,60 @@ type EndpointStatus struct {
 	Accessible bool   `json:"accessible"`
 	Reason     string `json:"reason,omitempty"`
 }
+
+// Merge folds other into p in place. Used when a single Extract pass runs
+// multiple goroutines that write disjoint provenance fragments (see
+// `github.Connector.Extract`'s clone-bound vs API-bound split, #71).
+//
+// Policy:
+//   - RowsReturned counters are summed.
+//   - Errors are first-wins per context: p's existing entry sticks, other's
+//     fills only previously-empty contexts. Callers organise goroutines so
+//     contexts don't collide; on collision the deterministic policy is to
+//     keep p's.
+//   - PaginationComplete is ANDed.
+//   - RateLimitTruncated is ORed.
+//   - Endpoints and Flags: other's entry fills if p has none for the key;
+//     existing entries on p are preserved.
+//
+// Window, Connector, Repo are not merged — those are set at NewProvenance
+// time and other's values must match. The caller is expected to pass a
+// fragment built from the same (connector, repo, window).
+func (p *Provenance) Merge(other Provenance) {
+	for k, v := range other.RowsReturned {
+		p.RowsReturned[k] += v
+	}
+	for k, v := range other.Errors {
+		if _, ok := p.Errors[k]; !ok {
+			p.Errors[k] = v
+		}
+	}
+	for k, v := range other.Endpoints {
+		if _, ok := p.Endpoints[k]; !ok {
+			p.Endpoints[k] = v
+		}
+	}
+	for k, v := range other.Flags {
+		if _, ok := p.Flags[k]; !ok {
+			p.Flags[k] = v
+		}
+	}
+	if !other.PaginationComplete {
+		p.PaginationComplete = false
+	}
+	if other.RateLimitTruncated {
+		p.RateLimitTruncated = true
+	}
+}
+
+// Prefetcher is the optional interface a Connector may implement to allow
+// its slow per-repo work to start during the run.go clone phase, in parallel
+// with the actual clone. Prefetch must be safe to call concurrently against
+// distinct slugs and must stash its result somewhere Extract can find it
+// later (typically a per-slug cache held on the connector itself). Extract
+// remains the canonical entry point for row emission; Prefetch is purely
+// a wall-clock hint. See ADR 022 for the connector-contract baseline and
+// the #71 ADR for this extension.
+type Prefetcher interface {
+	Prefetch(ctx context.Context, slug string, window Window) error
+}
