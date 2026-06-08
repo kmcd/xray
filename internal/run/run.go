@@ -65,26 +65,36 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (string, error) 
 
 	git := &gitcli.Client{Log: log}
 
-	// 1. Clone each repo. Failures are recorded as provenance errors with
-	// a synthetic connector entry per failed repo so the manifest still
-	// records the failure.
+	// 1. Clone each repo in parallel. Each goroutine writes into its own
+	// index slot so no mutex is needed on clones[]. Failures are recorded
+	// as provenance errors with a synthetic connector entry per failed repo
+	// so the manifest still records the failure.
 	repos := cfg.AllRepos()
-	clones := make([]cloned, 0, len(repos))
+	clones := make([]cloned, len(repos))
 	cloneErrors := map[string]error{}
 
 	win := connector.Window{Start: cfg.Window.Start, End: cfg.Window.End}
-	for _, slug := range repos {
+
+	var cloneWg sync.WaitGroup
+	for i, slug := range repos {
 		dest := filepath.Join(tmpDir, "clones", sanitizeSlug(slug))
 		if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
-			return "", fmt.Errorf("run: mkdir clones: %w", err)
+			clones[i] = cloned{repo: connector.Repo{Slug: slug, Team: cfg.RepoToTeam(slug)}, err: err}
+			continue
 		}
-		log.Info("run: cloning", slog.String("repo", slug))
+		cloneWg.Add(1)
+		go func(i int, slug, dest string) {
+			defer cloneWg.Done()
+			log.Info("run: cloning", slog.String("repo", slug))
+			clones[i] = cloneOneRepo(ctx, git, log, slug, dest, cfg, opts, win)
+		}(i, slug, dest)
+	}
+	cloneWg.Wait()
 
-		c := cloneOneRepo(ctx, git, log, slug, dest, cfg, opts, win)
+	for _, c := range clones {
 		if c.err != nil {
-			cloneErrors[slug] = c.err
+			cloneErrors[c.repo.Slug] = c.err
 		}
-		clones = append(clones, c)
 	}
 
 	// 2. Open store.
