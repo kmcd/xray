@@ -849,6 +849,96 @@ func TestClient_binAndLog_Defaults(t *testing.T) {
 	}
 }
 
+func TestClient_CatFileBatch(t *testing.T) {
+	fx := setupRepo(t)
+	c := newClient()
+	ctx := context.Background()
+
+	// README.md at the initial commit has content "hello\n".
+	ref := fx.initialSHA + ":README.md"
+	var got []byte
+	err := c.CatFileBatch(ctx, fx.dir, []string{ref}, func(_ string, content []byte) {
+		got = content
+	})
+	if err != nil {
+		t.Fatalf("CatFileBatch: %v", err)
+	}
+	if string(got) != "hello\n" {
+		t.Errorf("README.md content = %q, want %q", string(got), "hello\n")
+	}
+}
+
+func TestClient_CatFileBatch_Missing(t *testing.T) {
+	fx := setupRepo(t)
+	c := newClient()
+	ctx := context.Background()
+
+	// src/renamed.go does not exist at the initial commit; fn must receive nil.
+	ref := fx.initialSHA + ":src/renamed.go"
+	called := false
+	var gotContent []byte
+	err := c.CatFileBatch(ctx, fx.dir, []string{ref}, func(_ string, content []byte) {
+		called = true
+		gotContent = content
+	})
+	if err != nil {
+		t.Fatalf("CatFileBatch missing: %v", err)
+	}
+	if !called {
+		t.Fatal("fn not called for missing ref")
+	}
+	if gotContent != nil {
+		t.Errorf("missing ref content = %q, want nil", string(gotContent))
+	}
+}
+
+func TestClient_CatFileBatch_MultipleRefs(t *testing.T) {
+	fx := setupRepo(t)
+	c := newClient()
+	ctx := context.Background()
+
+	refs := []string{
+		fx.initialSHA + ":README.md",          // exists
+		fx.initialSHA + ":src/renamed.go",     // missing
+		fx.initialSHA + ":src/a.go",           // exists
+	}
+	var results [][]byte
+	err := c.CatFileBatch(ctx, fx.dir, refs, func(_ string, content []byte) {
+		results = append(results, content)
+	})
+	if err != nil {
+		t.Fatalf("CatFileBatch multiple refs: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 fn calls, got %d", len(results))
+	}
+	if results[0] == nil {
+		t.Error("results[0] (README.md) should not be nil")
+	}
+	if results[1] != nil {
+		t.Errorf("results[1] (missing) should be nil, got %q", string(results[1]))
+	}
+	if results[2] == nil {
+		t.Error("results[2] (src/a.go) should not be nil")
+	}
+}
+
+func TestClient_CatFileBatch_Empty(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	c := newClient()
+	ctx := context.Background()
+	called := false
+	err := c.CatFileBatch(ctx, t.TempDir(), nil, func(_ string, _ []byte) { called = true })
+	if err != nil {
+		t.Fatalf("CatFileBatch empty: %v", err)
+	}
+	if called {
+		t.Error("fn called with empty refs")
+	}
+}
+
 // TestClient_LogNumstat_GPGVerified is intentionally skipped: a real signed
 // commit requires a GPG key (or SSH-signing key) provisioned in the test
 // environment and gpg(1) on PATH. The CI environment does not provision

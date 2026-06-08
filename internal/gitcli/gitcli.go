@@ -1,6 +1,7 @@
 package gitcli
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -105,10 +106,94 @@ func (c *Client) ShowFile(ctx context.Context, clonePath, sha, path string) ([]b
 	return out, nil
 }
 
-// maxShowFileBytes caps a single git-show read so per-revision walks can't
-// OOM on a checked-in giant. 8 MiB is well above any indent-counted source
-// file; binaries and minified bundles are filtered upstream.
+// maxShowFileBytes caps a single blob read so per-revision walks can't OOM
+// on a checked-in giant. 8 MiB is well above any indent-counted source file;
+// binaries and minified bundles are filtered upstream.
 const maxShowFileBytes = 8 * 1024 * 1024
+
+// CatFileBatch calls git cat-file --batch for all refs (each "<sha>:<path>")
+// and invokes fn once per ref in input order. fn receives the raw blob
+// content, or nil when the object is absent or not a blob. Content per
+// object is capped at maxShowFileBytes. One subprocess handles all refs.
+func (c *Client) CatFileBatch(ctx context.Context, clonePath string, refs []string, fn func(ref string, content []byte)) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	// #nosec G204
+	cmd := exec.CommandContext(ctx, c.bin(), "cat-file", "--batch")
+	cmd.Dir = clonePath
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("gitcli: cat-file --batch: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("gitcli: cat-file --batch: %w", err)
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("gitcli: cat-file --batch: %w", err)
+	}
+	// Write all queries in the background; close stdin when done so git sees EOF.
+	go func() {
+		for _, ref := range refs {
+			fmt.Fprintln(stdin, ref)
+		}
+		stdin.Close()
+	}()
+	r := bufio.NewReader(stdout)
+	for _, ref := range refs {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			_ = cmd.Wait()
+			return fmt.Errorf("gitcli: cat-file --batch: %w", err)
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if strings.HasSuffix(line, " missing") {
+			fn(ref, nil)
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) < 3 {
+			fn(ref, nil)
+			continue
+		}
+		size, err := strconv.Atoi(parts[2])
+		if err != nil || size < 0 {
+			fn(ref, nil)
+			continue
+		}
+		if parts[1] != "blob" {
+			// Non-blob (tree, commit): consume bytes + LF separator, return nil.
+			if _, err := io.CopyN(io.Discard, r, int64(size)+1); err != nil {
+				_ = cmd.Wait()
+				return fmt.Errorf("gitcli: cat-file --batch: %w", err)
+			}
+			fn(ref, nil)
+			continue
+		}
+		toRead := size
+		if toRead > maxShowFileBytes {
+			toRead = maxShowFileBytes
+		}
+		content := make([]byte, toRead)
+		if _, err := io.ReadFull(r, content); err != nil {
+			_ = cmd.Wait()
+			return fmt.Errorf("gitcli: cat-file --batch: %w", err)
+		}
+		// Discard any uncapped remainder plus the LF object separator.
+		if _, err := io.CopyN(io.Discard, r, int64(size-toRead)+1); err != nil {
+			_ = cmd.Wait()
+			return fmt.Errorf("gitcli: cat-file --batch: %w", err)
+		}
+		fn(ref, content)
+	}
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("gitcli: cat-file --batch: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
 
 // IsAncestor reports whether `ancestor` is an ancestor of (or equal to)
 // `descendant` in clonePath. Implemented via `git merge-base --is-ancestor`,

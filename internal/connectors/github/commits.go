@@ -60,6 +60,7 @@ func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, win
 
 	prog := newProgress(c.log, repo.Slug, "commits")
 	defer prog.done()
+	var cxPairs []complexityPair
 	for _, rec := range records {
 		if ctx.Err() != nil {
 			prov.PaginationComplete = false
@@ -113,7 +114,8 @@ func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, win
 		emitDefects(sink, repo.Slug, "commit_message", rec.SHA,
 			rec.Subject+"\n"+rec.Body, rec.CommittedAt, nil, prov)
 
-		// Per-file rows.
+		// Per-file rows. Collect non-deleted, non-excluded paths for the
+		// complexity history batch at the end of the loop.
 		for _, f := range rec.Files {
 			cf := model.CommitFile{
 				CommitSHA:  rec.SHA,
@@ -131,12 +133,8 @@ func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, win
 			} else {
 				prov.RowsReturned["commit_files"]++
 			}
-			// Per-revision indent stats for assay's
-			// stage2.flow.hotspot_complexity_trend. Skip deletes (path
-			// gone at this sha) and the exclusion set (vendor / generated
-			// / binaries); see complexity_history.go.
-			if f.ChangeType != "D" {
-				emitComplexityHistory(ctx, c, repo, rec.SHA, f.Path, sink, prov)
+			if f.ChangeType != "D" && !complexityHistoryExcluded(f.Path) {
+				cxPairs = append(cxPairs, complexityPair{rec.SHA, f.Path})
 			}
 		}
 
@@ -160,4 +158,7 @@ func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, win
 			}
 		}
 	}
+	// Batch-fetch file content via one git cat-file --batch subprocess and
+	// emit file_complexity_history rows. Replaces O(N) git-show subprocesses.
+	extractComplexityHistoryBatch(ctx, c, repo, cxPairs, sink, prov)
 }

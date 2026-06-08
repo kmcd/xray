@@ -2,68 +2,67 @@ package github
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"math"
-	"os"
 	"regexp"
 
 	"github.com/kmcd/xray/internal/connector"
 	"github.com/kmcd/xray/internal/model"
 )
 
-// emitComplexityHistory writes one file_complexity_history row for a single
-// (sha, path) pair using the Hindle/Godfrey/Holt 2008 logical-indent proxy.
-// Excluded paths (vendored, generated, dependency manifests, binaries) are
-// silently skipped — the row would be noise downstream. A delete entry
-// (ChangeType == "D") is skipped because the file doesn't exist at sha;
-// the caller filters those before calling.
-//
-// The signature takes the connector pointer so error / progress logging
-// matches the rest of the github extractors. clonePath comes from
-// repo.Clone; without it (degraded extraction without a working tree) the
-// call returns without an error so commits.go's loop is unaffected.
-func emitComplexityHistory(ctx context.Context, c *Connector, repo connector.Repo, sha, path string, sink connector.Sink, prov *connector.Provenance) {
-	if repo.Clone == "" || c.git == nil {
+// complexityPair is a (sha, path) tuple queued for indent-stats computation.
+type complexityPair struct {
+	sha  string
+	path string
+}
+
+// extractComplexityHistoryBatch fetches content for all pairs via a single
+// git cat-file --batch subprocess and emits file_complexity_history rows.
+// Missing objects are silently skipped. A batch-level error is recorded in
+// prov.Errors but does not abort the connector.
+func extractComplexityHistoryBatch(ctx context.Context, c *Connector, repo connector.Repo, pairs []complexityPair, sink connector.Sink, prov *connector.Provenance) {
+	if len(pairs) == 0 || repo.Clone == "" || c.git == nil {
 		return
 	}
-	if complexityHistoryExcluded(path) {
-		return
+	refs := make([]string, len(pairs))
+	for i, p := range pairs {
+		refs[i] = p.sha + ":" + p.path
 	}
-	content, err := c.git.ShowFile(ctx, repo.Clone, sha, path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			// Path was deleted at this revision; nothing to count.
+	i := 0
+	batchErr := c.git.CatFileBatch(ctx, repo.Clone, refs, func(_ string, content []byte) {
+		p := pairs[i]
+		i++
+		if content == nil {
 			return
 		}
-		if prov.Errors["file_complexity_history"] == "" {
-			prov.Errors["file_complexity_history"] = err.Error()
+		stats := scanIndentLevels(content)
+		row := model.FileComplexityHistory{
+			CommitSHA:   p.sha,
+			Repo:        repo.Slug,
+			Path:        p.path,
+			N:           stats.n,
+			IndentTotal: stats.total,
+			IndentMean:  stats.mean,
+			IndentSD:    stats.sd,
+			IndentMax:   stats.maxLevel,
 		}
-		c.log.Debug("file_complexity_history: git show",
-			slog.String("sha", sha),
-			slog.String("path", path),
-			slog.String("error", err.Error()),
+		if err := sink.InsertFileComplexityHistory(row); err != nil {
+			if prov.Errors["file_complexity_history"] == "" {
+				prov.Errors["file_complexity_history"] = err.Error()
+			}
+			return
+		}
+		prov.RowsReturned["file_complexity_history"]++
+	})
+	if batchErr != nil {
+		if prov.Errors["file_complexity_history"] == "" {
+			prov.Errors["file_complexity_history"] = batchErr.Error()
+		}
+		c.log.Warn("file_complexity_history: cat-file batch",
+			slog.String("repo", repo.Slug),
+			slog.String("error", batchErr.Error()),
 		)
-		return
 	}
-	stats := scanIndentLevels(content)
-	row := model.FileComplexityHistory{
-		CommitSHA:   sha,
-		Repo:        repo.Slug,
-		Path:        path,
-		N:           stats.n,
-		IndentTotal: stats.total,
-		IndentMean:  stats.mean,
-		IndentSD:    stats.sd,
-		IndentMax:   stats.maxLevel,
-	}
-	if err := sink.InsertFileComplexityHistory(row); err != nil {
-		if prov.Errors["file_complexity_history"] == "" {
-			prov.Errors["file_complexity_history"] = err.Error()
-		}
-		return
-	}
-	prov.RowsReturned["file_complexity_history"]++
 }
 
 // indentLevelStats holds the five fields written to file_complexity_history.
