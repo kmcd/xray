@@ -142,6 +142,13 @@ type issueCommentGraph struct {
 }
 
 // reviewThreadGraph is one PullRequestReviewThread with its inline comments.
+//
+// Inner comments(first:25) is intentional: GitHub's GraphQL node-count
+// limit is 500,000 per query. The bulk prListQuery walks 50 PRs per page
+// and the thread×comments product multiplies — at 100 threads × 100
+// comments per thread × 50 PRs = 500,000 nodes from this branch alone,
+// pushing the total over the limit. 25 comments per thread keeps the bulk
+// query well under (the overflow paginator catches threads that exceed it).
 type reviewThreadGraph struct {
 	Comments struct {
 		TotalCount githubv4.Int
@@ -150,7 +157,7 @@ type reviewThreadGraph struct {
 			HasNextPage githubv4.Boolean
 		}
 		Nodes []reviewCommentGraph
-	} `graphql:"comments(first: 100)"`
+	} `graphql:"comments(first: 25)"`
 }
 
 // reviewCommentGraph is one PullRequestReviewComment node. ReplyTo is nil
