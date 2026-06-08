@@ -67,6 +67,8 @@ The analyser refuses to load artifacts at an unknown `schema_version`. Pre-1.0, 
 | 0.2.2        | 1              |
 | 0.3.0        | 2              |
 
+`0.3.0` is the first release at `schema_version = 2`. Analysers pinned to `schema_version = 1` will refuse to load `0.3.0+` artifacts — see the [CHANGELOG](./CHANGELOG.md#030--2026-06-08) for the author-handle semantics shift driving the bump.
+
 ## Build from source
 
 ```bash
