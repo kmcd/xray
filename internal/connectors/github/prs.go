@@ -312,8 +312,25 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 	title := string(p.Title)
 
 	// Timeline-derived fields. Also emits pr_review_requests rows from any
-	// REVIEW_REQUESTED_EVENT entries in the inline first-100 timeline.
-	readyForReviewAt, firstReviewAtTL, forcePushedAfterReview := emitTimelineDerived(p.TimelineItems.Nodes, prNum, repo.Slug, sink, prov)
+	// REVIEW_REQUESTED_EVENT entries in the inline first-25 timeline.
+	readyForReviewAt, firstReviewAtTL, firstForcePush := emitTimelineDerived(p.TimelineItems.Nodes, prNum, repo.Slug, sink, prov)
+
+	// Timeline overflow: drain any events past the inline first-25. This
+	// runs before body metrics so that firstReviewAtTL and firstForcePush
+	// are fully populated before forcePushedAfterReview is computed.
+	if bool(p.TimelineItems.PageInfo.HasNextPage) {
+		ovReady, ovFirstReview, ovFP := c.paginatePRTimelineOverflow(ctx, owner, name, prNum, repo.Slug, string(p.TimelineItems.PageInfo.EndCursor), sink, prov)
+		if ovReady != nil && (readyForReviewAt == nil || ovReady.Before(*readyForReviewAt)) {
+			readyForReviewAt = ovReady
+		}
+		if ovFirstReview != nil && (firstReviewAtTL == nil || ovFirstReview.Before(*firstReviewAtTL)) {
+			firstReviewAtTL = ovFirstReview
+		}
+		if ovFP != nil && (firstForcePush == nil || ovFP.Before(*firstForcePush)) {
+			firstForcePush = ovFP
+		}
+	}
+	forcePushedAfterReview := firstForcePush != nil && firstReviewAtTL != nil && firstForcePush.After(*firstReviewAtTL)
 
 	// Body shape metrics.
 	checklistTotal := strings.Count(body, "- [ ]") + strings.Count(body, "- [x]") + strings.Count(body, "- [X]")
@@ -385,14 +402,6 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 		c.paginatePRReviewThreadsOverflow(ctx, owner, name, prNum, repo.Slug, string(p.ReviewThreads.PageInfo.EndCursor), sink, prov)
 	}
 
-	// Timeline overflow picks up any REVIEW_REQUESTED_EVENT past the inline
-	// first 100; the derived fields (ready_for_review_at, first_review_at,
-	// force_pushed_after_review) keep the inline minimum, which is correct
-	// because timeline nodes return in chronological order.
-	if bool(p.TimelineItems.PageInfo.HasNextPage) {
-		c.paginatePRReviewRequestsOverflow(ctx, owner, name, prNum, repo.Slug, string(p.TimelineItems.PageInfo.EndCursor), sink, prov)
-	}
-
 	// pr_labels straight from GraphQL nodes; no extra round-trip.
 	for _, l := range p.Labels.Nodes {
 		row := model.PRLabel{PRNumber: prNum, Repo: repo.Slug, Label: string(l.Name)}
@@ -416,7 +425,7 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 			prov.RowsReturned["pr_commits"]++
 		}
 	}
-	// Paginate remaining commits if the PR has more than 100.
+	// Paginate remaining commits if the PR has more than 25.
 	if bool(p.Commits.PageInfo.HasNextPage) {
 		c.paginatePRCommits(ctx, owner, name, prNum, repo.Slug, string(p.Commits.PageInfo.EndCursor), sink, prov)
 	}

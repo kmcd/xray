@@ -3,6 +3,7 @@ package ratelimit_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -264,8 +265,10 @@ func TestNetworkErrorRetries(t *testing.T) {
 	}
 }
 
-// TestLowWaterMarkSleep verifies that Transport sleeps until the reset window
-// when X-RateLimit-Remaining falls below LowWaterMark.
+// TestLowWaterMarkSleep verifies that Transport sleeps before the next request
+// when X-RateLimit-Remaining falls below LowWaterMark on the prior response.
+// The triggering response is returned immediately; the sleep fires at the
+// start of the subsequent RoundTrip call.
 func TestLowWaterMarkSleep(t *testing.T) {
 	resetAt := time.Now().Add(2 * time.Second)
 	resetUnix := strconv.FormatInt(resetAt.Unix(), 10)
@@ -283,32 +286,43 @@ func TestLowWaterMarkSleep(t *testing.T) {
 		Log:    slog.Default(),
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+	// First call: returns immediately (sets internal paceUntil).
+	req1, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
+	resp1, err := transport.RoundTrip(req1)
+	if err != nil {
+		t.Fatalf("first RoundTrip: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp1.Body)
+	resp1.Body.Close()
 
+	// Second call: sleeps until reset + 5s before issuing the request.
+	req2, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
 	start := time.Now()
-	resp, err := transport.RoundTrip(req)
+	resp2, err := transport.RoundTrip(req2)
 	elapsed := time.Since(start)
 
 	if err != nil {
-		t.Fatalf("RoundTrip: %v", err)
+		t.Fatalf("second RoundTrip: %v", err)
 	}
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status: got %d want 200", resp.StatusCode)
+	if resp2.StatusCode != http.StatusOK {
+		t.Errorf("status: got %d want 200", resp2.StatusCode)
 	}
-	// Should have slept at least until reset (2s) plus 5s buffer minus a
-	// small scheduling tolerance. We check >= 2s (the reset delta) as the
-	// minimum meaningful signal; the +5s buffer means it will be ~7s total
-	// in production but we don't want slow tests.
+	// Should have slept at least until reset (2s from test start). The +5s
+	// buffer in production means ~7s total, but some time elapsed during the
+	// first call. We check >= 2s as the minimum meaningful signal.
 	if elapsed < 2*time.Second {
 		t.Errorf("elapsed %v: expected >= 2s sleep for low-water-mark pacing", elapsed)
 	}
 }
 
 // TestLowWaterMarkContextCancel verifies that context cancellation during the
-// low-water-mark sleep returns ctx.Err() immediately.
+// pacing sleep (at the start of the next request) returns an error immediately.
 func TestLowWaterMarkContextCancel(t *testing.T) {
 	resetAt := time.Now().Add(60 * time.Second) // long reset window
 	resetUnix := strconv.FormatInt(resetAt.Unix(), 10)
@@ -326,31 +340,43 @@ func TestLowWaterMarkContextCancel(t *testing.T) {
 		Log:    slog.Default(),
 	}
 
+	// First call with background context: sets paceUntil = now + ~65s.
+	req1, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	resp1, err := transport.RoundTrip(req1)
+	if err != nil {
+		t.Fatalf("first RoundTrip: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp1.Body)
+	resp1.Body.Close()
+
+	// Second call with a context cancelled after 50ms.
+	// The transport sleeps waiting for paceUntil (~65s away); ctx cancels it.
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		cancel()
 	}()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	req2, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
 
 	start := time.Now()
-	resp, err := transport.RoundTrip(req)
+	resp2, err := transport.RoundTrip(req2)
 	elapsed := time.Since(start)
 
-	// Context cancel during the LWM sleep should return the already-received
-	// valid response (not nil), since the current request succeeded; the sleep
-	// was only to pace future requests.
-	if err != nil {
-		t.Fatalf("RoundTrip: expected nil error on cancel-during-sleep, got %v", err)
+	// The request was never issued; cancellation during pacing returns an error.
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got err=%v resp=%v", err, resp2)
 	}
-	if resp == nil || resp.StatusCode != http.StatusOK {
-		t.Errorf("expected valid 200 response, got %v", resp)
+	if resp2 != nil {
+		t.Errorf("expected nil response on context cancel, got %v", resp2)
 	}
-	// Should have returned quickly after cancel (~50ms), not waited 60s.
+	// Should have returned quickly after cancel (~50ms), not waited 65s.
 	if elapsed > 5*time.Second {
 		t.Errorf("elapsed %v: context cancellation took too long", elapsed)
 	}

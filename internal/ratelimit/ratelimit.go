@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
@@ -293,6 +294,11 @@ type Transport struct {
 	Base   http.RoundTripper
 	Policy Policy
 	Log    *slog.Logger
+	// paceUntil stores a unix-nanosecond timestamp set when a response
+	// indicates remaining quota is below LowWaterMark. The next RoundTrip
+	// call sleeps until this time, so the goroutine that received the
+	// triggering response is never blocked by the pacing sleep.
+	paceUntil atomic.Int64
 }
 
 // RoundTrip implements http.RoundTripper.
@@ -301,6 +307,31 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if base == nil {
 		base = http.DefaultTransport
 	}
+
+	// Proactive primary-limit pacing: if a prior response set paceUntil,
+	// sleep before issuing this request. Sleeping here (not after the prior
+	// response) means the goroutine that received the triggering response is
+	// never blocked — the sleep only fires when the next request is needed.
+	if until := t.paceUntil.Load(); until > 0 {
+		now := time.Now().UnixNano()
+		if sleep := time.Duration(until - now); sleep > 0 {
+			log := t.Log
+			if log == nil {
+				log = slog.Default()
+			}
+			log.Warn("ratelimit: primary limit low, sleeping until reset",
+				slog.Duration("sleep", sleep),
+			)
+			timer := time.NewTimer(sleep)
+			select {
+			case <-timer.C:
+			case <-req.Context().Done():
+				timer.Stop()
+				return nil, req.Context().Err()
+			}
+		}
+	}
+
 	resp, err := Do(req.Context(), t.Policy, t.Log, func() (*http.Response, error) {
 		// Per net/http contract, callers can't reuse a request body across
 		// retries unless it is rewindable. RoundTripper is normally called
@@ -310,36 +341,21 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err != nil || resp == nil {
 		return resp, err
 	}
-	// Proactive primary-limit pacing: if remaining quota is below the
-	// low-water mark, sleep until the reset window expires so the next
-	// request starts with a full bucket instead of hitting a mid-run stall.
+
+	// After a successful response: if remaining quota is below the low-water
+	// mark, schedule a sleep before the next request by setting paceUntil.
+	// This never blocks the current goroutine.
 	lwm := t.Policy.LowWaterMark
 	if lwm == 0 {
 		lwm = 200
 	}
 	remainingStr := resp.Header.Get("X-RateLimit-Remaining")
-	remaining, _ := strconv.Atoi(remainingStr)
-	resetUnix, _ := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64)
-	if remainingStr != "" && resetUnix > 0 && remaining < lwm {
-		resetAt := time.Unix(resetUnix, 0)
-		sleep := time.Until(resetAt) + 5*time.Second
-		if sleep > 0 {
-			log := t.Log
-			if log == nil {
-				log = slog.Default()
-			}
-			log.Warn("ratelimit: primary limit low, sleeping until reset",
-				slog.Int("remaining", remaining),
-				slog.Duration("sleep", sleep),
-			)
-			select {
-			case <-time.After(sleep):
-			case <-req.Context().Done():
-				// Pacing sleep is for future requests; the current response
-				// was already received. Return it rather than discarding it.
-				return resp, nil
-			}
+	remaining, remErr := strconv.Atoi(remainingStr)
+	if remainingStr != "" && remErr == nil && remaining < lwm {
+		if d, ok := parseRateLimitReset(resp.Header.Get("X-RateLimit-Reset")); ok && d > 0 {
+			t.paceUntil.Store(time.Now().Add(d + 5*time.Second).UnixNano())
 		}
 	}
+
 	return resp, nil
 }

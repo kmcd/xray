@@ -58,7 +58,26 @@ Skip for pure bug fixes or refactors with no user-visible behaviour change. Othe
 
 Fix any gaps. Do not just report them.
 
-## Step 6: handoff
+## Step 6: smoke (for empirically-measurable changes)
+
+If the issue's value is empirically measurable — `type:perf` issues, behaviour changes, anything where "did this actually work?" cannot be answered by unit tests alone — run a smoke against a realistic target before declaring done. Gates green + push are necessary but not sufficient; closing without smoke has shipped premature claims.
+
+Defaults:
+- **Small repo first** — `/private/tmp/xray-smoke-chglog/chglog.toml` (`goreleaser/chglog`, 12-month window). Fast feedback (~10 s); validates the code paths run without errors.
+- **Realistic target** — `/private/tmp/xray-smoke-posthog/posthog-7d.toml` (`posthog/posthog`, 7-day window) for any change that should affect wall-clock or row volume on a busy repo.
+
+Build a fresh `/tmp/xray` from `HEAD`, run the smoke, and compare:
+- Wall-clock vs the baseline named in the issue (or in the prior commit's CHANGELOG entry).
+- Row counts vs prior smoke runs — `sqlite3 metrics.sqlite "SELECT 'prs', COUNT(*) FROM prs UNION ALL …"` — for unintended regressions.
+- The verbose log for new `WARN` or `ERROR` lines.
+
+Skip when:
+- The change is pure refactor / docs / test-only and unit tests cover the behaviour completely.
+- The change is type-system / surface (e.g. renaming a public identifier) with no runtime path touched.
+
+If the smoke reveals a regression, **do not close the issue**. Fix forward in the same session.
+
+## Step 7: handoff
 
 Summarise to the user in two parts:
 

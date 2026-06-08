@@ -179,7 +179,14 @@ recognise. Pre-1.0, expect several bumps as the schema settles.
   locally)
 - `bin/ship` — pre-push wrapper for `make gates`
 - `/ready` — full completion gate (gates → deterministic review →
-  inferential review → scope sweep → docs → handoff)
+  inferential review → scope sweep → docs → **smoke** → handoff)
+
+**Closing an issue requires `/ready`.** `make gates` green + `git push`
+are necessary but not sufficient: the smoke step in `/ready` catches
+regressions that unit tests miss (perf wins that didn't materialise,
+schema changes that pass DDL checks but break extraction at scale,
+behaviour shifts in row volume). `/start` Step 11 enforces this — no
+`gh issue close` until `/ready` reports clean.
 
 Lint thresholds (`.golangci.yml`) and coverage thresholds
 (`.testcoverage.yml`) are permissive at v0.x: set above the current

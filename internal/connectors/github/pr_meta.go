@@ -27,23 +27,12 @@ type reviewRequestedEvent struct {
 	}
 }
 
-type reviewRequestNode struct {
-	Typename             githubv4.String      `graphql:"__typename"`
-	ReviewRequestedEvent reviewRequestedEvent `graphql:"... on ReviewRequestedEvent"`
-}
-
 // emitTimelineDerived walks the PR's inline timelineItems, returning the
-// PR-row derived fields (readyForReviewAt, firstReviewAtTL,
-// forcePushedAfterReview) AND emitting pr_review_requests rows from any
-// REVIEW_REQUESTED_EVENT entries it encounters.
-//
-// Timeline nodes are returned in chronological order, so the inline
-// first-100 reliably captures the earliest of each event type on all but
-// the longest-tail PRs. Overflow is handled by paginatePRReviewRequestsOverflow
-// (only for additional REVIEW_REQUESTED entries; derived fields use the
-// inline minimum).
-func emitTimelineDerived(nodes []timelineNode, prNum int, slug string, sink connector.Sink, prov *connector.Provenance) (readyForReviewAt, firstReviewAtTL *time.Time, forcePushedAfterReview bool) {
-	var firstForcePush *time.Time
+// earliest timestamps needed to compute PR-row derived fields AND emitting
+// pr_review_requests rows from any REVIEW_REQUESTED_EVENT entries it
+// encounters. The caller is responsible for computing forcePushedAfterReview
+// from the returned firstForcePush after merging with overflow results.
+func emitTimelineDerived(nodes []timelineNode, prNum int, slug string, sink connector.Sink, prov *connector.Provenance) (readyForReviewAt, firstReviewAtTL, firstForcePush *time.Time) {
 	for _, t := range nodes {
 		switch t.Typename {
 		case "ReadyForReviewEvent":
@@ -68,8 +57,7 @@ func emitTimelineDerived(nodes []timelineNode, prNum int, slug string, sink conn
 			emitReviewRequestRow(t.ReviewRequestedEvent, prNum, slug, sink, prov)
 		}
 	}
-	forcePushedAfterReview = firstForcePush != nil && firstReviewAtTL != nil && firstForcePush.After(*firstReviewAtTL)
-	return readyForReviewAt, firstReviewAtTL, forcePushedAfterReview
+	return readyForReviewAt, firstReviewAtTL, firstForcePush
 }
 
 // emitReviewRequestRow writes one pr_review_requests row from a single
@@ -96,12 +84,12 @@ func emitReviewRequestRow(ev reviewRequestedEvent, prNum int, slug string, sink 
 	}
 }
 
-// paginatePRReviewRequestsOverflow drains additional REVIEW_REQUESTED_EVENT
-// timeline entries for a PR whose inline TimelineItems.PageInfo.HasNextPage
-// was true. Only emits pr_review_requests rows; the PR's derived fields
-// (ready_for_review_at, first_review_at, force_pushed_after_review) are
-// already settled from the inline first-100 timeline.
-func (c *Connector) paginatePRReviewRequestsOverflow(ctx context.Context, owner, name string, number int, slug, cursor string, sink connector.Sink, prov *connector.Provenance) {
+// paginatePRTimelineOverflow drains additional timeline entries for a PR whose
+// inline TimelineItems.PageInfo.HasNextPage was true. It requests all four
+// event types so derived fields (readyForReviewAt, firstReviewAtTL,
+// firstForcePush) are updated even when those events fall past the inline
+// first-25 page. pr_review_requests rows are emitted as they are found.
+func (c *Connector) paginatePRTimelineOverflow(ctx context.Context, owner, name string, number int, slug, cursor string, sink connector.Sink, prov *connector.Provenance) (readyForReviewAt, firstReviewAtTL, firstForcePush *time.Time) {
 	for {
 		if ctx.Err() != nil {
 			prov.PaginationComplete = false
@@ -115,8 +103,8 @@ func (c *Connector) paginatePRReviewRequestsOverflow(ctx context.Context, owner,
 							EndCursor   githubv4.String
 							HasNextPage githubv4.Boolean
 						}
-						Nodes []reviewRequestNode
-					} `graphql:"timelineItems(first: 100, after: $after, itemTypes: [REVIEW_REQUESTED_EVENT])"`
+						Nodes []timelineNode
+					} `graphql:"timelineItems(first: 100, after: $after, itemTypes: [READY_FOR_REVIEW_EVENT, PULL_REQUEST_REVIEW, HEAD_REF_FORCE_PUSHED_EVENT, REVIEW_REQUESTED_EVENT])"`
 				} `graphql:"pullRequest(number: $number)"`
 			} `graphql:"repository(owner: $owner, name: $name)"`
 		}
@@ -131,15 +119,22 @@ func (c *Connector) paginatePRReviewRequestsOverflow(ctx context.Context, owner,
 			if prov.Errors["pr_review_requests"] == "" {
 				prov.Errors["pr_review_requests"] = err.Error()
 			}
-			c.log.Warn("github: graphql review-requests overflow",
+			c.log.Warn("github: graphql timeline overflow",
 				slog.String("repo", slug),
 				slog.Int("pr", number),
 				slog.String("error", err.Error()),
 			)
 			return
 		}
-		for _, n := range q.Repository.PullRequest.TimelineItems.Nodes {
-			emitReviewRequestRow(n.ReviewRequestedEvent, number, slug, sink, prov)
+		ovReady, ovFirstReview, ovForcePush := emitTimelineDerived(q.Repository.PullRequest.TimelineItems.Nodes, number, slug, sink, prov)
+		if ovReady != nil && (readyForReviewAt == nil || ovReady.Before(*readyForReviewAt)) {
+			readyForReviewAt = ovReady
+		}
+		if ovFirstReview != nil && (firstReviewAtTL == nil || ovFirstReview.Before(*firstReviewAtTL)) {
+			firstReviewAtTL = ovFirstReview
+		}
+		if ovForcePush != nil && (firstForcePush == nil || ovForcePush.Before(*firstForcePush)) {
+			firstForcePush = ovForcePush
 		}
 		if !bool(q.Repository.PullRequest.TimelineItems.PageInfo.HasNextPage) {
 			return

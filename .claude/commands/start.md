@@ -159,7 +159,8 @@ Standing rules carry from `CLAUDE.md`:
 - No `Co-Authored-By` trailer.
 - No worktrees (enforced by `.claude/hooks/guard-worktree.sh`).
 - When the work is done and `make gates` is green, commit and push without
-  asking. Close the issue with `gh issue close <N> --comment "Closed in $(git rev-parse --short HEAD): <one-line>"`.
+  asking. **Do not run `gh issue close` here** — closing is gated on
+  `/ready` in Step 11.
 
 ### Step 10: Update the cross-cutting docs
 
@@ -174,6 +175,16 @@ same commit (or a follow-up before pushing):
 
 ### Step 11: Close
 
-When `make gates` is green locally and pushed, close the issue (see
-Step 9). Surface the SHA to the user and ask whether to start the next
-issue.
+**Always invoke `/ready` before closing.** `make gates` green + pushed is
+necessary but not sufficient. `/ready` runs the full completion gate (gates
+→ deterministic review → inferential review → scope sweep → docs → smoke
+verification for empirically-measurable changes → handoff). Skipping it has
+shipped issues prematurely.
+
+After `/ready` reports clean, close with:
+
+```
+gh issue close <N> --comment "Closed in $(git rev-parse --short HEAD): <one-line>"
+```
+
+Surface the SHA to the user and ask whether to start the next issue.
