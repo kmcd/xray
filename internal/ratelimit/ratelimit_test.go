@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -259,5 +261,94 @@ func TestNetworkErrorRetries(t *testing.T) {
 	}
 	if resp.StatusCode != 200 {
 		t.Errorf("status: got %d want 200", resp.StatusCode)
+	}
+}
+
+// TestLowWaterMarkSleep verifies that Transport sleeps until the reset window
+// when X-RateLimit-Remaining falls below LowWaterMark.
+func TestLowWaterMarkSleep(t *testing.T) {
+	resetAt := time.Now().Add(2 * time.Second)
+	resetUnix := strconv.FormatInt(resetAt.Unix(), 10)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "5")
+		w.Header().Set("X-RateLimit-Reset", resetUnix)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	transport := &ratelimit.Transport{
+		Base:   http.DefaultTransport,
+		Policy: ratelimit.Policy{LowWaterMark: 50},
+		Log:    slog.Default(),
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+
+	start := time.Now()
+	resp, err := transport.RoundTrip(req)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status: got %d want 200", resp.StatusCode)
+	}
+	// Should have slept at least until reset (2s) plus 5s buffer minus a
+	// small scheduling tolerance. We check >= 2s (the reset delta) as the
+	// minimum meaningful signal; the +5s buffer means it will be ~7s total
+	// in production but we don't want slow tests.
+	if elapsed < 2*time.Second {
+		t.Errorf("elapsed %v: expected >= 2s sleep for low-water-mark pacing", elapsed)
+	}
+}
+
+// TestLowWaterMarkContextCancel verifies that context cancellation during the
+// low-water-mark sleep returns ctx.Err() immediately.
+func TestLowWaterMarkContextCancel(t *testing.T) {
+	resetAt := time.Now().Add(60 * time.Second) // long reset window
+	resetUnix := strconv.FormatInt(resetAt.Unix(), 10)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "5")
+		w.Header().Set("X-RateLimit-Reset", resetUnix)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	transport := &ratelimit.Transport{
+		Base:   http.DefaultTransport,
+		Policy: ratelimit.Policy{LowWaterMark: 50},
+		Log:    slog.Default(),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+
+	start := time.Now()
+	_, err = transport.RoundTrip(req)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected error on context cancellation, got nil")
+	}
+	if err != context.Canceled {
+		t.Errorf("err: got %v want context.Canceled", err)
+	}
+	// Should have returned quickly after cancel (~50ms), not waited 60s.
+	if elapsed > 5*time.Second {
+		t.Errorf("elapsed %v: context cancellation took too long", elapsed)
 	}
 }

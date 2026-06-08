@@ -31,6 +31,10 @@ type Policy struct {
 	MaxAttempts              int
 	CumulativeBudget         time.Duration
 	SecondaryRateLimitBudget time.Duration
+	// LowWaterMark is the X-RateLimit-Remaining threshold below which the
+	// transport proactively sleeps until reset + 5s to avoid mid-run stalls.
+	// Zero defaults to 200.
+	LowWaterMark int
 }
 
 // DefaultPolicy returns the 3-attempt policy with per-error-class budgets:
@@ -297,10 +301,42 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	return Do(req.Context(), t.Policy, t.Log, func() (*http.Response, error) {
+	resp, err := Do(req.Context(), t.Policy, t.Log, func() (*http.Response, error) {
 		// Per net/http contract, callers can't reuse a request body across
 		// retries unless it is rewindable. RoundTripper is normally called
 		// by the client which arranges GetBody; we trust that contract.
 		return base.RoundTrip(req)
 	})
+	if err != nil || resp == nil {
+		return resp, err
+	}
+	// Proactive primary-limit pacing: if remaining quota is below the
+	// low-water mark, sleep until the reset window expires so the next
+	// request starts with a full bucket instead of hitting a mid-run stall.
+	lwm := t.Policy.LowWaterMark
+	if lwm == 0 {
+		lwm = 200
+	}
+	remaining, _ := strconv.Atoi(resp.Header.Get("X-RateLimit-Remaining"))
+	resetUnix, _ := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64)
+	if remaining > 0 && resetUnix > 0 && remaining < lwm {
+		resetAt := time.Unix(resetUnix, 0)
+		sleep := time.Until(resetAt) + 5*time.Second
+		if sleep > 0 {
+			log := t.Log
+			if log == nil {
+				log = slog.Default()
+			}
+			log.Warn("ratelimit: primary limit low, sleeping until reset",
+				slog.Int("remaining", remaining),
+				slog.Duration("sleep", sleep),
+			)
+			select {
+			case <-time.After(sleep):
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			}
+		}
+	}
+	return resp, nil
 }
