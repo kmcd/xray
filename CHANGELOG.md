@@ -14,6 +14,11 @@ Breaking: `schema_version` bumps `1 → 2`. Author-identity columns now hold opa
 - **Author handles hashed to opaque tokens.** `commits.author_handle`, `commits.committer_handle`, `commit_coauthors.handle`, `prs.author_handle`, `reviews.reviewer_handle`, `pr_comments.author_handle` switched from raw login/git ident to `h_<15 digits>` (low 64 bits of sha256 mod 10^15, zero-padded). The shape matches assay's `^h_\d{15}$` boundary check. See [ADR 023](./tmp/adr.md#023--author-handles-hashed-at-the-boundary-bumps-schema_version-1-2) for the bump rationale.
 - **`manifest.mailmap_applied` (new).** Bool aggregated across all repos in the run. `true` iff every repo carried a non-empty, cleanly parsed `.mailmap` that was applied to every author-handle table. `false` flips assay-side metrics like `knowledge_concentration` and `communication_paths` to surface the Tornhill alias caveat.
 
+### Squash-merge detection rolled up to the manifest (assay v1.1 contract #21, Tornhill Ch 9)
+
+- **`manifest.{n_squash_merged_prs, n_total_merged_prs, squash_rate}` (new).** Counts roll up post-extraction via `store.SquashStats()`, which queries `prs.merge_method = 'squash'` against `merged_at IS NOT NULL`. Per-PR classification is unchanged — still ADR 021's parent-count + PR-head reachability — only the aggregation is new. `squash_rate = 0.0` when no PRs merged in the window.
+- assay treats `squash_rate > 0.5` as the Tornhill Ch 9 "Squash Sparingly" caveat threshold and attaches a coupling-derived-metric note. The threshold lives in `assay_evaluator/stage2/flow.py`; xray emits the raw rate.
+
 ## [0.2.2] — 2026-06-06
 
 Performance + observability pass. No schema change; `schema_version` stays at 1. Validated against `goreleaser/chglog` post-fix: 65 commits with full enrichment (`signature_verified` + `landed_via_pr` populated on every row), 2:20 wall time.

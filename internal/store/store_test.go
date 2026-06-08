@@ -139,6 +139,47 @@ func TestInsertOnePerTable(t *testing.T) {
 	}
 }
 
+func TestSquashStats(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "m.sqlite"), "test")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	now := time.Now().UTC()
+	merged := now.Add(time.Hour)
+	mkPR := func(num int, mergeMethod string, isMerged bool) model.PR {
+		pr := model.PR{Number: num, Repo: "r", OpenedAt: now, MergeMethod: mergeMethod}
+		if isMerged {
+			m := merged
+			pr.MergedAt = &m
+		}
+		return pr
+	}
+	// 5 merged: 3 squash, 1 merge, 1 rebase. 1 open (unmerged) — must not count.
+	cases := []model.PR{
+		mkPR(1, "squash", true),
+		mkPR(2, "squash", true),
+		mkPR(3, "squash", true),
+		mkPR(4, "merge", true),
+		mkPR(5, "rebase", true),
+		mkPR(6, "", false),
+	}
+	for _, p := range cases {
+		if err := st.InsertPR(p); err != nil {
+			t.Fatalf("InsertPR %d: %v", p.Number, err)
+		}
+	}
+	nSquash, nMerged, err := st.SquashStats()
+	if err != nil {
+		t.Fatalf("SquashStats: %v", err)
+	}
+	if nSquash != 3 || nMerged != 5 {
+		t.Errorf("SquashStats = (%d, %d), want (3, 5)", nSquash, nMerged)
+	}
+}
+
 func TestNullableTimePointer(t *testing.T) {
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "m.sqlite"), "test")

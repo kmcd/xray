@@ -90,6 +90,25 @@ func (s *Store) DB() *sql.DB {
 	return s.db
 }
 
+// SquashStats returns counts of merged PRs and squash-merged PRs across the
+// entire artifact. Used by run.go after extraction to populate the
+// manifest's `n_total_merged_prs` / `n_squash_merged_prs` / `squash_rate`
+// fields; assay treats squash_rate > 0.5 as the Tornhill Ch 9 caveat
+// threshold for coupling-derived metrics.
+//
+// merge_method classification is per ADR 021 (parent count + PR-head
+// reachability), already computed at extract time and stored in the
+// prs.merge_method column — no re-derivation here.
+func (s *Store) SquashStats() (nSquash, nMerged int, err error) {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM prs WHERE merged_at IS NOT NULL`).Scan(&nMerged); err != nil {
+		return 0, 0, fmt.Errorf("store: count merged prs: %w", err)
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM prs WHERE merged_at IS NOT NULL AND merge_method = 'squash'`).Scan(&nSquash); err != nil {
+		return 0, 0, fmt.Errorf("store: count squash prs: %w", err)
+	}
+	return nSquash, nMerged, nil
+}
+
 // Close releases prepared statements and the underlying database handle.
 func (s *Store) Close() error {
 	s.mu.Lock()

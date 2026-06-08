@@ -204,23 +204,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (string, error) 
 
 	// 4. Build manifest.
 	completedAt := time.Now().UTC()
-	m := &manifest.Manifest{
-		ToolVersion:    opts.ToolVersion,
-		SchemaVersion:  model.SchemaVersion,
-		RunID:          runID,
-		RunStartedAt:   startedAt,
-		RunCompletedAt: completedAt,
-		Window: manifest.WindowJSON{
-			Start: cfg.Window.Start.UTC().Format("2006-01-02"),
-			End:   cfg.Window.End.UTC().Format("2006-01-02"),
-		},
-		Teams:          cloneTeams(cfg.Teams),
-		Repos:          buildRepoMetas(clones),
-		ConnectorsUsed: derivedConnectorsUsed(provs),
-		Counts:         sumCounts(provs),
-		MailmapApplied: aggregateMailmapApplied(provs),
-		Provenance:     sortProvs(provs),
-	}
+	m := buildManifest(opts.ToolVersion, runID, startedAt, completedAt, cfg, clones, provs, st, log)
 
 	manifestPath := filepath.Join(tmpDir, "manifest.json")
 	// #nosec G304 -- manifestPath is under the per-run temp dir.
@@ -357,6 +341,49 @@ func hasErrors(provs []connector.Provenance) bool {
 		}
 	}
 	return false
+}
+
+// buildManifest assembles the manifest from per-connector provenance and a
+// post-extraction query against the store. SquashStats failure degrades to
+// zero counts with a logged warning — assay reads squash_rate == 0 as "no
+// caveat", which is the safe default if the rollup fails.
+func buildManifest(
+	toolVersion, runID string,
+	startedAt, completedAt time.Time,
+	cfg *config.Config,
+	clones []cloned,
+	provs []connector.Provenance,
+	st *store.Store,
+	log *slog.Logger,
+) *manifest.Manifest {
+	nSquash, nMerged, sqErr := st.SquashStats()
+	if sqErr != nil {
+		log.Warn("run: squash stats", slog.String("error", sqErr.Error()))
+	}
+	var squashRate float64
+	if nMerged > 0 {
+		squashRate = float64(nSquash) / float64(nMerged)
+	}
+	return &manifest.Manifest{
+		ToolVersion:    toolVersion,
+		SchemaVersion:  model.SchemaVersion,
+		RunID:          runID,
+		RunStartedAt:   startedAt,
+		RunCompletedAt: completedAt,
+		Window: manifest.WindowJSON{
+			Start: cfg.Window.Start.UTC().Format("2006-01-02"),
+			End:   cfg.Window.End.UTC().Format("2006-01-02"),
+		},
+		Teams:            cloneTeams(cfg.Teams),
+		Repos:            buildRepoMetas(clones),
+		ConnectorsUsed:   derivedConnectorsUsed(provs),
+		Counts:           sumCounts(provs),
+		MailmapApplied:   aggregateMailmapApplied(provs),
+		NSquashMergedPRs: nSquash,
+		NTotalMergedPRs:  nMerged,
+		SquashRate:       squashRate,
+		Provenance:       sortProvs(provs),
+	}
 }
 
 // aggregateMailmapApplied collapses per-repo "mailmap_applied" flags into a

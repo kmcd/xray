@@ -18,18 +18,21 @@ import (
 // the author universe" and appends the Tornhill Ch 13 caveat to the
 // truck-factor finding.
 type Manifest struct {
-	ToolVersion    string                 `json:"tool_version"`
-	SchemaVersion  int                    `json:"schema_version"`
-	RunID          string                 `json:"run_id"`
-	RunStartedAt   time.Time              `json:"run_started_at"`
-	RunCompletedAt time.Time              `json:"run_completed_at"`
-	Window         WindowJSON             `json:"window"`
-	Teams          map[string][]string    `json:"teams"`
-	Repos          []RepoMeta             `json:"repos"`
-	ConnectorsUsed []string               `json:"connectors_used"`
-	Counts         map[string]int         `json:"counts"`
-	MailmapApplied bool                   `json:"mailmap_applied"`
-	Provenance     []connector.Provenance `json:"extraction_provenance"`
+	ToolVersion       string                 `json:"tool_version"`
+	SchemaVersion     int                    `json:"schema_version"`
+	RunID             string                 `json:"run_id"`
+	RunStartedAt      time.Time              `json:"run_started_at"`
+	RunCompletedAt    time.Time              `json:"run_completed_at"`
+	Window            WindowJSON             `json:"window"`
+	Teams             map[string][]string    `json:"teams"`
+	Repos             []RepoMeta             `json:"repos"`
+	ConnectorsUsed    []string               `json:"connectors_used"`
+	Counts            map[string]int         `json:"counts"`
+	MailmapApplied    bool                   `json:"mailmap_applied"`
+	NSquashMergedPRs  int                    `json:"n_squash_merged_prs"`
+	NTotalMergedPRs   int                    `json:"n_total_merged_prs"`
+	SquashRate        float64                `json:"squash_rate"`
+	Provenance        []connector.Provenance `json:"extraction_provenance"`
 }
 
 // WindowJSON renders the inclusive UTC window as YYYY-MM-DD start/end.
