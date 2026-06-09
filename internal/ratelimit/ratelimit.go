@@ -439,6 +439,17 @@ func (t *Transport) Snapshot() map[string]BudgetState {
 	return t.budgets.snapshot()
 }
 
+// effectiveSink returns t.Sink if set, otherwise the ambient Sink on
+// the request context. Connectors are constructed before the run-wide
+// Sink exists, so the field is rarely populated; the CLI installs the
+// real sink on the run context via progress.WithSink.
+func (t *Transport) effectiveSink(ctx context.Context) progress.Sink {
+	if t.Sink != nil {
+		return t.Sink
+	}
+	return progress.FromContext(ctx)
+}
+
 // RoundTrip implements http.RoundTripper.
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	base := t.Base
@@ -450,6 +461,8 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if connector == "" {
 		connector = hostToConnector(req.URL.Host)
 	}
+
+	sink := t.effectiveSink(req.Context())
 
 	t.startedAt.CompareAndSwap(0, time.Now().UnixNano())
 
@@ -467,8 +480,8 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 			log.Warn("ratelimit: primary limit low, sleeping until reset",
 				slog.Duration("sleep", sleep),
 			)
-			if t.Sink != nil && sleep >= rateLimitEventThreshold {
-				t.Sink.Emit(progress.Event{
+			if sleep >= rateLimitEventThreshold {
+				sink.Emit(progress.Event{
 					Kind:      progress.RateLimit,
 					Connector: connector,
 					Message:   fmt.Sprintf("primary limit low, waiting %ds", int(sleep/time.Second)),
@@ -489,7 +502,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 	}
 
-	resp, err := doWithHooks(req.Context(), t.Policy, t.Log, hooks{sink: t.Sink, connector: connector}, func() (*http.Response, error) {
+	resp, err := doWithHooks(req.Context(), t.Policy, t.Log, hooks{sink: sink, connector: connector}, func() (*http.Response, error) {
 		// Per net/http contract, callers can't reuse a request body across
 		// retries unless it is rewindable. RoundTripper is normally called
 		// by the client which arranges GetBody; we trust that contract.
@@ -500,7 +513,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	t.budgets.update(connector, resp.Header, time.Now().UTC())
-	t.maybeEmitPredictiveWarning(connector)
+	t.maybeEmitPredictiveWarning(sink, connector)
 
 	// After a successful response: if remaining quota is below the low-water
 	// mark, schedule a sleep before the next request by setting paceUntil.
@@ -520,16 +533,36 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-// maybeEmitPredictiveWarning fires one PhaseError event per connector
-// per Transport lifetime when remaining budget drops below 100 with at
-// least 5 minutes of run elapsed — a stand-in for the ETA-driven
-// heuristic until #81 lands.
-func (t *Transport) maybeEmitPredictiveWarning(connector string) {
-	if t.Sink == nil {
+// Thresholds for the predictive-exhaustion warning. We warn when
+// Remaining drops below warnBelow with 5+ minutes of run elapsed, and
+// clear the per-connector latch once Remaining recovers above
+// clearAbove — so a transient quota dip that recovers does not leave a
+// stale "throttling imminent" warning visible for the rest of the run.
+const (
+	predictWarnBelow  = 100
+	predictClearAbove = 200
+)
+
+// maybeEmitPredictiveWarning fires a PhaseError event when remaining
+// budget drops below predictWarnBelow with at least 5 minutes of run
+// elapsed, at most once per connector per dip — clears the latch when
+// the budget recovers above predictClearAbove. Skips entirely when
+// X-RateLimit-Remaining was not present in the most recent response
+// (HasRemaining false), avoiding the Remaining=0 false positive when
+// only Limit/Reset headers came back.
+func (t *Transport) maybeEmitPredictiveWarning(sink progress.Sink, connector string) {
+	if sink == nil {
 		return
 	}
 	st, ok := t.budgets.get(connector)
-	if !ok || st.Remaining >= 100 {
+	if !ok || !st.HasRemaining {
+		return
+	}
+	if st.Remaining >= predictClearAbove {
+		t.warned.Delete(connector)
+		return
+	}
+	if st.Remaining >= predictWarnBelow {
 		return
 	}
 	started := t.startedAt.Load()
@@ -539,7 +572,7 @@ func (t *Transport) maybeEmitPredictiveWarning(connector string) {
 	if _, loaded := t.warned.LoadOrStore(connector, struct{}{}); loaded {
 		return
 	}
-	t.Sink.Emit(progress.Event{
+	sink.Emit(progress.Event{
 		Kind:      progress.PhaseError,
 		Connector: connector,
 		Message:   fmt.Sprintf("rate-limit budget low: %d remaining; throttling imminent", st.Remaining),

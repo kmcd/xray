@@ -49,8 +49,16 @@ func WriteTarGz(outPath string, files map[string]string) (Result, error) {
 	}, nil
 }
 
+// archiveEpoch is the deterministic ModTime embedded in every file's tar
+// header and the gzip stream header. Using a fixed value means two runs
+// over identical data produce byte-identical archives (and so identical
+// SHA256s) — the digest in the post-run summary is then a real artifact
+// identity rather than a per-invocation token.
+var archiveEpoch = time.Unix(0, 0).UTC()
+
 func writeArchive(w io.Writer, files map[string]string) error {
 	gz := gzip.NewWriter(w)
+	gz.ModTime = archiveEpoch
 	tw := tar.NewWriter(gz)
 
 	type entry struct{ disk, name string }
@@ -94,7 +102,7 @@ func writeFile(tw *tar.Writer, diskPath, archiveName string) error {
 		Name:    archiveName,
 		Mode:    0o644,
 		Size:    fi.Size(),
-		ModTime: time.Now().UTC(),
+		ModTime: archiveEpoch,
 		Format:  tar.FormatPAX,
 	}
 	if err := tw.WriteHeader(hdr); err != nil {

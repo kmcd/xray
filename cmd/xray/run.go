@@ -103,8 +103,11 @@ func newRunCmd() *cobra.Command {
 				return fmt.Errorf("connector setup: %w", err)
 			}
 
-			sink, stopSink := buildProgressSink(ctx, cmd, mode, logger, cfg, connectors, opts.workers)
+			userSink, stopSink := buildProgressSink(ctx, cmd, mode, logger, cfg, connectors, opts.workers)
 			defer stopSink()
+			rlCounter := progress.NewRateLimitCounter()
+			sink := progress.NewTeeSink(userSink, rlCounter)
+			ctx = progress.WithSink(ctx, sink)
 
 			result, err := run.Run(ctx, cfg, run.Options{
 				Out:         outPath,
@@ -114,17 +117,37 @@ func newRunCmd() *cobra.Command {
 				Logger:      logger,
 				ToolVersion: version,
 				Progress:    sink,
+				OnTempDir: func(p string) {
+					tmpDirRef.Store(&p)
+				},
 			})
 			// Drain the progress sink before writing the summary line so
 			// the TTY grid finalises above the summary instead of overlapping it.
 			stopSink()
+			// Clear the temp-dir snapshot so a follow-up run in the same
+			// process (used by tests, not production) starts fresh and
+			// the signal handler can't surface a stale path.
+			tmpDirRef.Store(nil)
 
 			logPath := ""
 			if logFile != nil {
 				logPath = strings.TrimSuffix(outPath, ".tar.gz") + ".log"
 			}
 
+			waits, waitSecs := rlCounter.Snapshot()
+			result.RateLimitWaits = waits
+			result.RateLimitWaitSeconds = waitSecs
+
 			switch {
+			case errors.Is(err, context.Canceled):
+				fmt.Fprint(errOut, run.InterruptSummary(run.InterruptSummaryInput{
+					Phase:    result.InterruptedPhase,
+					Inflight: result.InflightJobs,
+					TempDir:  result.TempDir,
+					Cleaned:  !opts.keepClones,
+					ExitCode: 130,
+				}))
+				return silentCode(err, 130)
 			case errors.Is(err, run.ErrPartial):
 				if mode != ModeQuiet && mode != ModeJSON {
 					fmt.Fprintf(errOut, "run: %v\n", err)
@@ -211,13 +234,15 @@ func emitRunSummary(w io.Writer, mode Mode, result run.Result, logPath string, o
 		return
 	}
 	in := run.SummaryInput{
-		Manifest:     result.Manifest,
-		ArtifactPath: result.ArtifactPath,
-		SHA256:       result.SHA256,
-		Size:         result.Size,
-		Duration:     result.Duration,
-		LogPath:      logPath,
-		PartialFails: run.ExtractPartialFailures(result.Manifest.Provenance),
+		Manifest:             result.Manifest,
+		ArtifactPath:         result.ArtifactPath,
+		SHA256:               result.SHA256,
+		Size:                 result.Size,
+		Duration:             result.Duration,
+		LogPath:              logPath,
+		PartialFails:         run.ExtractPartialFailures(result.Manifest.Provenance),
+		RateLimitWaits:       result.RateLimitWaits,
+		RateLimitWaitSeconds: result.RateLimitWaitSeconds,
 	}
 	switch mode {
 	case ModeQuiet:

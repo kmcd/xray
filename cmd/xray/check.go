@@ -245,7 +245,7 @@ func printPlan(mode Mode, w io.Writer, p preflight.Plan) {
 	}
 	fmt.Fprintf(w, "  connectors: %s\n", joinComma(p.Connectors))
 	fmt.Fprintf(w, "  estimated:  ~%s clone, ~%s API calls, ~%s wall-clock\n",
-		humanBytes(p.CloneBytes),
+		preflight.FormatBytes(p.CloneBytes),
 		humanCount(p.APICalls),
 		humanSeconds(p.WallClockSecs),
 	)
@@ -309,18 +309,6 @@ func joinComma(ss []string) string {
 	return out
 }
 
-func humanBytes(n int64) string {
-	switch {
-	case n >= 1<<30:
-		return fmt.Sprintf("%.1f GB", float64(n)/float64(1<<30))
-	case n >= 1<<20:
-		return fmt.Sprintf("%.1f MB", float64(n)/float64(1<<20))
-	case n >= 1<<10:
-		return fmt.Sprintf("%.1f KB", float64(n)/float64(1<<10))
-	default:
-		return fmt.Sprintf("%d B", n)
-	}
-}
 
 func humanCount(n int) string {
 	switch {

@@ -9,12 +9,15 @@ import (
 )
 
 // BudgetState is the current X-RateLimit-* snapshot for one connector.
-// Zero values mean "no header observed yet".
+// Remaining is only authoritative when HasRemaining is true; a missing
+// X-RateLimit-Remaining header leaves Remaining at int-zero, which
+// would otherwise trip the predictive warning into a false positive.
 type BudgetState struct {
-	Remaining int
-	Limit     int
-	ResetAt   time.Time
-	UpdatedAt time.Time
+	Remaining    int
+	HasRemaining bool
+	Limit        int
+	ResetAt      time.Time
+	UpdatedAt    time.Time
 }
 
 type budgetTracker struct {
@@ -33,6 +36,7 @@ func (b *budgetTracker) update(connector string, h http.Header, now time.Time) (
 	st := BudgetState{UpdatedAt: now}
 	if v, err := strconv.Atoi(remStr); err == nil {
 		st.Remaining = v
+		st.HasRemaining = true
 	}
 	if v, err := strconv.Atoi(limStr); err == nil {
 		st.Limit = v

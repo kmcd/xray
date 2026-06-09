@@ -2,14 +2,24 @@ package github
 
 import (
 	"context"
+	"errors"
+	"io"
+	"net"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shurcooL/githubv4"
 
 	"github.com/kmcd/xray/internal/preflight"
 )
+
+// preflightWorkers caps the concurrency of per-repo preflight GraphQL
+// probes. The probes are read-only aggregates and we want to keep
+// `xray check` quick on multi-repo configs without blowing through
+// GraphQL primary-rate budget before the run even starts.
+const preflightWorkers = 5
 
 // RequiredScopes is the minimal set of OAuth scopes xray exercises against
 // GitHub. Any scope on a token that isn't in this set is reported as
@@ -114,32 +124,53 @@ type repoStatQuery struct {
 // A probe failure on a single repo is recorded as an empty stat and
 // the walk continues — `xray check` is a hint, not a gate.
 func (c *Connector) RepoStats(ctx context.Context, repos []string, since, until time.Time) ([]preflight.RepoStat, error) {
-	out := make([]preflight.RepoStat, 0, len(repos))
-	for _, slug := range repos {
-		if ctx.Err() != nil {
-			return out, ctx.Err()
-		}
+	results := make([]preflight.RepoStat, len(repos))
+	sem := make(chan struct{}, preflightWorkers)
+	var wg sync.WaitGroup
+	for i, slug := range repos {
 		owner, name, ok := splitSlug(slug)
 		if !ok {
+			results[i] = preflight.RepoStat{Slug: slug}
 			continue
 		}
-		var q repoStatQuery
-		vars := map[string]any{
-			"owner": githubv4.String(owner),
-			"name":  githubv4.String(name),
-			"since": githubv4.GitTimestamp{Time: since},
-			"until": githubv4.GitTimestamp{Time: until},
+		select {
+		case <-ctx.Done():
+			out := make([]preflight.RepoStat, 0, len(repos))
+			for j := 0; j < i; j++ {
+				out = append(out, results[j])
+			}
+			return out, ctx.Err()
+		case sem <- struct{}{}:
 		}
-		if err := c.queryWithEOFRetry(ctx, &q, vars); err != nil {
-			out = append(out, preflight.RepoStat{Slug: slug})
-			continue
+		wg.Add(1)
+		go func(i int, slug, owner, name string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			var q repoStatQuery
+			vars := map[string]any{
+				"owner": githubv4.String(owner),
+				"name":  githubv4.String(name),
+				"since": githubv4.GitTimestamp{Time: since},
+				"until": githubv4.GitTimestamp{Time: until},
+			}
+			if err := c.queryWithEOFRetry(ctx, &q, vars); err != nil {
+				results[i] = preflight.RepoStat{Slug: slug}
+				return
+			}
+			results[i] = preflight.RepoStat{
+				Slug:         slug,
+				DiskUsageKB:  int64(q.Repository.DiskUsage),
+				PullRequests: int(q.Repository.PullRequests.TotalCount),
+				Commits:      int(q.Repository.DefaultBranchRef.Target.Commit.History.TotalCount),
+			}
+		}(i, slug, owner, name)
+	}
+	wg.Wait()
+	out := make([]preflight.RepoStat, 0, len(repos))
+	for _, r := range results {
+		if r.Slug != "" {
+			out = append(out, r)
 		}
-		out = append(out, preflight.RepoStat{
-			Slug:         slug,
-			DiskUsageKB:  int64(q.Repository.DiskUsage),
-			PullRequests: int(q.Repository.PullRequests.TotalCount),
-			Commits:      int(q.Repository.DefaultBranchRef.Target.Commit.History.TotalCount),
-		})
 	}
 	return out, nil
 }
@@ -161,33 +192,92 @@ type branchProtectionProbeQuery struct {
 // endpoints (org audit log, repo admin) are not yet exercised by xray.
 // Add probes here as new endpoints are pulled in.
 func (c *Connector) ProbeEndpoints(ctx context.Context, repos []string) ([]preflight.InaccessibleEndpoint, error) {
-	var out []preflight.InaccessibleEndpoint
-	for _, slug := range repos {
-		if ctx.Err() != nil {
-			return out, ctx.Err()
-		}
+	results := make([]preflight.InaccessibleEndpoint, len(repos))
+	sem := make(chan struct{}, preflightWorkers)
+	var wg sync.WaitGroup
+	for i, slug := range repos {
 		owner, name, ok := splitSlug(slug)
 		if !ok {
 			continue
 		}
-		var q branchProtectionProbeQuery
-		vars := map[string]any{
-			"owner": githubv4.String(owner),
-			"name":  githubv4.String(name),
+		select {
+		case <-ctx.Done():
+			wg.Wait()
+			out := collectInaccessible(results[:i])
+			return out, ctx.Err()
+		case sem <- struct{}{}:
 		}
-		if err := c.queryWithEOFRetry(ctx, &q, vars); err != nil {
-			out = append(out, preflight.InaccessibleEndpoint{
+		wg.Add(1)
+		go func(i int, slug, owner, name string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			var q branchProtectionProbeQuery
+			vars := map[string]any{
+				"owner": githubv4.String(owner),
+				"name":  githubv4.String(name),
+			}
+			err := c.queryWithEOFRetry(ctx, &q, vars)
+			if err == nil || isTransientProbeError(err) {
+				return
+			}
+			results[i] = preflight.InaccessibleEndpoint{
 				Repo:     slug,
 				Endpoint: "branch_protection",
 				Reason:   condenseProbeReason(err.Error()),
-			})
+			}
+		}(i, slug, owner, name)
+	}
+	wg.Wait()
+	return collectInaccessible(results), nil
+}
+
+func collectInaccessible(in []preflight.InaccessibleEndpoint) []preflight.InaccessibleEndpoint {
+	var out []preflight.InaccessibleEndpoint
+	for _, r := range in {
+		if r.Repo != "" {
+			out = append(out, r)
 		}
 	}
-	return out, nil
+	return out
+}
+
+// isTransientProbeError reports whether a branch_protection probe error
+// is network/timeout/EOF/rate-limit rather than a permission denial. We
+// only surface permission denials as "inaccessible" — labelling a flaky
+// fetch as inaccessible sends customers to re-mint a token they don't
+// need to re-mint.
+func isTransientProbeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	low := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(low, "unexpected eof"),
+		strings.Contains(low, "connection reset"),
+		strings.Contains(low, "connection refused"),
+		strings.Contains(low, "no such host"),
+		strings.Contains(low, "i/o timeout"),
+		strings.Contains(low, "rate limit"),
+		strings.Contains(low, "secondary rate"),
+		strings.Contains(low, "502"),
+		strings.Contains(low, "503"),
+		strings.Contains(low, "504"):
+		return true
+	}
+	return false
 }
 
 // condenseProbeReason maps the verbose GraphQL error string into a short
-// customer-facing reason. Falls back to the raw error truncated.
+// customer-facing reason. Only called for non-transient probe failures
+// (transient ones are filtered by isTransientProbeError before reaching
+// here). Falls back to the raw error truncated.
 func condenseProbeReason(err string) string {
 	low := strings.ToLower(err)
 	switch {

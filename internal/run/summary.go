@@ -8,6 +8,7 @@ import (
 
 	"github.com/kmcd/xray/internal/connector"
 	"github.com/kmcd/xray/internal/manifest"
+	"github.com/kmcd/xray/internal/preflight"
 )
 
 // summaryTopRows caps the row-roll-up at the eight largest tables; the rest
@@ -19,13 +20,15 @@ const summaryTopRows = 8
 // SummaryInput is everything Summarize needs. It is a thin pass-through so
 // the caller assembles the inputs once and the renderer stays pure.
 type SummaryInput struct {
-	Manifest     manifest.Manifest
-	ArtifactPath string
-	SHA256       string
-	Size         int64
-	Duration     time.Duration
-	LogPath      string
-	PartialFails []PartialFailure
+	Manifest             manifest.Manifest
+	ArtifactPath         string
+	SHA256               string
+	Size                 int64
+	Duration             time.Duration
+	LogPath              string
+	PartialFails         []PartialFailure
+	RateLimitWaits       int
+	RateLimitWaitSeconds int
 }
 
 // PartialFailure identifies one (repo, connector) pair that errored during
@@ -60,15 +63,19 @@ type SummaryArtifact struct {
 
 // SummaryProvenance collapses the per-row provenance stream into the
 // aggregate counters the customer sees. RateLimitTruncated counts
-// connectors whose pagination was cut off by the rate-limit budget; the
-// raw wait count + cumulative wait time will be added once #82's events
-// flow back into the manifest's provenance.
+// connectors whose pagination was cut off by the rate-limit budget;
+// RateLimitWaits + RateLimitWaitSeconds come from
+// progress.RateLimitCounter (the CLI tees one alongside the user-facing
+// sink) so the summary reports the actual cumulative wait the customer
+// paid, not just the count of budget-truncated connectors.
 type SummaryProvenance struct {
 	EndpointsAccessible   int `json:"endpoints_accessible"`
 	EndpointsTotal        int `json:"endpoints_total"`
 	EndpointsInaccessible int `json:"endpoints_inaccessible"`
 	PerRowErrors          int `json:"per_row_errors"`
 	RateLimitTruncated    int `json:"rate_limit_truncated"`
+	RateLimitWaits        int `json:"rate_limit_waits"`
+	RateLimitWaitSeconds  int `json:"rate_limit_wait_seconds"`
 	PartialPaginations    int `json:"partial_paginations"`
 }
 
@@ -81,7 +88,7 @@ func Summarize(in SummaryInput) string {
 
 	fmt.Fprintln(&b, "Artifact")
 	fmt.Fprintf(&b, "  path:     %s\n", in.ArtifactPath)
-	fmt.Fprintf(&b, "  size:     %s\n", formatSize(in.Size))
+	fmt.Fprintf(&b, "  size:     %s\n", preflight.FormatBytes(in.Size))
 	fmt.Fprintf(&b, "  sha256:   %s (verify with: sha256sum)\n", in.SHA256)
 	fmt.Fprintf(&b, "  schema:   v%d\n", in.Manifest.SchemaVersion)
 	if in.LogPath != "" {
@@ -92,7 +99,10 @@ func Summarize(in SummaryInput) string {
 	writeRowsBlock(&b, in.Manifest.Counts)
 	b.WriteString("\n")
 
-	writeProvenanceBlock(&b, summarizeProvenance(in.Manifest.Provenance))
+	prov := summarizeProvenance(in.Manifest.Provenance)
+	prov.RateLimitWaits = in.RateLimitWaits
+	prov.RateLimitWaitSeconds = in.RateLimitWaitSeconds
+	writeProvenanceBlock(&b, prov)
 	b.WriteString("\n")
 
 	if len(in.PartialFails) > 0 {
@@ -137,10 +147,64 @@ func BuildRunSummary(in SummaryInput, ok bool) RunSummary {
 			SchemaVersion: in.Manifest.SchemaVersion,
 			LogPath:       in.LogPath,
 		},
-		Rows:       rows,
-		Provenance: summarizeProvenance(in.Manifest.Provenance),
-		Partial:    partial,
+		Rows: rows,
+		Provenance: func() SummaryProvenance {
+			p := summarizeProvenance(in.Manifest.Provenance)
+			p.RateLimitWaits = in.RateLimitWaits
+			p.RateLimitWaitSeconds = in.RateLimitWaitSeconds
+			return p
+		}(),
+		Partial: partial,
 	}
+}
+
+// InterruptSummaryInput collects what InterruptSummary needs to render the
+// stderr message produced when ctx is canceled mid-run.
+type InterruptSummaryInput struct {
+	Phase    string        // "clone", "extract", "postprocess"
+	Inflight []InflightJob // populated only for the "extract" phase
+	TempDir  string        // absolute path; "" if no temp dir was created
+	Cleaned  bool          // true when the temp dir was removed (false with --keep-clones)
+	ExitCode int           // 130 for graceful SIGINT
+}
+
+// InterruptSummary formats the stderr block printed on graceful Ctrl-C.
+// Pure: caller is responsible for assembling the input. The exact wording
+// is part of the CLI surface and is asserted in cmd/xray tests.
+func InterruptSummary(in InterruptSummaryInput) string {
+	var b strings.Builder
+
+	switch {
+	case in.Phase == "extract" && len(in.Inflight) > 0:
+		fmt.Fprintf(&b, "Interrupted at phase '%s' (%s in flight).\n",
+			in.Phase, formatInflight(in.Inflight))
+	case in.Phase != "":
+		fmt.Fprintf(&b, "Interrupted at phase '%s'.\n", in.Phase)
+	default:
+		fmt.Fprintln(&b, "Interrupted.")
+	}
+
+	switch {
+	case in.TempDir == "":
+		// Nothing to say about the temp dir — none was created.
+	case in.Cleaned:
+		fmt.Fprintf(&b, "Cleaned up temp directory %s.\n", in.TempDir)
+	default:
+		fmt.Fprintf(&b, "Temp directory %s preserved (--keep-clones).\n", in.TempDir)
+	}
+
+	fmt.Fprintln(&b, "No artifact produced. Re-run from scratch to retry; runs are non-incremental.")
+	fmt.Fprintf(&b, "Exit code: %d.\n", in.ExitCode)
+
+	return b.String()
+}
+
+func formatInflight(jobs []InflightJob) string {
+	parts := make([]string, 0, len(jobs))
+	for _, j := range jobs {
+		parts = append(parts, fmt.Sprintf("%s:%s", j.Repo, j.Connector))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ExtractPartialFailures walks the manifest's provenance for non-empty
@@ -236,6 +300,11 @@ func writeProvenanceBlock(b *strings.Builder, p SummaryProvenance) {
 	}
 	fmt.Fprintf(b, "  per-row errors:        %d%s\n", p.PerRowErrors, errNote)
 
+	rlNote := ""
+	if p.RateLimitWaitSeconds > 0 {
+		rlNote = fmt.Sprintf(" (total %ds)", p.RateLimitWaitSeconds)
+	}
+	fmt.Fprintf(b, "  rate-limit waits:      %d%s\n", p.RateLimitWaits, rlNote)
 	fmt.Fprintf(b, "  rate-limit truncated:  %d\n", p.RateLimitTruncated)
 	fmt.Fprintf(b, "  partial paginations:   %d\n", p.PartialPaginations)
 }
@@ -282,23 +351,6 @@ func formatDuration(d time.Duration) string {
 	}
 }
 
-func formatSize(n int64) string {
-	const (
-		kib = 1024
-		mib = 1024 * kib
-		gib = 1024 * mib
-	)
-	switch {
-	case n >= gib:
-		return fmt.Sprintf("%.1f GiB", float64(n)/float64(gib))
-	case n >= mib:
-		return fmt.Sprintf("%.1f MiB", float64(n)/float64(mib))
-	case n >= kib:
-		return fmt.Sprintf("%.1f KiB", float64(n)/float64(kib))
-	default:
-		return fmt.Sprintf("%d B", n)
-	}
-}
 
 func humanInt(n int) string {
 	if n < 0 {

@@ -84,6 +84,7 @@ Rows captured
 Provenance
   endpoints accessible:  4/5 (1 permission-gated, see manifest)
   per-row errors:        0
+  rate-limit waits:      0
   rate-limit truncated:  0
   partial paginations:   0
 

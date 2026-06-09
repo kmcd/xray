@@ -8,11 +8,35 @@
 package preflight
 
 import (
+	"fmt"
 	"sort"
 	"time"
 
 	"github.com/kmcd/xray/internal/config"
 )
+
+// FormatBytes renders a byte count using 1024-based units with the
+// matching binary unit labels (KiB / MiB / GiB) so the cost-preview's
+// number and the post-run summary's artifact-size both compute and
+// label the same way. Customers see one consistent format across both
+// commands instead of "500 MB" in check and "476.8 MiB" in summary.
+func FormatBytes(n int64) string {
+	const (
+		kib = 1024
+		mib = 1024 * kib
+		gib = 1024 * mib
+	)
+	switch {
+	case n >= gib:
+		return fmt.Sprintf("%.1f GiB", float64(n)/float64(gib))
+	case n >= mib:
+		return fmt.Sprintf("%.1f MiB", float64(n)/float64(mib))
+	case n >= kib:
+		return fmt.Sprintf("%.1f KiB", float64(n)/float64(kib))
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
+}
 
 // Calibration constants for the cost preview. These are deliberate
 // over-estimates so the preview never under-promises wall-clock to a

@@ -35,12 +35,37 @@ var ErrPartial = errors.New("run: one or more connectors or clones reported erro
 // to render the post-run summary block (issue #84). ArtifactPath is always
 // set when Run returns either nil or ErrPartial; the other fields are
 // derived from the same data the manifest records.
+//
+// On graceful interrupt (Run returns context.Canceled), ArtifactPath is ""
+// and the Interrupt* fields are populated so the cmd layer can render the
+// stderr summary.
 type Result struct {
 	ArtifactPath string
 	SHA256       string
 	Size         int64
 	Duration     time.Duration
 	Manifest     manifest.Manifest
+
+	// RateLimitWaits and RateLimitWaitSeconds are the cumulative wait
+	// count and total wait time across every connector's ratelimit
+	// transport, drained from the progress.RateLimitCounter that the CLI
+	// tees alongside the user-facing sink. Populated by the cmd layer
+	// after Run returns (Run itself does not aggregate the counter).
+	RateLimitWaits       int
+	RateLimitWaitSeconds int
+
+	// Interrupted is true iff Run returned because ctx was canceled.
+	Interrupted      bool
+	InterruptedPhase string        // "clone", "extract", "postprocess"
+	InflightJobs     []InflightJob // populated only during "extract" cancel
+	TempDir          string        // absolute path; non-empty whenever cleanup ran (or was skipped via KeepClones)
+}
+
+// InflightJob is one (repo, connector) pair that was being extracted when
+// ctx was canceled.
+type InflightJob struct {
+	Repo      string
+	Connector string
 }
 
 // Run is the entry point for `xray run`. It clones every repo, dispatches
@@ -73,12 +98,17 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (Result, error) 
 	if err != nil {
 		return Result{}, fmt.Errorf("run: create temp dir: %w", err)
 	}
+	if opts.OnTempDir != nil {
+		opts.OnTempDir(tmpDir)
+	}
 	keep := opts.KeepClones
 	defer func() {
 		if !keep {
 			_ = os.RemoveAll(tmpDir)
 		}
 	}()
+
+	inflight := newInflightTracker()
 
 	log.Info("run: start",
 		slog.String("run_id", runID),
@@ -87,48 +117,15 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (Result, error) 
 	)
 
 	git := &gitcli.Client{Log: log}
-
-	// 1. Clone each repo in parallel. Each goroutine writes into its own
-	// index slot so no mutex is needed on clones[]. Failures are recorded
-	// as provenance errors with a synthetic connector entry per failed repo
-	// so the manifest still records the failure.
-	repos := cfg.AllRepos()
-	clones := make([]cloned, len(repos))
-	cloneErrors := map[string]error{}
-
 	win := connector.Window{Start: cfg.Window.Start, End: cfg.Window.End}
 
-	var cloneWg sync.WaitGroup
-	for i, slug := range repos {
-		dest := filepath.Join(tmpDir, "clones", sanitizeSlug(slug))
-		if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
-			clones[i] = cloned{repo: connector.Repo{Slug: slug, Team: cfg.RepoToTeam(slug)}, err: err}
-			continue
-		}
-		cloneWg.Add(1)
-		go func(i int, slug, dest string) {
-			defer cloneWg.Done()
-			log.Info("run: cloning", slog.String("repo", slug))
-			sink.Emit(progress.Event{
-				Kind: progress.PhaseStart, Repo: slug, Connector: "clone", Phase: "clone", At: time.Now().UTC(),
-			})
-			clones[i] = cloneOneRepo(ctx, git, log, slug, dest, cfg, opts, win)
-			ev := progress.Event{Repo: slug, Connector: "clone", Phase: "clone", At: time.Now().UTC()}
-			if clones[i].err != nil {
-				ev.Kind = progress.PhaseError
-				ev.Message = clones[i].err.Error()
-			} else {
-				ev.Kind = progress.PhaseDone
-			}
-			sink.Emit(ev)
-		}(i, slug, dest)
-	}
-	cloneWg.Wait()
+	// 1. Clone each repo in parallel. Failures are recorded as provenance
+	// errors with a synthetic connector entry per failed repo so the manifest
+	// still records the failure.
+	clones, cloneErrors := clonePhase(ctx, cfg, opts, log, sink, tmpDir, git, win)
 
-	for _, c := range clones {
-		if c.err != nil {
-			cloneErrors[c.repo.Slug] = c.err
-		}
+	if err := ctx.Err(); err != nil {
+		return interruptedResult(tmpDir, "clone", nil), err
 	}
 
 	// 2. Open store.
@@ -197,7 +194,9 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (Result, error) 
 					sink.Emit(progress.Event{
 						Kind: progress.PhaseStart, Repo: j.repo.Slug, Connector: j.conn.Name(), Phase: j.conn.Name(), At: time.Now().UTC(),
 					})
+					inflight.add(j.repo.Slug, j.conn.Name())
 					p := j.conn.Extract(ctx, j.repo, win, st)
+					inflight.done(j.repo.Slug, j.conn.Name())
 					addProv(p)
 					emitExtractResult(sink, j.repo.Slug, j.conn.Name(), p)
 				}
@@ -206,10 +205,11 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (Result, error) 
 		for _, j := range jobs {
 			select {
 			case <-ctx.Done():
+				snap := inflight.snapshot()
 				close(ch)
 				wg.Wait()
 				_ = st.Close()
-				return Result{}, ctx.Err()
+				return interruptedResult(tmpDir, "extract", snap), ctx.Err()
 			case ch <- j:
 			}
 		}
@@ -217,30 +217,24 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (Result, error) 
 		wg.Wait()
 	}
 
+	if err := ctx.Err(); err != nil {
+		_ = st.Close()
+		return interruptedResult(tmpDir, "extract", inflight.snapshot()), err
+	}
+
 	addProv(runPostprocess(ctx, st, log, sink, win))
+
+	if err := ctx.Err(); err != nil {
+		_ = st.Close()
+		return interruptedResult(tmpDir, "postprocess", nil), err
+	}
 
 	// 4. Build manifest.
 	completedAt := time.Now().UTC()
 	m := buildManifest(opts.ToolVersion, runID, startedAt, completedAt, cfg, clones, provs, st, log)
-
-	manifestPath := filepath.Join(tmpDir, "manifest.json")
-	// #nosec G304 -- manifestPath is under the per-run temp dir.
-	mf, err := os.Create(manifestPath)
+	manifestPath, err := writeManifestAndCloseStore(tmpDir, m, st)
 	if err != nil {
-		_ = st.Close()
-		return Result{}, fmt.Errorf("run: create manifest: %w", err)
-	}
-	if _, err := m.WriteTo(mf); err != nil {
-		_ = mf.Close()
-		_ = st.Close()
-		return Result{}, fmt.Errorf("run: write manifest: %w", err)
-	}
-	if err := mf.Close(); err != nil {
-		_ = st.Close()
-		return Result{}, fmt.Errorf("run: close manifest: %w", err)
-	}
-	if err := st.Close(); err != nil {
-		return Result{}, fmt.Errorf("run: close store: %w", err)
+		return Result{}, err
 	}
 
 	// 5. Archive.
@@ -279,6 +273,86 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (Result, error) 
 		return res, ErrPartial
 	}
 	return res, nil
+}
+
+// writeManifestAndCloseStore serialises the manifest under tmpDir and
+// closes the SQLite store. Errors are wrapped with the "run:" boundary
+// prefix; the store is always closed even when manifest write fails so
+// no SQLite file handle leaks if archive packaging is then skipped.
+func writeManifestAndCloseStore(tmpDir string, m *manifest.Manifest, st *store.Store) (string, error) {
+	manifestPath := filepath.Join(tmpDir, "manifest.json")
+	// #nosec G304 -- manifestPath is under the per-run temp dir.
+	mf, err := os.Create(manifestPath)
+	if err != nil {
+		_ = st.Close()
+		return "", fmt.Errorf("run: create manifest: %w", err)
+	}
+	if _, err := m.WriteTo(mf); err != nil {
+		_ = mf.Close()
+		_ = st.Close()
+		return "", fmt.Errorf("run: write manifest: %w", err)
+	}
+	if err := mf.Close(); err != nil {
+		_ = st.Close()
+		return "", fmt.Errorf("run: close manifest: %w", err)
+	}
+	if err := st.Close(); err != nil {
+		return "", fmt.Errorf("run: close store: %w", err)
+	}
+	return manifestPath, nil
+}
+
+// clonePhase fans out one goroutine per repo to clone in parallel. Each
+// goroutine writes into its own index slot so no mutex is needed on clones[].
+// Returns the populated clone results and a map of slug -> clone error for
+// repos that failed to clone (used downstream to emit synthetic provenance).
+func clonePhase(
+	ctx context.Context,
+	cfg *config.Config,
+	opts Options,
+	log *slog.Logger,
+	sink progress.Sink,
+	tmpDir string,
+	git *gitcli.Client,
+	win connector.Window,
+) ([]cloned, map[string]error) {
+	repos := cfg.AllRepos()
+	clones := make([]cloned, len(repos))
+	cloneErrors := map[string]error{}
+
+	var wg sync.WaitGroup
+	for i, slug := range repos {
+		dest := filepath.Join(tmpDir, "clones", sanitizeSlug(slug))
+		if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
+			clones[i] = cloned{repo: connector.Repo{Slug: slug, Team: cfg.RepoToTeam(slug)}, err: err}
+			continue
+		}
+		wg.Add(1)
+		go func(i int, slug, dest string) {
+			defer wg.Done()
+			log.Info("run: cloning", slog.String("repo", slug))
+			sink.Emit(progress.Event{
+				Kind: progress.PhaseStart, Repo: slug, Connector: "clone", Phase: "clone", At: time.Now().UTC(),
+			})
+			clones[i] = cloneOneRepo(ctx, git, log, slug, dest, cfg, opts, win)
+			ev := progress.Event{Repo: slug, Connector: "clone", Phase: "clone", At: time.Now().UTC()}
+			if clones[i].err != nil {
+				ev.Kind = progress.PhaseError
+				ev.Message = clones[i].err.Error()
+			} else {
+				ev.Kind = progress.PhaseDone
+			}
+			sink.Emit(ev)
+		}(i, slug, dest)
+	}
+	wg.Wait()
+
+	for _, c := range clones {
+		if c.err != nil {
+			cloneErrors[c.repo.Slug] = c.err
+		}
+	}
+	return clones, cloneErrors
 }
 
 // runPostprocess runs cross-cutting post-extraction linkage. Errors are
