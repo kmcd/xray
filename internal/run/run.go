@@ -217,31 +217,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (Result, error) 
 		wg.Wait()
 	}
 
-	// 3b. Cross-cutting post-extraction linkage. Errors here are recorded
-	// as a synthetic "postprocess" provenance entry but do NOT abort the
-	// run — the artifact still ships with whatever extraction produced.
-	ppProv := connector.NewProvenance("postprocess", "", win)
-	sink.Emit(progress.Event{
-		Kind: progress.PhaseStart, Phase: "postprocess", Message: "postprocess: linking", At: time.Now().UTC(),
-	})
-	if stats, err := postprocess.Run(ctx, st.DB(), log); err != nil {
-		log.Error("run: postprocess failed", slog.String("error", err.Error()))
-		ppProv.Errors["postprocess"] = err.Error()
-		ppProv.PaginationComplete = false
-		addProv(ppProv)
-		sink.Emit(progress.Event{
-			Kind: progress.PhaseError, Phase: "postprocess", Message: err.Error(), At: time.Now().UTC(),
-		})
-	} else {
-		log.Info("run: postprocess",
-			slog.Int("incidents_linked", stats.IncidentsLinked),
-			slog.Int("deploys_rolled_back", stats.DeploysRolledBack),
-			slog.Int("landed_via_pr_matched", stats.LandedViaPRMatched),
-		)
-		sink.Emit(progress.Event{
-			Kind: progress.PhaseDone, Phase: "postprocess", At: time.Now().UTC(),
-		})
-	}
+	addProv(runPostprocess(ctx, st, log, sink, win))
 
 	// 4. Build manifest.
 	completedAt := time.Now().UTC()
@@ -303,6 +279,35 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (Result, error) 
 		return res, ErrPartial
 	}
 	return res, nil
+}
+
+// runPostprocess runs cross-cutting post-extraction linkage. Errors are
+// recorded as a synthetic "postprocess" provenance entry but do NOT abort
+// the run — the artifact still ships with whatever extraction produced.
+func runPostprocess(ctx context.Context, st *store.Store, log *slog.Logger, sink progress.Sink, win connector.Window) connector.Provenance {
+	p := connector.NewProvenance("postprocess", "", win)
+	sink.Emit(progress.Event{
+		Kind: progress.PhaseStart, Phase: "postprocess", Message: "postprocess: linking", At: time.Now().UTC(),
+	})
+	stats, err := postprocess.Run(ctx, st.DB(), log)
+	if err != nil {
+		log.Error("run: postprocess failed", slog.String("error", err.Error()))
+		p.Errors["postprocess"] = err.Error()
+		p.PaginationComplete = false
+		sink.Emit(progress.Event{
+			Kind: progress.PhaseError, Phase: "postprocess", Message: err.Error(), At: time.Now().UTC(),
+		})
+		return p
+	}
+	log.Info("run: postprocess",
+		slog.Int("incidents_linked", stats.IncidentsLinked),
+		slog.Int("deploys_rolled_back", stats.DeploysRolledBack),
+		slog.Int("landed_via_pr_matched", stats.LandedViaPRMatched),
+	)
+	sink.Emit(progress.Event{
+		Kind: progress.PhaseDone, Phase: "postprocess", At: time.Now().UTC(),
+	})
+	return p
 }
 
 func sanitizeSlug(slug string) string {
