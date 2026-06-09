@@ -60,8 +60,8 @@ func (c *Connector) deploys(
 
 			dep := mapDeploy(d, state, repo.Slug, createdAt)
 			if err := sink.InsertDeploy(dep); err != nil {
-				prov.Errors["deploys"] = err.Error()
-				return
+				prov.Errors["deploys:"+dep.ID] = err.Error()
+				continue
 			}
 			prov.RowsReturned["deploys"]++
 		}

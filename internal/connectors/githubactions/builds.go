@@ -60,8 +60,8 @@ func (c *Connector) builds(
 				continue
 			}
 			if err := sink.InsertBuild(b); err != nil {
-				prov.Errors["builds"] = err.Error()
-				return
+				prov.Errors["builds:"+b.ID] = err.Error()
+				continue
 			}
 			prov.RowsReturned["builds"]++
 
@@ -112,8 +112,8 @@ func (c *Connector) jobsForRun(
 			}
 			bj := mapBuildJob(j, runID, repoSlug, runAttempt(run))
 			if err := sink.InsertBuildJob(bj); err != nil {
-				prov.Errors["build_jobs"] = err.Error()
-				return
+				prov.Errors[fmt.Sprintf("build_jobs:%d:%s", runID, bj.Name)] = err.Error()
+				continue
 			}
 			prov.RowsReturned["build_jobs"]++
 		}

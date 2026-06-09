@@ -89,8 +89,11 @@ func markerToDeploy(m marker, repoSlug string) model.Deploy {
 }
 
 // extractDeploys lists markers, filters to the window, and emits one Deploy
-// per in-window marker. Returns (rowsEmitted, paginationComplete, error).
-func (c *Connector) extractDeploys(ctx context.Context, repoSlug string, window connector.Window, sink connector.Sink) (int, bool, error) {
+// per in-window marker. Returns (rowsEmitted, paginationComplete, error) where
+// error is non-nil only for the list-call / context failures. Per-row insert
+// failures are recorded into prov.Errors with per-id keys and do not abort
+// the walk.
+func (c *Connector) extractDeploys(ctx context.Context, repoSlug string, window connector.Window, sink connector.Sink, prov *connector.Provenance) (int, bool, error) {
 	markers, err := c.listMarkers(ctx)
 	if err != nil {
 		return 0, false, err
@@ -110,7 +113,8 @@ func (c *Connector) extractDeploys(ctx context.Context, repoSlug string, window 
 		}
 		d := markerToDeploy(m, repoSlug)
 		if err := sink.InsertDeploy(d); err != nil {
-			return rows, true, err
+			prov.Errors["deploys:"+m.ID] = err.Error()
+			continue
 		}
 		rows++
 	}

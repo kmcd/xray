@@ -33,12 +33,15 @@ type bugsnagError struct {
 // listErrors paginates GET /projects/{project_id}/errors over the window and
 // emits one Incident per error whose first_seen falls inside the window.
 // Returns the number of incidents emitted and whether pagination completed.
+// Per-row insert failures are recorded under prov.Errors with a per-incident
+// key and do not abort the walk.
 func (c *Connector) listErrors(
 	ctx context.Context,
 	projectID string,
 	repoSlug string,
 	window connector.Window,
 	sink connector.Sink,
+	prov *connector.Provenance,
 ) (rows int, paginationComplete bool, err error) {
 	q := url.Values{}
 	q.Set("filters[event.since]", window.Start.UTC().Format(time.RFC3339))
@@ -83,7 +86,8 @@ func (c *Connector) listErrors(
 			}
 			inc := toIncident(e, repoSlug)
 			if insErr := sink.InsertIncident(inc); insErr != nil {
-				return rows, false, fmt.Errorf("bugsnag: insert incident id=%s: %w", e.ID, insErr)
+				prov.Errors["incidents:"+e.ID] = insErr.Error()
+				continue
 			}
 			rows++
 		}

@@ -24,7 +24,7 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 		return prov
 	}
 
-	deploys, complete, err := c.extractDeploys(ctx, repo.Slug, window, sink)
+	deploys, complete, err := c.extractDeploys(ctx, repo.Slug, window, sink, &prov)
 	prov.RowsReturned["deploys"] = deploys
 	if !complete {
 		prov.PaginationComplete = false

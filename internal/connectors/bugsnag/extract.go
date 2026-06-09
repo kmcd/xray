@@ -23,7 +23,7 @@ func (c *Connector) Extract(
 		if mappedSlug != repo.Slug {
 			continue
 		}
-		rows, complete, err := c.listErrors(ctx, projectID, repo.Slug, window, sink)
+		rows, complete, err := c.listErrors(ctx, projectID, repo.Slug, window, sink, &prov)
 		prov.RowsReturned["incidents"] += rows
 		if !complete {
 			prov.PaginationComplete = false
