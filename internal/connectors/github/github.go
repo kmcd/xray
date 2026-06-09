@@ -63,10 +63,17 @@ type Connector struct {
 
 // prPrefetchResult holds the eventually-available output of a single
 // Prefetch call. consumePRPrefetch returns nodes once done is closed.
+//
+// nextCursor is the GraphQL cursor of the page that failed when err is
+// non-nil. It lets extractPRs resume the walk live from where Prefetch
+// died, so a transient blip past the retry budget doesn't drop the
+// unfetched tail. Empty when err is nil (walk completed) or when the
+// failure happened before any page was attempted.
 type prPrefetchResult struct {
-	nodes []prGraph
-	err   error
-	done  chan struct{}
+	nodes      []prGraph
+	nextCursor string
+	err        error
+	done       chan struct{}
 }
 
 // costInterceptor wraps an http.RoundTripper and calls onCost after every
@@ -214,18 +221,20 @@ func (c *Connector) Prefetch(ctx context.Context, slug string, window connector.
 	c.prefetchData[slug] = r
 	c.prefetchMu.Unlock()
 
-	r.nodes, r.err = c.fetchPRs(ctx, connector.Repo{Slug: slug}, window)
+	r.nodes, r.nextCursor, r.err = c.fetchPRs(ctx, connector.Repo{Slug: slug}, window, "")
 	close(r.done)
 	return r.err
 }
 
-// consumePRPrefetch returns (nodes, cached, err) for the prefetch stashed
-// by Prefetch for slug. cached=false means no prefetch ran for this slug
-// — caller falls back to a live fetch. The result struct is removed from
-// the map on consumption so a subsequent Extract for the same slug
-// (re-run with --keep-clones, etc.) hits the live path rather than
-// reusing stale nodes.
-func (c *Connector) consumePRPrefetch(ctx context.Context, slug string) ([]prGraph, bool, error) {
+// consumePRPrefetch returns (nodes, nextCursor, cached, err) for the
+// prefetch stashed by Prefetch for slug. cached=false means no prefetch
+// ran for this slug — caller falls back to a live fetch. nextCursor is
+// non-empty when the prefetch errored mid-walk and a live fetch should
+// resume from that cursor instead of restarting. The result struct is
+// removed from the map on consumption so a subsequent Extract for the
+// same slug (re-run with --keep-clones, etc.) hits the live path rather
+// than reusing stale nodes.
+func (c *Connector) consumePRPrefetch(ctx context.Context, slug string) ([]prGraph, string, bool, error) {
 	c.prefetchMu.Lock()
 	r, ok := c.prefetchData[slug]
 	if ok {
@@ -233,13 +242,13 @@ func (c *Connector) consumePRPrefetch(ctx context.Context, slug string) ([]prGra
 	}
 	c.prefetchMu.Unlock()
 	if !ok {
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	select {
 	case <-r.done:
-		return r.nodes, true, r.err
+		return r.nodes, r.nextCursor, true, r.err
 	case <-ctx.Done():
-		return nil, true, ctx.Err()
+		return nil, "", true, ctx.Err()
 	}
 }
 

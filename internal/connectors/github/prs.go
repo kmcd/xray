@@ -1,10 +1,12 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -204,11 +206,22 @@ var (
 // extractPRs is the PR-stage entry point called by Extract. It prefers a
 // prefetch cache hit (populated by Prefetch during the run.go clone phase,
 // #71) and falls back to a live fetch when no cached nodes are available.
-// Emission of rows runs unconditionally.
+// When the cached Prefetch errored mid-walk and stashed a resume cursor,
+// extractPRs continues the walk live from that cursor so the unfetched
+// tail isn't dropped. Emission of rows runs unconditionally.
 func (c *Connector) extractPRs(ctx context.Context, repo connector.Repo, window connector.Window, sink connector.Sink, prov *connector.Provenance) {
-	nodes, cached, err := c.consumePRPrefetch(ctx, repo.Slug)
-	if !cached {
-		nodes, err = c.fetchPRs(ctx, repo, window)
+	nodes, nextCursor, cached, err := c.consumePRPrefetch(ctx, repo.Slug)
+	switch {
+	case !cached:
+		nodes, _, err = c.fetchPRs(ctx, repo, window, "")
+	case err != nil && nextCursor != "" && ctx.Err() == nil:
+		c.log.Warn("github: prefetch errored mid-walk, resuming live from cursor",
+			slog.String("repo", repo.Slug),
+			slog.String("error", err.Error()),
+		)
+		moreNodes, _, liveErr := c.fetchPRs(ctx, repo, window, nextCursor)
+		nodes = append(nodes, moreNodes...)
+		err = liveErr
 	}
 	if err != nil {
 		prov.Errors["prs"] = err.Error()
@@ -217,8 +230,7 @@ func (c *Connector) extractPRs(ctx context.Context, repo connector.Repo, window 
 			slog.String("error", err.Error()),
 		)
 		// Continue to emission: any nodes collected before the error are
-		// still emit-worthy. fetchPRs returns whatever it gathered up to
-		// the point of failure.
+		// still emit-worthy.
 	}
 	if ctx.Err() != nil {
 		prov.PaginationComplete = false
@@ -228,17 +240,24 @@ func (c *Connector) extractPRs(ctx context.Context, repo connector.Repo, window 
 }
 
 // fetchPRs walks prListQuery pages and returns in-window PR nodes. No row
-// emission happens here. Same window-filter rules as before: stop paging
-// when UpdatedAt < window.Start (PRs are ordered UPDATED_AT desc); skip
-// PRs that opened after window.End; skip PRs that closed before window.Start.
-// Returns the partial collection plus the first GraphQL error on failure
-// so callers can emit whatever did come back.
-func (c *Connector) fetchPRs(ctx context.Context, repo connector.Repo, window connector.Window) ([]prGraph, error) {
+// emission happens here. Same window-filter rules: stop paging when
+// UpdatedAt < window.Start (PRs are ordered UPDATED_AT desc); skip PRs
+// that opened after window.End; skip PRs that closed before window.Start.
+//
+// startCursor is the GraphQL cursor to begin the walk at; empty means
+// page 1. Returns (collected nodes, resumeCursor, err): resumeCursor is
+// the cursor of the page that failed (so a caller can retry from that
+// exact point) and is empty when the walk completed cleanly or hit
+// stopPaging. On terminal failure, the caller gets whatever nodes did
+// come back; resumeCursor lets `extractPRs` continue the walk live when
+// Prefetch errored mid-stream.
+func (c *Connector) fetchPRs(ctx context.Context, repo connector.Repo, window connector.Window, startCursor string) ([]prGraph, string, error) {
 	owner, name, ok := splitSlug(repo.Slug)
 	if !ok {
-		return nil, nil
+		return nil, "", nil
 	}
 
+	cursor := startCursor
 	vars := map[string]any{
 		"owner": githubv4.String(owner),
 		"name":  githubv4.String(name),
@@ -249,11 +268,16 @@ func (c *Connector) fetchPRs(ctx context.Context, repo connector.Repo, window co
 	var nodes []prGraph
 	for {
 		if ctx.Err() != nil {
-			return nodes, ctx.Err()
+			return nodes, cursor, ctx.Err()
+		}
+		if cursor == "" {
+			vars["after"] = (*githubv4.String)(nil)
+		} else {
+			vars["after"] = githubv4.NewString(githubv4.String(cursor))
 		}
 		var q prListQuery
 		if err := c.queryWithEOFRetry(ctx, &q, vars); err != nil {
-			return nodes, err
+			return nodes, cursor, err
 		}
 		stopPaging := false
 		for _, p := range q.Repository.PullRequests.Nodes {
@@ -271,12 +295,10 @@ func (c *Connector) fetchPRs(ctx context.Context, repo connector.Repo, window co
 			nodes = append(nodes, p)
 		}
 		if stopPaging || !bool(q.Repository.PullRequests.PageInfo.HasNextPage) {
-			break
+			return nodes, "", nil
 		}
-		end := q.Repository.PullRequests.PageInfo.EndCursor
-		vars["after"] = githubv4.NewString(end)
+		cursor = string(q.Repository.PullRequests.PageInfo.EndCursor)
 	}
-	return nodes, nil
 }
 
 // queryWithEOFRetry runs c.gql.Query with bounded retries when the error is
@@ -322,6 +344,56 @@ func (c *Connector) queryWithEOFRetry(ctx context.Context, q any, vars map[strin
 		case <-ctx.Done():
 			t.Stop()
 			return ctx.Err()
+		case <-t.C:
+		}
+	}
+}
+
+// doJSONPOSTWithEOFRetry POSTs body to url as application/json with bounded
+// retries on transient mid-response EOFs. The request is rebuilt each
+// attempt from the captured body so retries are body-safe. Used by the
+// enrich.go raw-POST path; the gql.Query path uses queryWithEOFRetry.
+//
+// Callers own response.Body close as usual on a non-nil response.
+func (c *Connector) doJSONPOSTWithEOFRetry(ctx context.Context, url string, body []byte) (*http.Response, error) {
+	const maxAttempts = 3
+	const budget = 60 * time.Second
+	var spent time.Duration
+	bo := backoff.NewExponentialBackOff()
+	bo.InitialInterval = 500 * time.Millisecond
+	bo.MaxInterval = 10 * time.Second
+	bo.MaxElapsedTime = 0
+	bo.Reset()
+
+	for attempt := 1; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		resp, err := c.httpClient.Do(req)
+		if err == nil {
+			return resp, nil
+		}
+		if attempt >= maxAttempts || !isTransientEOF(err) {
+			return nil, err
+		}
+		wait := bo.NextBackOff()
+		if spent+wait > budget {
+			return nil, err
+		}
+		spent += wait
+		c.log.Warn("github: http POST transient EOF, retrying",
+			slog.Int("attempt", attempt),
+			slog.Duration("wait", wait),
+			slog.String("error", err.Error()),
+		)
+		t := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return nil, ctx.Err()
 		case <-t.C:
 		}
 	}

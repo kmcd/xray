@@ -100,7 +100,7 @@ func (c *Connector) fetchBranchProtectionRules(ctx context.Context, owner, name 
 			return
 		}
 		var q branchProtectionQuery
-		if err := c.gql.Query(ctx, &q, vars); err != nil {
+		if err := c.queryWithEOFRetry(ctx, &q, vars); err != nil {
 			prov.Endpoints["branch_protection"] = connector.EndpointStatus{
 				Accessible: false,
 				Reason:     err.Error(),

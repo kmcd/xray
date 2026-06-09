@@ -1,13 +1,11 @@
 package github
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"strings"
 	"time"
 )
@@ -119,14 +117,7 @@ func (c *Connector) enrichOneBatch(ctx context.Context, owner, name string, shas
 		return fmt.Errorf("marshal: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.graphqlURL, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doJSONPOSTWithEOFRetry(ctx, c.graphqlURL, body)
 	if err != nil {
 		return fmt.Errorf("do: %w", err)
 	}

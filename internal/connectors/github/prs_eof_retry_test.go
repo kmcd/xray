@@ -42,7 +42,7 @@ func TestFetchPRs_EOFRetryThenSuccess(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestConnector(t, srv)
-	nodes, err := c.fetchPRs(context.Background(), connector.Repo{Slug: "kmcd/foo"}, standardWindow())
+	nodes, _, err := c.fetchPRs(context.Background(), connector.Repo{Slug: "kmcd/foo"}, standardWindow(), "")
 	if err != nil {
 		t.Fatalf("fetchPRs: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestFetchPRs_EOFRetryExhausted(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestConnector(t, srv)
-	nodes, err := c.fetchPRs(context.Background(), connector.Repo{Slug: "kmcd/foo"}, standardWindow())
+	nodes, _, err := c.fetchPRs(context.Background(), connector.Repo{Slug: "kmcd/foo"}, standardWindow(), "")
 	if err == nil {
 		t.Fatalf("fetchPRs: expected error, got nil")
 	}
@@ -123,6 +123,109 @@ func TestCostInterceptor_PropagatesReadError(t *testing.T) {
 	}
 	if !isTransientEOF(err) {
 		t.Errorf("error is not transient EOF: %v", err)
+	}
+}
+
+// TestExtractPRs_CursorHandoff exercises the prefetch-failed-mid-walk →
+// extractPRs-resumes-live path. Sequence: page 1 succeeds via Prefetch,
+// page 2 truncates 3× (exhausting queryWithEOFRetry inside Prefetch),
+// extractPRs then live-fetches page 2 from the stashed cursor and the
+// server returns a clean page 2 + page 3 marker. The full PR set must
+// reach the sink even though Prefetch gave up.
+func TestExtractPRs_CursorHandoff(t *testing.T) {
+	var calls atomic.Int32
+	page1JSON := `{"data":{"repository":{"pullRequests":{` +
+		`"pageInfo":{"endCursor":"c1","hasNextPage":true},` +
+		`"nodes":[{"number":1,"title":"p1","body":"b","createdAt":"2025-03-01T00:00:00Z","updatedAt":"2025-03-02T00:00:00Z","author":{"login":"a"}}]}}}}`
+	page2JSON := `{"data":{"repository":{"pullRequests":{` +
+		`"pageInfo":{"endCursor":"","hasNextPage":false},` +
+		`"nodes":[{"number":2,"title":"p2","body":"b","createdAt":"2025-03-03T00:00:00Z","updatedAt":"2025-03-04T00:00:00Z","author":{"login":"a"}}]}}}}`
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
+		n := calls.Add(1)
+		switch {
+		case n == 1:
+			// Prefetch page 1: clean.
+			_, _ = io.WriteString(w, page1JSON)
+		case n >= 2 && n <= 4:
+			// Prefetch page 2 attempts (3× retries inside queryWithEOFRetry).
+			truncateMidBody(t, w)
+		case n == 5:
+			// extractPRs resume: must include cursor "c1" in body.
+			if !graphqlBodyContains(r, "c1") {
+				t.Errorf("resume request missing cursor c1; body did not contain it")
+			}
+			_, _ = io.WriteString(w, page2JSON)
+		default:
+			// REST follow-up calls from emitPRs (template, /pulls/N, etc.).
+			emptyJSONOK(w, r)
+		}
+	})
+	// REST endpoints reachable from emitPR.
+	mux.HandleFunc("/repos/kmcd/foo/contents/.github/PULL_REQUEST_TEMPLATE.md", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	})
+	mux.HandleFunc("/repos/kmcd/foo/pulls/", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/reviews"), strings.HasSuffix(r.URL.Path, "/comments"):
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"number":1,"merged":false}`))
+	})
+	mux.HandleFunc("/repos/kmcd/foo/issues/", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestConnector(t, srv)
+	if err := c.Prefetch(context.Background(), "kmcd/foo", standardWindow()); err == nil {
+		t.Fatalf("Prefetch: expected EOF error after retry budget; got nil")
+	}
+	sink, prov := runExtractPRs(t, c, "kmcd/foo", standardWindow())
+
+	if len(sink.prs) != 2 {
+		t.Fatalf("sink.prs = %d, want 2 (page 1 from prefetch + page 2 from resume)", len(sink.prs))
+	}
+	if _, recorded := prov.Errors["prs"]; recorded {
+		t.Errorf("prov.Errors[prs] should be empty after successful resume; got %q", prov.Errors["prs"])
+	}
+}
+
+// TestPaginatePRReviewsOverflow_EOFRetry verifies that the overflow review
+// pagination path retries on transient EOF (it shares the queryWithEOFRetry
+// path with fetchPRs after the #80 follow-up).
+func TestPaginatePRReviewsOverflow_EOFRetry(t *testing.T) {
+	var calls atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/graphql", func(w http.ResponseWriter, _ *http.Request) {
+		n := calls.Add(1)
+		if n == 1 {
+			truncateMidBody(t, w)
+			return
+		}
+		_, _ = io.WriteString(w, `{"data":{"repository":{"pullRequest":{"reviews":{`+
+			`"pageInfo":{"endCursor":"","hasNextPage":false},`+
+			`"nodes":[{"state":"APPROVED","submittedAt":"2025-03-05T00:00:00Z","body":"lgtm","author":{"login":"r"}}]}}}}}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestConnector(t, srv)
+	sink := &memSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
+	got := c.paginatePRReviewsOverflow(context.Background(), "kmcd", "foo", 1, "kmcd/foo", "c1", sink, &prov)
+	if got == nil {
+		t.Fatalf("expected non-nil first-submitted time after successful retry")
+	}
+	if calls.Load() != 2 {
+		t.Errorf("server calls = %d, want 2 (one EOF + one retry)", calls.Load())
+	}
+	if v, ok := prov.Errors["reviews"]; ok && v != "" {
+		t.Errorf("prov.Errors[reviews] should be empty after retry succeeded; got %q", v)
 	}
 }
 

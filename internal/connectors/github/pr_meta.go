@@ -115,7 +115,7 @@ func (c *Connector) paginatePRTimelineOverflow(ctx context.Context, owner, name 
 			"number": githubv4.Int(int32(number)),
 			"after":  githubv4.String(cursor),
 		}
-		if err := c.gql.Query(ctx, &q, vars); err != nil {
+		if err := c.queryWithEOFRetry(ctx, &q, vars); err != nil {
 			if prov.Errors["pr_review_requests"] == "" {
 				prov.Errors["pr_review_requests"] = err.Error()
 			}
