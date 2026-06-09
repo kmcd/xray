@@ -19,7 +19,7 @@ func newValidateCmd() *cobra.Command {
 			cfg, meta, err := config.Load(path)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %v\n", path, err)
-				return silentCode(errors.New("config load failed"), 2)
+				return silentCode(errors.New("config load failed"), 1)
 			}
 			diags := config.Validate(cfg, meta, path)
 			if len(diags) == 0 {
@@ -29,7 +29,7 @@ func newValidateCmd() *cobra.Command {
 			for _, d := range diags {
 				fmt.Fprintln(cmd.ErrOrStderr(), d.Error())
 			}
-			return silentCode(errors.New("validation failed"), 2)
+			return silentCode(errors.New("validation failed"), 1)
 		},
 	}
 }

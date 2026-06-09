@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -12,6 +13,9 @@ import (
 	"github.com/kmcd/xray/internal/config"
 	"github.com/kmcd/xray/internal/run"
 )
+
+// nowUTC is overridden in tests for deterministic JSON output.
+var nowUTC = func() time.Time { return time.Now().UTC() }
 
 type runOpts struct {
 	out        string
@@ -30,17 +34,23 @@ func newRunCmd() *cobra.Command {
 			path := args[0]
 			errOut := cmd.ErrOrStderr()
 
+			mode, err := ResolveMode(flagOutput, flagQuiet)
+			if err != nil {
+				// Already reported by PersistentPreRunE; defensive only.
+				return silentCode(err, 1)
+			}
+
 			cfg, meta, err := config.Load(path)
 			if err != nil {
 				fmt.Fprintf(errOut, "%s: %v\n", path, err)
-				return silentCode(errors.New("config load failed"), 2)
+				return silentCode(errors.New("config load failed"), 1)
 			}
 			diags := config.Validate(cfg, meta, path)
 			if len(diags) > 0 {
 				for _, d := range diags {
 					fmt.Fprintln(errOut, d.Error())
 				}
-				return silentCode(errors.New("config invalid"), 2)
+				return silentCode(errors.New("config invalid"), 1)
 			}
 
 			outPath := opts.out
@@ -49,7 +59,8 @@ func newRunCmd() *cobra.Command {
 					time.Now().UTC().Format("20060102T150405Z"))
 			}
 
-			logger := run.NewLogger(flagVerbose, flagQuiet)
+			loggerQuiet := flagQuiet || mode == ModeQuiet || mode == ModeJSON
+			logger := run.NewLogger(flagVerbose, loggerQuiet)
 			if !opts.noRunLog {
 				logPath := strings.TrimSuffix(outPath, ".tar.gz") + ".log"
 				// #nosec G304 -- logPath derived from user-supplied --out; O_APPEND preserves prior runs.
@@ -58,7 +69,7 @@ func newRunCmd() *cobra.Command {
 					fmt.Fprintf(errOut, "warn: could not create run log %s: %v\n", logPath, ferr)
 				} else {
 					defer lf.Close()
-					logger = run.NewLogger(flagVerbose, flagQuiet, lf)
+					logger = run.NewLogger(flagVerbose, loggerQuiet, lf)
 				}
 			}
 
@@ -77,10 +88,18 @@ func newRunCmd() *cobra.Command {
 				Logger:      logger,
 				ToolVersion: version,
 			})
-			if err != nil {
-				return fmt.Errorf("run: %w", err)
+			switch {
+			case errors.Is(err, run.ErrPartial):
+				if mode != ModeQuiet && mode != ModeJSON {
+					fmt.Fprintf(errOut, "run: %v\n", err)
+				}
+				emitRunSummary(cmd.OutOrStdout(), mode, artifact, 2)
+				return silentCode(err, 2)
+			case err != nil:
+				fmt.Fprintf(errOut, "run: %v\n", err)
+				return silentCode(err, 3)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\n", artifact)
+			emitRunSummary(cmd.OutOrStdout(), mode, artifact, 0)
 			return nil
 		},
 	}
@@ -89,4 +108,27 @@ func newRunCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.keepClones, "keep-clones", false, "skip cleanup of temp clones (debugging)")
 	cmd.Flags().BoolVar(&opts.noRunLog, "no-run-log", false, "disable run log file (mirrors stderr output alongside the artifact by default)")
 	return cmd
+}
+
+// emitRunSummary writes the final per-mode output line(s) for a run.
+// ModeAuto / ModeLog: the historical "wrote <path>" line on stdout.
+// ModeQuiet: bare artifact path on stdout, nothing else.
+// ModeJSON: one SummaryEvent NDJSON line on stdout. The full progress
+// event stream (phase_start, phase_progress) lands with #81.
+func emitRunSummary(w io.Writer, mode Mode, artifact string, exitCode int) {
+	if artifact == "" {
+		return
+	}
+	switch mode {
+	case ModeQuiet:
+		fmt.Fprintln(w, artifact)
+	case ModeJSON:
+		_ = EmitSummary(w, SummaryEvent{
+			TS:       nowUTC().Format(time.RFC3339),
+			Artifact: artifact,
+			ExitCode: exitCode,
+		})
+	default:
+		fmt.Fprintf(w, "wrote %s\n", artifact)
+	}
 }

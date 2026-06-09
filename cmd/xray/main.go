@@ -22,6 +22,7 @@ var (
 var (
 	flagVerbose bool
 	flagQuiet   bool
+	flagOutput  string
 )
 
 // loggerKey is the context key used to thread the slog.Logger through to
@@ -41,7 +42,16 @@ contains no source code and no secrets.`,
 	}
 
 	root.PersistentFlags().BoolVar(&flagVerbose, "verbose", false, "verbose logging (per-API-call timing)")
-	root.PersistentFlags().BoolVar(&flagQuiet, "quiet", false, "suppress non-error output")
+	root.PersistentFlags().BoolVar(&flagQuiet, "quiet", false, "shorthand for --output quiet")
+	root.PersistentFlags().StringVar(&flagOutput, "output", "", "output mode: auto|quiet|json|log (default auto)")
+
+	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if _, err := ResolveMode(flagOutput, flagQuiet); err != nil {
+			fmt.Fprintln(cmd.ErrOrStderr(), err)
+			return silentCode(err, 1)
+		}
+		return nil
+	}
 
 	root.AddCommand(
 		newVersionCmd(),

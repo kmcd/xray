@@ -52,7 +52,18 @@ xray check xray.toml
 # Full extraction. Produces ./xray-export-<UTC-timestamp>.tar.gz and a
 # sibling .log file mirroring stderr (suppress with --no-run-log).
 xray run xray.toml
+
+# Machine-readable output. One NDJSON event per progress tick, terminated
+# by a {"kind":"summary",...} object on stdout. See docs/spec.md.
+xray run xray.toml --output json | jq .
+
+# Quiet success: only the artifact path is written to stdout.
+xray run xray.toml --output quiet
 ```
+
+Exit codes: `0` clean, `1` config / pre-flight error, `2` partial run
+(artifact produced, connector error recorded in manifest), `3` fatal.
+See [`docs/spec.md`](./docs/spec.md) → `xray run` → "Exit codes".
 
 The full configuration reference and behaviour spec live in [`docs/spec.md`](./docs/spec.md). The output schema is documented in [`docs/schema.md`](./docs/schema.md). Agent-facing constraints (invariants, non-goals, schema-versioning rules) live in [`CLAUDE.md`](./CLAUDE.md).
 

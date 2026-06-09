@@ -81,11 +81,66 @@ timestamped `.tar.gz`.
 
 ```
 xray run <config> [--out <path>] [--workers N] [--keep-clones]
+                  [--output auto|quiet|json|log] [--quiet] [--verbose]
 ```
 
 - `--out` default: `./xray-export-<UTC-timestamp>.tar.gz`
 - `--workers` default: 4. Bound for parallel clone/extract.
 - `--keep-clones`: skip cleanup of temp clones (debugging).
+- `--output` selects the run-time output mode (see "Output modes" below).
+  `--quiet` is a shorthand for `--output quiet`; combining the two with
+  conflicting values is a flag-level error.
+- `--verbose` is orthogonal to `--output` and lowers the stderr log level
+  to Debug (per-API-call timing). It does not alter the `json` event schema.
+
+#### Output modes
+
+| value | behaviour |
+|---|---|
+| `auto` (default) | TTY → status grid + summary block; non-TTY → line-based stderr log. |
+| `quiet` | Errors to stderr only; on success, the artifact path is the only stdout line. |
+| `json` | One NDJSON object per progress event to stdout, terminated by a `{"kind":"summary",...}` object. |
+| `log` | Force the line-based stderr log even on a TTY (today's behaviour). |
+
+The TTY status grid (`auto`), rate-limit events (`json` / `log`), and
+TTY post-run summary block (`auto`) are owned by the cli-ux cluster
+follow-ups (#81, #82, #84); the `--output` enum is the coordination
+point and is stable.
+
+#### Exit codes
+
+| code | meaning |
+|---|---|
+| 0 | Clean run; artifact produced; all connectors green. |
+| 1 | Config or pre-flight error; no artifact produced. |
+| 2 | Partial run; artifact produced; one or more connectors failed for one or more repos (failure is recorded in the manifest). |
+| 3 | Fatal error; artifact may or may not exist; investigate the run log. |
+
+`xray validate` and `xray check` use only exit codes 0 and 1.
+
+#### JSON event schema
+
+`--output json` writes one NDJSON object per event to stdout. The final
+event is always `{"kind":"summary",...}`:
+
+```json
+{"ts":"2026-06-09T14:10:23Z","kind":"phase_start","repo":"kmcd/foo","connector":"github","phase":"prs"}
+{"ts":"2026-06-09T14:10:45Z","kind":"phase_progress","repo":"kmcd/foo","connector":"github","phase":"prs","done":47,"total":120}
+{"ts":"2026-06-09T14:11:02Z","kind":"summary","artifact":"/abs/path/xray-export-…tar.gz","sha256":"…","rows":{"prs":120},"exit_code":0}
+```
+
+The JSON event schema is **versioned independently of the artifact
+`schema_version`** — it is not part of the analyser contract that
+`schema_version` carries. Additive changes are non-breaking and do not
+bump any version:
+
+- adding a new `kind` value
+- adding a new optional field to an existing kind
+
+Renames or removals bump a separate `output_schema_version` integer
+(introduced when the first such change ships; absent today). The
+artifact `schema_version` is unaffected by changes to the JSON event
+schema.
 
 ### `xray version`
 
@@ -501,8 +556,9 @@ no connector.
   goroutine fragments (clone-bound stages vs PR stage) before returning
   the result.
 - **Logging.** Logs go to stderr at info level by default; `--verbose` adds
-  per-API-call timing; `--quiet` suppresses non-error output. Tokens are
-  never logged at any level.
+  per-API-call timing; `--quiet` suppresses non-error output (shorthand for
+  `--output quiet`). Tokens are never logged at any level. The full output
+  mode and exit-code contract live under `xray run` above.
 
 ---
 

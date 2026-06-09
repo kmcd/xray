@@ -97,8 +97,8 @@ unassigned = ["kmcd/foo"]
 	if err == nil {
 		t.Fatal("run err = nil, want non-nil for invalid config")
 	}
-	if code := exitCodeFor(err); code != 2 {
-		t.Errorf("exit code = %d, want 2", code)
+	if code := exitCodeFor(err); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
 	}
 	if _, statErr := os.Stat(outPath); statErr == nil {
 		t.Errorf("run wrote artifact %s despite invalid config", outPath)

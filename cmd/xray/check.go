@@ -27,14 +27,14 @@ func newCheckCmd() *cobra.Command {
 			cfg, meta, err := config.Load(path)
 			if err != nil {
 				fmt.Fprintf(errOut, "%s: %v\n", path, err)
-				return silentCode(errors.New("config load failed"), 2)
+				return silentCode(errors.New("config load failed"), 1)
 			}
 			diags := config.Validate(cfg, meta, path)
 			if len(diags) > 0 {
 				for _, d := range diags {
 					fmt.Fprintln(errOut, d.Error())
 				}
-				return silentCode(errors.New("config invalid"), 2)
+				return silentCode(errors.New("config invalid"), 1)
 			}
 			fmt.Fprintln(out, "ok  config valid")
 
@@ -50,7 +50,7 @@ func newCheckCmd() *cobra.Command {
 			conns, err := buildConnectors(cfg, logger)
 			if err != nil {
 				fmt.Fprintf(errOut, "connector setup: %v\n", err)
-				return silentCode(err, 2)
+				return silentCode(err, 1)
 			}
 			ctx := cmd.Context()
 			for _, c := range conns {
@@ -75,7 +75,7 @@ func newCheckCmd() *cobra.Command {
 			}
 
 			if anyFail {
-				return silentCode(errors.New("preflight failed"), 2)
+				return silentCode(errors.New("preflight failed"), 1)
 			}
 			return nil
 		},

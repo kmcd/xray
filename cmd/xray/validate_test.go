@@ -49,8 +49,8 @@ unassigned = ["kmcd/foo"]
 	if err == nil {
 		t.Fatal("validate err = nil, want non-nil for backwards window")
 	}
-	if code := exitCodeFor(err); code != 2 {
-		t.Errorf("exit code = %d, want 2", code)
+	if code := exitCodeFor(err); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
 	}
 	if !strings.Contains(errBuf.String(), "window: end date precedes start date") {
 		t.Errorf("stderr = %q, want window-precedes diagnostic", errBuf.String())
@@ -69,8 +69,8 @@ func TestValidateCmd_MissingTeams(t *testing.T) {
 	if err == nil {
 		t.Fatal("validate err = nil, want non-nil with no teams")
 	}
-	if code := exitCodeFor(err); code != 2 {
-		t.Errorf("exit code = %d, want 2", code)
+	if code := exitCodeFor(err); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
 	}
 	if !strings.Contains(errBuf.String(), "teams") {
 		t.Errorf("stderr = %q, want teams diagnostic", errBuf.String())
@@ -85,7 +85,7 @@ func TestValidateCmd_FileNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("validate err = nil, want non-nil for missing file")
 	}
-	if code := exitCodeFor(err); code != 2 {
-		t.Errorf("exit code = %d, want 2", code)
+	if code := exitCodeFor(err); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
 	}
 }

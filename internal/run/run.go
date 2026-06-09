@@ -24,6 +24,12 @@ import (
 	"github.com/kmcd/xray/internal/store"
 )
 
+// ErrPartial signals a completed run that produced an artifact but where
+// at least one connector or clone reported an error. The cmd-layer maps
+// this to exit code 2 (artifact present, manifest records the failure);
+// any other non-nil error from Run maps to exit code 3 (fatal).
+var ErrPartial = errors.New("run: one or more connectors or clones reported errors; see manifest")
+
 // Run is the entry point for `xray run`. It clones every repo, dispatches
 // every (repo, connector) pair across the worker pool, assembles the
 // manifest, packages the artifact, and removes the temp dir (unless
@@ -240,7 +246,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (string, error) 
 	// 6. Run exits non-zero iff any connector returned a non-empty Errors
 	// map (or any repo failed to clone).
 	if hasErrors(provs) {
-		return absOut, errors.New("run: one or more connectors or clones reported errors; see manifest")
+		return absOut, ErrPartial
 	}
 	return absOut, nil
 }
