@@ -79,13 +79,7 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 		c.log.Warn("github: insert repo row", slog.String("repo", repo.Slug), slog.String("error", err.Error()))
 	}
 
-	// Teams: emit the team -> repo mapping so the teams table is populated
-	// even when the only connector in use is github.
-	if repo.Team != "" {
-		if err := sink.InsertTeamRepo(repo.Team, repo.Slug); err != nil {
-			prov.Errors["teams"] = err.Error()
-		}
-	}
+	c.insertTeamMapping(repo, sink, &prov)
 
 	// --- Phase 2: parallel block ------------------------------------------
 
@@ -186,6 +180,19 @@ func (c *Connector) enrichRepoMetadata(ctx context.Context, slug, owner, name st
 	if row.DefaultBranch == "" {
 		row.DefaultBranch = r.GetDefaultBranch()
 	}
+}
+
+// insertTeamMapping emits the team -> repo mapping row when the repo carries a
+// team. Records the row in provenance on success and the error on failure.
+func (c *Connector) insertTeamMapping(repo connector.Repo, sink connector.Sink, prov *connector.Provenance) {
+	if repo.Team == "" {
+		return
+	}
+	if err := sink.InsertTeamRepo(repo.Team, repo.Slug); err != nil {
+		prov.Errors["teams"] = err.Error()
+		return
+	}
+	prov.RowsReturned["teams"]++
 }
 
 // enrichContributorCount populates ContributorCount via the contributors list

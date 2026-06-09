@@ -38,6 +38,7 @@ func (c *Connector) extractReleases(ctx context.Context, repo connector.Repo, wi
 				Accessible: false,
 				Reason:     err.Error(),
 			}
+			prov.PaginationComplete = false
 			c.log.Warn("github: list releases",
 				slog.String("repo", repo.Slug),
 				slog.String("error", err.Error()),

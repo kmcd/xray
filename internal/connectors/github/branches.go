@@ -105,6 +105,7 @@ func (c *Connector) fetchBranchProtectionRules(ctx context.Context, owner, name 
 				Accessible: false,
 				Reason:     err.Error(),
 			}
+			prov.PaginationComplete = false
 			return
 		}
 		for _, rule := range q.Repository.BranchProtectionRules.Nodes {

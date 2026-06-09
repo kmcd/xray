@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -215,6 +216,10 @@ func (c *Connector) extractPRs(ctx context.Context, repo connector.Repo, window 
 	case !cached:
 		nodes, _, err = c.fetchPRs(ctx, repo, window, "")
 	case err != nil && nextCursor != "" && ctx.Err() == nil:
+		// Record the prefetch failure before attempting live resume; the
+		// resume may clear err on success but the prefetch interruption is
+		// still a real event worth preserving in provenance.
+		prov.Errors["prs:prefetch"] = err.Error()
 		c.log.Warn("github: prefetch errored mid-walk, resuming live from cursor",
 			slog.String("repo", repo.Slug),
 			slog.String("error", err.Error()),
@@ -225,6 +230,7 @@ func (c *Connector) extractPRs(ctx context.Context, repo connector.Repo, window 
 	}
 	if err != nil {
 		prov.Errors["prs"] = err.Error()
+		prov.PaginationComplete = false
 		c.log.Warn("github: graphql prs",
 			slog.String("repo", repo.Slug),
 			slog.String("error", err.Error()),
@@ -655,6 +661,7 @@ func (c *Connector) paginatePRCommits(ctx context.Context, owner, name string, n
 			"after":  githubv4.String(cursor),
 		}
 		if err := c.queryWithEOFRetry(ctx, &q, vars); err != nil {
+			prov.Errors[fmt.Sprintf("pr_commits:%d", number)] = err.Error()
 			prov.PaginationComplete = false
 			return oids
 		}

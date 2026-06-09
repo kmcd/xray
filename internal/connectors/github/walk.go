@@ -122,7 +122,11 @@ func (c *Connector) extractWorkingTree(ctx context.Context, repo connector.Repo,
 				fm.P95LineLength = stats.p95LineLen
 			}
 		}
-		if err := sink.InsertFileMetric(fm); err == nil {
+		if err := sink.InsertFileMetric(fm); err != nil {
+			if prov.Errors["file_metrics"] == "" {
+				prov.Errors["file_metrics"] = err.Error()
+			}
+		} else {
 			prov.RowsReturned["file_metrics"]++
 		}
 		prog.tick()
@@ -173,7 +177,11 @@ func (c *Connector) extractWorkingTree(ctx context.Context, repo connector.Repo,
 		if c.capture {
 			ha.Content = string(content)
 		}
-		if err := sink.InsertHarnessArtifact(ha); err == nil {
+		if err := sink.InsertHarnessArtifact(ha); err != nil {
+			if prov.Errors["harness_artifacts"] == "" {
+				prov.Errors["harness_artifacts"] = err.Error()
+			}
+		} else {
 			prov.RowsReturned["harness_artifacts"]++
 		}
 		return nil
