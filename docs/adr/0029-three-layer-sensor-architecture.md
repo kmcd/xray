@@ -71,15 +71,22 @@ retry loops). gremlins itself has no path-include config; scope is
 provided as positional args to `gremlins unleash` from the Makefile
 target.
 
-### C. depguard pattern — exact + glob
+### C. depguard `files:` pattern needs trailing `/*`
 
-depguard's `pkg:` field is exact-match by default. The rule lists both
-`"github.com/kmcd/xray/internal/connectors"` (bare parent — caught
-nothing on its own) and `"github.com/kmcd/xray/internal/connectors/**"`
-(subpackage glob). Without the glob, a future contract-package file
-importing `internal/connectors/github` would slip through depguard
-(though the Go compiler still catches it via the existing import-cycle
-detection — depguard is defence-in-depth on top).
+depguard's `pkg:` field already matches by path prefix in `list-mode:
+lax`, so the bare parent
+`"github.com/kmcd/xray/internal/connectors"` denies every concrete
+subpackage (`/github`, `/sentry`, …). What was *not* obvious: the
+`files:` glob `"**/internal/connector/**"` matches directories but not
+files in depguard's gobwas/glob implementation, so the rule silently
+doesn't fire even though `pkg:` is right. The working form is two
+patterns — `"**/internal/connector/*"` for top-level files and
+`"**/internal/connector/**/*"` for nested ones — verified by importing
+a concrete connector under a leaf file in `internal/connector/` and
+observing depguard fire. Diagnostic note: golangci-lint dedupes
+findings at the same source position, so a *blank* import test gets
+masked by revive's `blank-imports` rule; a non-blank import is the
+reliable verifier.
 
 ### D. gocritic categories — tag, not category
 
