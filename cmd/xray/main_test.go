@@ -104,8 +104,11 @@ func TestWatchSignals_SecondNoTempDir(t *testing.T) {
 	if exitCode != 130 {
 		t.Errorf("exit code = %d, want 130", exitCode)
 	}
-	if !strings.Contains(buf.String(), "force exit; temp dir not cleaned") {
-		t.Errorf("force-exit (no tmpdir) message wrong:\n%s", buf.String())
+	if !strings.Contains(buf.String(), "force exit") {
+		t.Errorf("force-exit (no tmpdir) message missing 'force exit':\n%s", buf.String())
+	}
+	if strings.Contains(buf.String(), "temp dir") {
+		t.Errorf("force-exit (no tmpdir) should not claim a leak: %q", buf.String())
 	}
 }
 

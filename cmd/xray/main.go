@@ -108,11 +108,14 @@ func watchSignals(sigs <-chan os.Signal, cancel context.CancelFunc, tmpDir func(
 			cancel()
 			continue
 		}
-		path := tmpDir()
-		if path == "" {
-			fmt.Fprintln(stderr, "xray: force exit; temp dir not cleaned")
-		} else {
+		// Empty path = Run hasn't created the temp dir yet (pre-Run
+		// signal) or has already cleaned it (post-Run signal during
+		// summary draining); claim a leak only when we have a path to
+		// name. Either way, exit immediately bypassing defers.
+		if path := tmpDir(); path != "" {
 			fmt.Fprintf(stderr, "xray: force exit; temp dir %s not cleaned\n", path)
+		} else {
+			fmt.Fprintln(stderr, "xray: force exit")
 		}
 		exit(130)
 		return
