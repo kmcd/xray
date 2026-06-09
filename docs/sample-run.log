@@ -1,0 +1,57 @@
+time=2026-04-01T09:14:22.014Z level=INFO msg="run: start" run_id=01JZSAMPLE000000000000000 temp_dir=/tmp/xray-01JZSAMPLE000000000000000 workers=4
+time=2026-04-01T09:14:22.018Z level=INFO msg="run: cloning" repo=acme/api
+time=2026-04-01T09:14:22.019Z level=INFO msg="run: cloning" repo=acme/web
+time=2026-04-01T09:14:22.020Z level=INFO msg="run: cloning" repo=acme/billing
+time=2026-04-01T09:14:22.041Z level=INFO msg="github: progress" repo=acme/api stage=prefetch phase=pr_walk pages=0
+time=2026-04-01T09:14:22.041Z level=INFO msg="github: progress" repo=acme/web stage=prefetch phase=pr_walk pages=0
+time=2026-04-01T09:14:22.042Z level=INFO msg="github: progress" repo=acme/billing stage=prefetch phase=pr_walk pages=0
+time=2026-04-01T09:14:31.612Z level=INFO msg="github: progress" repo=acme/billing stage=prefetch phase=pr_walk pages=1 prs_seen=24
+time=2026-04-01T09:14:31.640Z level=INFO msg="github: progress complete" repo=acme/billing stage=prefetch pages=1 prs_seen=24 graphql_points_used=119
+time=2026-04-01T09:14:48.221Z level=INFO msg="github: progress" repo=acme/api stage=prefetch phase=pr_walk pages=1 prs_seen=50
+time=2026-04-01T09:14:48.224Z level=INFO msg="github: progress" repo=acme/web stage=prefetch phase=pr_walk pages=1 prs_seen=50
+time=2026-04-01T09:15:11.812Z level=INFO msg="github: progress" repo=acme/api stage=prefetch phase=pr_walk pages=2 prs_seen=87
+time=2026-04-01T09:15:11.840Z level=INFO msg="github: progress complete" repo=acme/api stage=prefetch pages=2 prs_seen=87 graphql_points_used=412
+time=2026-04-01T09:15:20.118Z level=INFO msg="github: progress" repo=acme/web stage=prefetch phase=pr_walk pages=2 prs_seen=96
+time=2026-04-01T09:15:31.405Z level=INFO msg="ratelimit: waiting before retry" attempt=1 wait=42s budget=secondary budget_spent=42s
+time=2026-04-01T09:16:13.418Z level=WARN msg="github: graphql review-threads overflow" repo=acme/web pr=418 threads_page=2 error="GraphQL secondary rate limit; budget exhausted"
+time=2026-04-01T09:16:13.422Z level=INFO msg="github: progress complete" repo=acme/web stage=prefetch pages=2 prs_seen=96 graphql_points_used=487
+time=2026-04-01T09:18:04.310Z level=INFO msg="run: extracting" repo=acme/api connector=github
+time=2026-04-01T09:18:04.311Z level=INFO msg="run: extracting" repo=acme/web connector=github
+time=2026-04-01T09:18:04.312Z level=INFO msg="run: extracting" repo=acme/billing connector=github
+time=2026-04-01T09:18:04.412Z level=WARN msg="github: branch protection" repo=acme/api status=403 endpoint=branch_protection reason="403 Forbidden; requires admin scope"
+time=2026-04-01T09:18:04.418Z level=INFO msg="github: branch_protection inaccessible recorded in provenance" repo=acme/api
+time=2026-04-01T09:18:04.901Z level=INFO msg="github: progress" repo=acme/api stage=extract phase=commit_walk commits_seen=200
+time=2026-04-01T09:18:05.118Z level=INFO msg="github: progress" repo=acme/web stage=extract phase=commit_walk commits_seen=200
+time=2026-04-01T09:18:05.121Z level=INFO msg="github: progress" repo=acme/billing stage=extract phase=commit_walk commits_seen=130
+time=2026-04-01T09:18:05.144Z level=WARN msg="github: fetch PR template" repo=acme/billing status=404 endpoint=pr_template reason="no .github/PULL_REQUEST_TEMPLATE.md at HEAD"
+time=2026-04-01T09:18:05.146Z level=INFO msg="github: pr_template inaccessible recorded in provenance" repo=acme/billing
+time=2026-04-01T09:18:09.812Z level=INFO msg="github: progress" repo=acme/api stage=extract phase=commit_walk commits_seen=542
+time=2026-04-01T09:18:11.044Z level=INFO msg="github: progress" repo=acme/web stage=extract phase=commit_walk commits_seen=612
+time=2026-04-01T09:18:12.330Z level=INFO msg="github: progress complete" repo=acme/billing stage=extract commits=130 prs=24 reviews=48 graphql_points_used=119
+time=2026-04-01T09:18:18.018Z level=INFO msg="github: progress complete" repo=acme/api stage=extract commits=542 prs=87 reviews=156 graphql_points_used=412
+time=2026-04-01T09:18:19.122Z level=INFO msg="github: progress complete" repo=acme/web stage=extract commits=612 prs=96 reviews=184 graphql_points_used=487 pagination_complete=false
+time=2026-04-01T09:18:19.804Z level=INFO msg="run: extracting" repo=acme/api connector=github_actions
+time=2026-04-01T09:18:19.806Z level=INFO msg="run: extracting" repo=acme/web connector=github_actions
+time=2026-04-01T09:18:19.807Z level=INFO msg="run: extracting" repo=acme/billing connector=github_actions
+time=2026-04-01T09:18:19.820Z level=WARN msg="githubactions: list deployments" repo=acme/billing status=404 endpoint=deployments reason="Deployments API not used by this repo's workflows"
+time=2026-04-01T09:18:19.821Z level=INFO msg="githubactions: deployments inaccessible recorded in provenance" repo=acme/billing
+time=2026-04-01T09:18:42.122Z level=INFO msg="githubactions: progress complete" repo=acme/billing builds=112 jobs=224 deploys=8
+time=2026-04-01T09:19:14.880Z level=INFO msg="githubactions: progress complete" repo=acme/api builds=884 jobs=2114 deploys=41
+time=2026-04-01T09:19:55.103Z level=INFO msg="githubactions: progress complete" repo=acme/web builds=718 jobs=1788 deploys=39
+time=2026-04-01T09:19:55.318Z level=INFO msg="run: extracting" repo=acme/api connector=sentry
+time=2026-04-01T09:19:55.319Z level=INFO msg="run: extracting" repo=acme/web connector=sentry
+time=2026-04-01T09:19:55.320Z level=INFO msg="run: extracting" repo=acme/billing connector=sentry
+time=2026-04-01T09:19:55.612Z level=WARN msg="sentry: list issues" project=acme-billing-prod status=403 reason="403 Forbidden; requires project:read on acme-billing-prod"
+time=2026-04-01T09:19:55.614Z level=INFO msg="sentry: per-row error recorded; continuing" project=acme-billing-prod
+time=2026-04-01T09:20:18.418Z level=INFO msg="sentry: progress complete" repo=acme/api incidents=14
+time=2026-04-01T09:20:31.022Z level=INFO msg="sentry: progress complete" repo=acme/web incidents=9
+time=2026-04-01T09:20:31.122Z level=INFO msg="run: extracting" repo=acme/api connector=honeycomb
+time=2026-04-01T09:20:31.124Z level=INFO msg="run: extracting" repo=acme/web connector=honeycomb
+time=2026-04-01T09:20:31.125Z level=INFO msg="run: extracting" repo=acme/billing connector=honeycomb
+time=2026-04-01T09:20:31.318Z level=WARN msg="honeycomb: list markers" dataset=acme-billing status=404 reason="no honeycomb dataset configured for acme/billing"
+time=2026-04-01T09:20:31.319Z level=INFO msg="honeycomb: markers inaccessible recorded in provenance" repo=acme/billing
+time=2026-04-01T09:20:48.412Z level=INFO msg="honeycomb: progress complete" repo=acme/api deploys=41
+time=2026-04-01T09:21:02.318Z level=INFO msg="honeycomb: progress complete" repo=acme/web deploys=39
+time=2026-04-01T09:21:02.512Z level=INFO msg="run: postprocess" incidents_linked=18 deploys_rolled_back=2 landed_via_pr_matched=1248
+time=2026-04-01T09:28:14.018Z level=INFO msg="run: artifact" path=/home/operator/xray-export-2026-04-01T091422Z.tar.gz size=18743212 sha256=4f1c2b3a5d7e9f0c8b6a4d2e1f0c9b8a7d5e3f1c0b9a8d7e6f5c4b3a2d1e0f9c8
+time=2026-04-01T09:31:48.310Z level=INFO msg="run: summary" exit_code=2 partial=true connectors_with_errors=2 endpoints_inaccessible=4 pagination_truncated=1 rate_limit_truncated=1
