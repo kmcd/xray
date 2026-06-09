@@ -43,8 +43,12 @@ Offline syntactic and schema check on a config file. No network. Exits 0 on
 valid, non-zero with line-referenced diagnostics on invalid.
 
 ```
-xray validate <config>
+xray validate [config]
 ```
+
+`[config]` defaults to `./xray.toml`. When the default is used and the file
+is absent, the command exits 1 with ``xray.toml not found in current
+directory; pass a path or run `xray init` ``.
 
 ### `xray check`
 
@@ -55,8 +59,10 @@ suffices, no actual clone). Reports per-connector and per-repo status.
 Exits 0 iff everything passes.
 
 ```
-xray check <config>
+xray check [config]
 ```
+
+`[config]` defaults to `./xray.toml` (same fallback as `validate`).
 
 Sample output:
 
@@ -80,9 +86,11 @@ canonical data model in SQLite, writes the manifest, and produces a
 timestamped `.tar.gz`.
 
 ```
-xray run <config> [--out <path>] [--workers N] [--keep-clones]
+xray run [config] [--out <path>] [--workers N] [--keep-clones]
                   [--output auto|quiet|json|log] [--quiet] [--verbose]
 ```
+
+`[config]` defaults to `./xray.toml` (same fallback as `validate`).
 
 - `--out` default: `./xray-export-<UTC-timestamp>.tar.gz`
 - `--workers` default: 4. Bound for parallel clone/extract.

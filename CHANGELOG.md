@@ -6,6 +6,12 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+### CLI
+
+- **default config arg.** `xray validate`, `xray check`, and `xray run` now default the positional config argument to `./xray.toml` when omitted, matching the convention of `cargo`, `terraform`, and `npm`. Explicit paths still work. When the default is used and the file is absent, the error is specific: ``xray.toml not found in current directory; pass a path or run `xray init` ``. ([#96])
+
+[#96]: https://github.com/kmcd/xray/issues/96
+
 ### Quality
 
 - **three-layer sensor architecture.** Three new code-quality sensors with distinct cadences: `make gates` adds eight gate-time linters (`bodyclose`, `noctx`, `errorlint`, `unconvert`, `wastedassign`, `prealloc`, `usestdlibvars`, `depguard` — the last encoding the core/connector seam at lint time); `make sweep` is a once-per-quarter pass with `deadcode`, `nilaway`, and `gocritic` (findings triaged into `tmp/sweep-findings.md`); `make mutation-audit` is a once-per-release `gremlins` audit against the provenance-emitting paths (config in `.gremlins.yaml`, scope in the Makefile target). Surviving mutants on the four named invariants (`prov.PaginationComplete`, `prov.RowsReturned[<k>]`, `prov.Errors[<k>]`, `EndpointStatus`) get killing tests in the same PR. No new runtime dependencies; static-binary constraint unaffected. ([#98], [ADR 029](./docs/adr/0029-three-layer-sensor-architecture.md))

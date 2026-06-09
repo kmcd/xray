@@ -136,3 +136,19 @@ func tmpDirSnapshot() string {
 func withLogger(ctx context.Context, l *slog.Logger) context.Context {
 	return context.WithValue(ctx, loggerKey{}, l)
 }
+
+// resolveConfigPath returns the user-supplied positional config path, or
+// defaults to ./xray.toml when omitted. When defaulting and the file is
+// absent, reports the specific missing-default diagnostic on stderr and
+// returns a silent exit-1 error so the caller can `return err` directly.
+func resolveConfigPath(cmd *cobra.Command, args []string) (string, error) {
+	if len(args) == 1 {
+		return args[0], nil
+	}
+	const def = "xray.toml"
+	if _, err := os.Stat(def); err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "xray.toml not found in current directory; pass a path or run `xray init`")
+		return "", silentCode(fmt.Errorf("config not found"), 1)
+	}
+	return def, nil
+}

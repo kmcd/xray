@@ -29,11 +29,14 @@ type runOpts struct {
 func newRunCmd() *cobra.Command {
 	var opts runOpts
 	cmd := &cobra.Command{
-		Use:   "run <config>",
+		Use:   "run [config]",
 		Short: "Run a full extraction and produce a .tar.gz artifact",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path := args[0]
+			path, err := resolveConfigPath(cmd, args)
+			if err != nil {
+				return err
+			}
 			errOut := cmd.ErrOrStderr()
 
 			mode, err := ResolveMode(flagOutput, flagQuiet)

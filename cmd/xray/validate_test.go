@@ -102,6 +102,42 @@ func TestValidateCmd_QuietSuppressesSuccessLine(t *testing.T) {
 	}
 }
 
+func TestValidateCmd_DefaultsToXrayToml(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "xray.toml"), []byte(validTOML), 0o600); err != nil {
+		t.Fatalf("write xray.toml: %v", err)
+	}
+	t.Chdir(dir)
+
+	root, out, errBuf := newTestRoot(t)
+	root.SetArgs([]string{"validate"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("validate (no arg) returned err: %v (stderr=%q)", err, errBuf.String())
+	}
+	if !strings.Contains(out.String(), "ok  config valid") {
+		t.Errorf("stdout = %q, want ok message", out.String())
+	}
+}
+
+func TestValidateCmd_MissingDefaultReportsSpecificError(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	root, _, errBuf := newTestRoot(t)
+	root.SetArgs([]string{"validate"})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("validate err = nil, want non-nil with no xray.toml in cwd")
+	}
+	if code := exitCodeFor(err); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(errBuf.String(), "xray.toml not found in current directory; pass a path or run `xray init`") {
+		t.Errorf("stderr = %q, want specific missing-default diagnostic", errBuf.String())
+	}
+}
+
 func TestValidateCmd_JSONEmitsSummary(t *testing.T) {
 	p := writeTOML(t, validTOML)
 	root, stdout, _ := newTestRoot(t)

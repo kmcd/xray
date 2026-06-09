@@ -27,11 +27,15 @@ type checkOpts struct {
 func newCheckCmd() *cobra.Command {
 	var opts checkOpts
 	cmd := &cobra.Command{
-		Use:   "check <config>",
+		Use:   "check [config]",
 		Short: "Live preflight against configured connectors and repos",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCheck(cmd, args[0], opts)
+			path, err := resolveConfigPath(cmd, args)
+			if err != nil {
+				return err
+			}
+			return runCheck(cmd, path, opts)
 		},
 	}
 	cmd.Flags().BoolVar(&opts.noCostPreview, "no-cost-preview", false, "skip the cost-preview block for fast iteration")

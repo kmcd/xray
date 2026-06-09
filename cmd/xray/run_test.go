@@ -89,6 +89,49 @@ func TestRunCmd_NoRunLog(t *testing.T) {
 	}
 }
 
+func TestRunCmd_DefaultsToXrayToml(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "xray.toml"), []byte(validTOML), 0o600); err != nil {
+		t.Fatalf("write xray.toml: %v", err)
+	}
+	t.Chdir(dir)
+	outPath := filepath.Join(dir, "out.tar.gz")
+
+	root, _, _ := newTestRoot(t)
+	root.SetArgs([]string{"run", "--out", outPath, "--workers", "1", "--no-run-log"})
+
+	// As with TestRunCmd_OneRepoNoConnectors, the clone may legitimately
+	// fail in offline CI. What we're asserting is that the no-arg form
+	// resolves ./xray.toml — i.e. that the run got past config resolution.
+	// A "config not found" error would surface a specific stderr line,
+	// and exit code 1; clone failure surfaces exit code 2 or 3.
+	err := root.Execute()
+	if err == nil {
+		return
+	}
+	if code := exitCodeFor(err); code == 1 {
+		t.Errorf("run (no arg) exit code = 1 (config error path); wanted clone-stage failure or success. err=%v", err)
+	}
+}
+
+func TestRunCmd_MissingDefaultReportsSpecificError(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	root, _, errBuf := newTestRoot(t)
+	root.SetArgs([]string{"run"})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("run err = nil, want non-nil with no xray.toml in cwd")
+	}
+	if code := exitCodeFor(err); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(errBuf.String(), "xray.toml not found in current directory; pass a path or run `xray init`") {
+		t.Errorf("stderr = %q, want specific missing-default diagnostic", errBuf.String())
+	}
+}
+
 func fixtureResult() run.Result {
 	return run.Result{
 		ArtifactPath: "/work/xray-export-20260609T141023Z.tar.gz",

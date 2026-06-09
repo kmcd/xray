@@ -1,8 +1,13 @@
 # xray
 
-Read-only extractor that produces a portable metrics artifact from a client's engineering systems (git history, GitHub PRs and reviews, CI builds, error tracker, observability).
+<!-- #103: badges block lands here, above the lede -->
 
-The artifact is a single `.tar.gz` containing a SQLite database and a JSON manifest. It contains no source code and no secrets. Nothing leaves the client's environment except the artifact, and only when the client chooses to send it.
+**xray** is a read-only extractor that produces a portable engineering-metrics artifact from a client's git, GitHub, CI, and error-tracker systems.
+
+- **Captures**: commits, PRs, reviews, CI runs, deploys, incidents — structural data, no source content.
+- **Produces**: a single `.tar.gz` (SQLite + JSON manifest) — verifiable SHA256, no secrets.
+- **Touches**: GitHub, GitHub Actions, CircleCI, Sentry, Bugsnag, Honeycomb — read-only, even when tokens hold write scope.
+- **Doesn't do**: source-content capture, per-individual rankings, daemon mode, scheduled runs.
 
 ## Guarantees
 
@@ -15,15 +20,12 @@ The artifact is a single `.tar.gz` containing a SQLite database and a JSON manif
 
 Pre-1.0. The schema is unstable; minor version bumps may introduce breaking schema changes. See the compatibility table below.
 
-## What xray does not do
-
-- Issue any `POST`, `PATCH`, `PUT`, or `DELETE` to any provider — read calls only, even when the token has write scope.
-- Capture source code, diff text, PR bodies, commit message bodies, or any text body marked sensitive. Parsed at extract time; dropped before the variable leaves scope.
-- Store or transmit secrets. The token in `xray.toml` never leaves the machine. The artifact is a `.tar.gz` of a SQLite DB and a JSON manifest — no tokens, no environment variables, no source.
-- Aggregate per-individual data. The artifact carries team-level rollups; opaque `*_handle` strings exist only for linkage, never for ranking.
-- Run as a daemon, scheduled job, or web service. CLI only. Idempotent. Each run is full within the window.
-
 ## Install
+
+- `go install github.com/kmcd/xray/cmd/xray@latest` — for Go developers.
+- Binary release + cosign verification — see below.
+
+### Binary + cosign verification
 
 Download the release for your platform, verify the cosign signature on `checksums.txt`, then verify the archive against the checksum.
 
@@ -58,35 +60,43 @@ xray init --org my-org --out xray.toml --token "$GITHUB_TOKEN"
 
 # Hand-edit xray.toml: connector tokens, project mappings, team layout.
 
-# Syntactic + schema check, offline.
-xray validate xray.toml
+# Syntactic + schema check, offline. Defaults to ./xray.toml; pass an
+# explicit path to point at a different config.
+xray validate
 
 # Live preflight against configured connectors.
-xray check xray.toml
+xray check
 
-# Full extraction. Produces ./xray-export-<UTC-timestamp>.tar.gz and a
-# sibling .log file mirroring stderr (suppress with --no-run-log).
-# On a TTY, the default (--output auto) renders a live (repo × connector)
-# status grid:
-#
-#   xray run · elapsed 04:12 · ETA 14:47 ±2m · 3/4 workers
-#
-#   repo                clone           github           gh_actions       sentry
-#   kmcd/foo            ✔ done          ✔ 4213 rows      ● gh_actions     ✔ 312 rows
-#   kmcd/bar            ✔ done          ● prs            ▢ pending        🔒 inaccessible
-#   kmcd/baz            ● clone         ▢ pending        ▢ pending        ▢ pending
-#
-# Non-TTY (CI, pipe to file) falls back to a stderr log with one line
-# per phase boundary; force the log explicitly with --output log.
-xray run xray.toml
+# Full extraction. Produces ./xray-export-<UTC-timestamp>.tar.gz with a
+# sibling .log file mirroring stderr (suppress with --no-run-log). See
+# the sample-run block below the code for live TTY output.
+xray run
 
 # Machine-readable output. One NDJSON event per progress tick, terminated
 # by a {"kind":"run_summary",...} object on stdout. See docs/spec.md.
-xray run xray.toml --output json | jq .
+xray run --output json | jq .
 
 # Quiet success: only the artifact path is written to stdout.
-xray run xray.toml --output quiet
+xray run --output quiet
 ```
+
+<details>
+<summary>Sample run (live TTY output)</summary>
+
+On a TTY, the default (`--output auto`) renders a live (repo × connector) status grid:
+
+```
+xray run · elapsed 04:12 · ETA 14:47 ±2m · 3/4 workers
+
+repo                clone           github           gh_actions       sentry
+kmcd/foo            ✔ done          ✔ 4213 rows      ● gh_actions     ✔ 312 rows
+kmcd/bar            ✔ done          ● prs            ▢ pending        🔒 inaccessible
+kmcd/baz            ● clone         ▢ pending        ▢ pending        ▢ pending
+```
+
+Non-TTY (CI, pipe to file) falls back to a stderr log with one line per phase boundary; force the log explicitly with `--output log`.
+
+</details>
 
 Exit codes: `0` clean, `1` config / pre-flight error, `2` partial run
 (artifact produced, connector error recorded in manifest), `3` fatal.

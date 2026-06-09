@@ -1,7 +1,9 @@
 package main
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -71,6 +73,44 @@ func TestCheckCmd_JSONEmitsSummary(t *testing.T) {
 	// Newline-terminated single object (no NDJSON banter).
 	if strings.Count(out, "\n") != 0 {
 		t.Errorf("stdout has %d newlines, want a single line", strings.Count(out, "\n"))
+	}
+}
+
+func TestCheckCmd_DefaultsToXrayToml(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH; check requires it")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "xray.toml"), []byte(validTOML), 0o600); err != nil {
+		t.Fatalf("write xray.toml: %v", err)
+	}
+	t.Chdir(dir)
+
+	root, out, _ := newTestRoot(t)
+	root.SetArgs([]string{"check", "--no-cost-preview"})
+	_ = root.Execute() // ls-remote outcome irrelevant; deterministic lines suffice
+
+	got := out.String()
+	if !strings.Contains(got, "ok  config valid") {
+		t.Errorf("check (no arg) stdout missing config-valid line: %q", got)
+	}
+}
+
+func TestCheckCmd_MissingDefaultReportsSpecificError(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	root, _, errBuf := newTestRoot(t)
+	root.SetArgs([]string{"check"})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("check err = nil, want non-nil with no xray.toml in cwd")
+	}
+	if code := exitCodeFor(err); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(errBuf.String(), "xray.toml not found in current directory; pass a path or run `xray init`") {
+		t.Errorf("stderr = %q, want specific missing-default diagnostic", errBuf.String())
 	}
 }
 

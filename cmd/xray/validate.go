@@ -18,11 +18,14 @@ type validateResult struct {
 
 func newValidateCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "validate <config>",
+		Use:   "validate [config]",
 		Short: "Offline syntactic and schema check on a config file",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path := args[0]
+			path, err := resolveConfigPath(cmd, args)
+			if err != nil {
+				return err
+			}
 			mode, err := ResolveMode(flagOutput, flagQuiet)
 			if err != nil {
 				return silentCode(err, 1)
