@@ -66,7 +66,7 @@ func NewTTYSink(w io.Writer) *TTYSink {
 		w:     w,
 		cells: map[cellKey]*cell{},
 		tick:  200 * time.Millisecond,
-		nowFn: func() time.Time { return time.Now() },
+		nowFn: time.Now,
 	}
 }
 

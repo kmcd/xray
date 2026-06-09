@@ -12,7 +12,7 @@ LDFLAGS := -s -w \
 
 export CGO_ENABLED := 0
 
-.PHONY: build test lint vuln coverage gates release-snapshot clean
+.PHONY: build test lint vuln coverage gates sweep release-snapshot clean
 
 build:
 	go build -trimpath -ldflags "$(LDFLAGS)" -o xray ./cmd/xray
@@ -32,6 +32,21 @@ coverage:
 
 # Run every gate the CI pipeline runs. Use before pushing to main.
 gates: lint vuln coverage
+
+# Once-per-quarter code-quality sweep — not in CI (see ADR 029).
+# Install:
+#   go install golang.org/x/tools/cmd/deadcode@latest
+#   go install go.uber.org/nilaway/cmd/nilaway@latest
+# (gocritic ships with golangci-lint; gopls already on PATH for IDEs.)
+sweep:
+	@echo "== deadcode =="
+	@deadcode ./... || true
+	@echo
+	@echo "== nilaway =="
+	@nilaway -include-pkgs=github.com/kmcd/xray ./... || true
+	@echo
+	@echo "== gocritic =="
+	@golangci-lint run --default=none --enable=gocritic --enable-only || true
 
 release-snapshot:
 	goreleaser release --snapshot --clean
