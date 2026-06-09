@@ -4,12 +4,12 @@
 profile: coverage.out
 local-prefix: github.com/kmcd/xray
 
-# v0.2.0 thresholds. Per-package catches "agent added code with no test"
-# regressions in the non-HTTP packages where unit-test coverage is realistic
-# without VCR fixtures. HTTP-bound connector subpackages are excluded
-# wholesale — exhaustive pagination/auth/retry coverage needs recorded
-# fixtures we don't yet ship; tighten the exclusion as VCR-style harnesses
-# land. Per-file threshold stays at 0 to avoid noisy per-file flags.
+# v0.3.0 thresholds. Per-package catches "agent added code with no test"
+# regressions in packages where unit-test coverage is realistic. The
+# githubactions connector is un-excluded after VCR cassettes landed in #66.
+# The remaining four HTTP-bound connector subpackages (bugsnag, circleci,
+# honeycomb, sentry) stay excluded until their cassettes land.
+# Per-file threshold stays at 0 to avoid noisy per-file flags.
 threshold:
   file: 0
   package: 30
@@ -25,6 +25,11 @@ exclude:
     # Parent packages with no executable code of their own.
     - ^internal/connector/
     - ^internal/archive/
-    # HTTP-bound connector subpackages. Excluded until VCR fixtures land;
-    # the matching parent `^internal/connectors/` covers every subpackage.
-    - ^internal/connectors/
+    # VCR test-helper package; exercised indirectly, not worth gating.
+    - ^internal/connectors/vcr
+    # HTTP-bound connector subpackages. Excluded until VCR fixtures land.
+    # githubactions is un-excluded (VCR cassettes shipped in #66).
+    - ^internal/connectors/bugsnag
+    - ^internal/connectors/circleci
+    - ^internal/connectors/honeycomb
+    - ^internal/connectors/sentry
