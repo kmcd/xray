@@ -103,6 +103,28 @@ make lint
 
 Requires Go 1.23 or later. CGO is not used and is disabled in release builds.
 
+## Trust
+
+`xray` is intended to be run inside the customer's environment by the
+customer's own operator, against the customer's own credentials, and the
+artifact it produces is meant to survive a security review. The four
+documents below describe what the binary does, what it cannot do, and
+what a representative run actually looks like.
+
+- [`docs/security.md`](docs/security.md) — what is captured, what is
+  not, and the guarantees the binary makes (read-only, no source
+  content, no secrets in the artifact, team-level only, logs).
+- [`docs/threat-model.md`](docs/threat-model.md) — one-page trust
+  boundaries, attack surface, malicious-binary and leaked-artifact
+  analysis.
+- [`docs/sample-manifest.json`](docs/sample-manifest.json) — a real,
+  redacted `manifest.json` showing the `extraction_provenance` block
+  with mixed-state endpoints, real row counts, and an error entry.
+- [`docs/sample-run.log`](docs/sample-run.log) — the matching `.log`
+  file demonstrating no tokens, per-phase logs, a rate-limit wait, a
+  permission-gated 403 → `EndpointStatus{accessible: false}` flow,
+  and the post-run summary.
+
 ## License
 
 TBD.
