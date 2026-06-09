@@ -75,7 +75,8 @@ func TestRetryOn429WithRetryAfter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
-	if resp.StatusCode != 200 {
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status: got %d want 200", resp.StatusCode)
 	}
 	if got := atomic.LoadInt32(&calls); got != 2 {
@@ -97,7 +98,8 @@ func TestRetryOn5xx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
-	if resp.StatusCode != 200 {
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status: got %d want 200", resp.StatusCode)
 	}
 	if got := atomic.LoadInt32(&calls); got != 3 {
@@ -124,7 +126,8 @@ func TestRetryOnSecondaryRateLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
-	if resp.StatusCode != 200 {
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
 		t.Errorf("final status = %d, want 200", resp.StatusCode)
 	}
 	if got := atomic.LoadInt32(&calls); got != 2 {
@@ -145,7 +148,8 @@ func TestNoRetryOnPlain403(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
-	if resp.StatusCode != 403 {
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("final status = %d, want 403", resp.StatusCode)
 	}
 	if got := atomic.LoadInt32(&calls); got != 1 {
@@ -183,7 +187,8 @@ func TestPerErrorClassBudgets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
-	if resp.StatusCode != 200 {
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
 		t.Errorf("final status = %d, want 200", resp.StatusCode)
 	}
 	if got := atomic.LoadInt32(&calls); got != 3 {
@@ -206,6 +211,7 @@ func TestSecondaryRateLimitBodyReattached(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
+	defer resp.Body.Close()
 	got, _ := io.ReadAll(resp.Body)
 	if string(got) != body {
 		t.Errorf("body after peek = %q, want %q", string(got), body)
@@ -223,7 +229,8 @@ func TestNoRetryOn400(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
-	if resp.StatusCode != 400 {
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status: got %d want 400", resp.StatusCode)
 	}
 	if got := atomic.LoadInt32(&calls); got != 1 {
@@ -242,11 +249,14 @@ func TestContextCancellation(t *testing.T) {
 		cancel()
 	}()
 	p := ratelimit.Policy{MaxAttempts: 3, CumulativeBudget: 5 * time.Minute}
-	_, err := ratelimit.Do(ctx, p, nil, fn)
+	resp, err := ratelimit.Do(ctx, p, nil, fn)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
 	if err == nil {
 		t.Fatalf("expected error on cancellation")
 	}
-	if err != context.Canceled {
+	if !errors.Is(err, context.Canceled) {
 		t.Errorf("err: got %v want context.Canceled", err)
 	}
 }
@@ -266,7 +276,8 @@ func TestXRateLimitReset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
-	if resp.StatusCode != 200 {
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status: got %d want 200", resp.StatusCode)
 	}
 }
@@ -285,7 +296,8 @@ func TestNetworkErrorRetries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
-	if resp.StatusCode != 200 {
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status: got %d want 200", resp.StatusCode)
 	}
 }
@@ -335,6 +347,7 @@ func TestLowWaterMarkSleep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second RoundTrip: %v", err)
 	}
+	defer resp2.Body.Close()
 	if resp2.StatusCode != http.StatusOK {
 		t.Errorf("status: got %d want 200", resp2.StatusCode)
 	}
@@ -584,6 +597,9 @@ func TestLowWaterMarkContextCancel(t *testing.T) {
 	start := time.Now()
 	resp2, err := transport.RoundTrip(req2)
 	elapsed := time.Since(start)
+	if resp2 != nil {
+		_ = resp2.Body.Close()
+	}
 
 	// The request was never issued; cancellation during pacing returns an error.
 	if !errors.Is(err, context.Canceled) {

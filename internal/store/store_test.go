@@ -30,7 +30,7 @@ func TestOpenAppliesDDLAndRecordsSchema(t *testing.T) {
 
 	var sv int
 	var tv, at string
-	if err := db.QueryRow(`SELECT schema_version, tool_version, applied_at FROM _schema`).Scan(&sv, &tv, &at); err != nil {
+	if err := db.QueryRowContext(t.Context(), `SELECT schema_version, tool_version, applied_at FROM _schema`).Scan(&sv, &tv, &at); err != nil {
 		t.Fatalf("query _schema: %v", err)
 	}
 	if sv != model.SchemaVersion {
@@ -198,7 +198,7 @@ func TestNullableTimePointer(t *testing.T) {
 	}
 	defer db.Close()
 	var merged sql.NullString
-	if err := db.QueryRow(`SELECT merged_at FROM prs WHERE number = 99`).Scan(&merged); err != nil {
+	if err := db.QueryRowContext(t.Context(), `SELECT merged_at FROM prs WHERE number = 99`).Scan(&merged); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
 	if merged.Valid {

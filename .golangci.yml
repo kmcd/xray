@@ -6,8 +6,11 @@ run:
 linters:
   default: none
   enable:
+    - bodyclose
+    - depguard
     - dupl
     - errcheck
+    - errorlint
     - funlen
     - gocognit
     - gocyclo
@@ -16,9 +19,14 @@ linters:
     - ineffassign
     - misspell
     - nestif
+    - noctx
+    - prealloc
     - revive
     - staticcheck
+    - unconvert
     - unused
+    - usestdlibvars
+    - wastedassign
   settings:
     # Practitioner-named sensors for AI-generated code (Böckeler,
     # Thoughtworks). Catch oversized functions, deep nesting, and copy-paste
@@ -38,6 +46,19 @@ linters:
       min-complexity: 9
     dupl:
       threshold: 400
+    depguard:
+      # Encode the core/connector seam from CLAUDE.md as a lint-time rule:
+      # core defines the canonical model + connector contract; concrete
+      # connectors depend on core, never the reverse. Until now the seam was
+      # enforced by code review only.
+      rules:
+        core-no-connectors:
+          list-mode: lax
+          files:
+            - "**/internal/connector/**"
+          deny:
+            - pkg: "github.com/kmcd/xray/internal/connectors"
+              desc: "internal/connector defines the contract; concrete connectors depend on it, not the reverse"
     errcheck:
       exclude-functions:
         # Stdio writes and defer-close are idiomatic; their errors are not
@@ -84,3 +105,23 @@ linters:
           - gocognit
           - gocyclo
           - nestif
+      # internal/store/store.go is a serial, post-extract artifact writer
+      # against a local SQLite file. Cancel-mid-write doesn't add value
+      # (same character as the archive.WriteTarGz step per ADR 028 — runs
+      # once, after the worker pool drains). Threading ctx through every
+      # InsertX method is a substantive refactor; revisit if a future
+      # scenario surfaces a real need.
+      - path: ^internal/store/store\.go$
+        linters:
+          - noctx
+      # DDL-roundtrip and postprocess tests exercise ~70 in-memory SQLite
+      # calls. ctx threading buys no behaviour change in tests that hold
+      # the DB lifetime entirely within a single subtest; the noctx sensor
+      # still fires on production callers and on any non-DB ctx-less calls
+      # within these files.
+      - path: ^internal/model/schema_test\.go$
+        linters:
+          - noctx
+      - path: ^internal/postprocess/postprocess_test\.go$
+        linters:
+          - noctx

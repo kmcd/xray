@@ -158,7 +158,7 @@ func installInsteadOf(t *testing.T, slugToBare map[string]string) {
 
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
 	// Isolate from the user's git config so fixture commits are deterministic.
 	cmd.Env = append(os.Environ(),
@@ -259,7 +259,7 @@ func TestRun_EndToEnd_StubConnector(t *testing.T) {
 	defer db.Close()
 
 	var sv int
-	if err := db.QueryRow(`SELECT schema_version FROM _schema`).Scan(&sv); err != nil {
+	if err := db.QueryRowContext(t.Context(), `SELECT schema_version FROM _schema`).Scan(&sv); err != nil {
 		t.Fatalf("schema_version: %v", err)
 	}
 	if sv != model.SchemaVersion {
@@ -268,14 +268,14 @@ func TestRun_EndToEnd_StubConnector(t *testing.T) {
 
 	// Row counts in the DB match what the stub inserted.
 	var commitCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo = ?`, slug).Scan(&commitCount); err != nil {
+	if err := db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM commits WHERE repo = ?`, slug).Scan(&commitCount); err != nil {
 		t.Fatalf("count commits: %v", err)
 	}
 	if commitCount != stub.commits {
 		t.Errorf("commits: got %d want %d", commitCount, stub.commits)
 	}
 	var prCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM prs WHERE repo = ?`, slug).Scan(&prCount); err != nil {
+	if err := db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM prs WHERE repo = ?`, slug).Scan(&prCount); err != nil {
 		t.Fatalf("count prs: %v", err)
 	}
 	if prCount != stub.prs {
@@ -399,11 +399,11 @@ func TestRun_PostprocessSurfaced(t *testing.T) {
 
 	// D[1] should be marked rolled_back, D[2] should point at D[1].
 	var rolled int
-	if err := db.QueryRow(`SELECT rolled_back FROM deploys WHERE id = 'd1' AND repo = ?`, slug).Scan(&rolled); err != nil {
+	if err := db.QueryRowContext(t.Context(), `SELECT rolled_back FROM deploys WHERE id = 'd1' AND repo = ?`, slug).Scan(&rolled); err != nil {
 		t.Fatalf("query d1: %v", err)
 	}
 	var supersedes sql.NullString
-	if err := db.QueryRow(`SELECT supersedes_deploy_id FROM deploys WHERE id = 'd2' AND repo = ?`, slug).Scan(&supersedes); err != nil {
+	if err := db.QueryRowContext(t.Context(), `SELECT supersedes_deploy_id FROM deploys WHERE id = 'd2' AND repo = ?`, slug).Scan(&supersedes); err != nil {
 		t.Fatalf("query d2: %v", err)
 	}
 

@@ -110,11 +110,14 @@ func TestCostInterceptor_PropagatesReadError(t *testing.T) {
 		base:   http.DefaultTransport,
 		onCost: func(int, int) {},
 	}
-	req, err := http.NewRequest(http.MethodPost, srv.URL+"/graphql", strings.NewReader(`{}`))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL+"/graphql", strings.NewReader(`{}`))
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
 	resp, err := ci.RoundTrip(req)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
 	if err == nil {
 		t.Fatalf("RoundTrip: expected error on truncated body, got nil (resp=%v)", resp)
 	}

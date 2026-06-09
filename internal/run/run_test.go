@@ -181,7 +181,7 @@ func readTarGz(t *testing.T, path string) map[string][]byte {
 	out := map[string][]byte{}
 	for {
 		hdr, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

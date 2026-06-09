@@ -32,7 +32,7 @@ func setupCloneWithRemoteRefs(t *testing.T, branches []string) string {
 	dir := t.TempDir()
 	run := func(args ...string) {
 		// #nosec G204 -- args are test-controlled literals.
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
@@ -44,7 +44,7 @@ func setupCloneWithRemoteRefs(t *testing.T, branches []string) string {
 	run("config", "commit.gpgsign", "false")
 	// Empty commit so HEAD has a SHA to point refs at.
 	run("commit", "--allow-empty", "-q", "-m", "seed")
-	headOut, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	headOut, err := exec.CommandContext(t.Context(), "git", "-C", dir, "rev-parse", "HEAD").Output()
 	if err != nil {
 		t.Fatalf("rev-parse HEAD: %v", err)
 	}

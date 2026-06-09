@@ -14,7 +14,7 @@ import (
 // runShell runs git in dir with args and t.Fatal's on error.
 func runShell(t *testing.T, dir string, env []string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
 	// Always set a deterministic environment for git so author/committer info
 	// is reproducible across hosts.
@@ -99,7 +99,8 @@ func setupRepo(t *testing.T) *fixture {
 
 	commit := func(dateOffset int, env []string, msg string) (string, time.Time) {
 		ts, iso := fixedDate(dateOffset)
-		dateEnv := []string{"GIT_AUTHOR_DATE=" + iso, "GIT_COMMITTER_DATE=" + iso}
+		dateEnv := make([]string, 0, 2+len(env))
+		dateEnv = append(dateEnv, "GIT_AUTHOR_DATE="+iso, "GIT_COMMITTER_DATE="+iso)
 		runShell(t, dir, append(dateEnv, env...), "commit", "-m", msg)
 		sha := strings.TrimSpace(runShell(t, dir, nil, "rev-parse", "HEAD"))
 		return sha, ts
@@ -140,7 +141,7 @@ func setupRepo(t *testing.T) *fixture {
 		"author  <alice@example.com> " + strconv.FormatInt(eoTime.Unix(), 10) + " +0000\n" +
 		"committer Test Committer <committer@example.com> " + strconv.FormatInt(eoTime.Unix(), 10) + " +0000\n" +
 		"\nemail-only author\n"
-	hashCmd := exec.Command("git", "hash-object", "-w", "-t", "commit", "--stdin")
+	hashCmd := exec.CommandContext(t.Context(), "git", "hash-object", "-w", "-t", "commit", "--stdin")
 	hashCmd.Dir = dir
 	hashCmd.Stdin = strings.NewReader(commitObj)
 	hashCmd.Env = append(os.Environ(),
@@ -619,7 +620,7 @@ func TestClient_LsFiles(t *testing.T) {
 	dir := t.TempDir()
 	run := func(args ...string) {
 		// #nosec G204
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(),
 			"GIT_TERMINAL_PROMPT=0",

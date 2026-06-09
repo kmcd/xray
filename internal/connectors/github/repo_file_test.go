@@ -41,7 +41,7 @@ func setupRepoFileFixture(t *testing.T) string {
 	dir := t.TempDir()
 	run := func(args ...string) {
 		// #nosec G204 -- args are test-controlled literals.
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(),
 			"GIT_TERMINAL_PROMPT=0",
@@ -188,7 +188,7 @@ func setupMinimalRepo(t *testing.T, files map[string]string) string {
 	dir := t.TempDir()
 	gitRun := func(args ...string) {
 		// #nosec G204 -- args are test-controlled literals.
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(),
 			"GIT_TERMINAL_PROMPT=0",

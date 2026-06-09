@@ -117,7 +117,7 @@ func TestMailmap_SmokeAgainstCheckMailmap(t *testing.T) {
 
 	run := func(env []string, args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(),
 			"GIT_TERMINAL_PROMPT=0",
@@ -182,7 +182,7 @@ func TestMailmap_SmokeAgainstCheckMailmap(t *testing.T) {
 		{"Alice", "alice@old.example.com"},
 		{"Alice", "alice@new.example.com"},
 	}
-	var resolvedEmails []string
+	resolvedEmails := make([]string, 0, len(cases))
 	for _, ident := range cases {
 		gotName, gotEmail := mm.Resolve(ident.name, ident.email)
 		if gotName != "Alice" {

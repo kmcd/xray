@@ -183,7 +183,7 @@ func doWithHooks(ctx context.Context, p Policy, log *slog.Logger, h hooks, fn fu
 			if lastResp != nil {
 				return lastResp, ErrBudgetExceeded
 			}
-			return nil, fmt.Errorf("%w: %v", ErrBudgetExceeded, lastErr)
+			return nil, fmt.Errorf("%w: %w", ErrBudgetExceeded, lastErr)
 		}
 		*thisSpent += wait
 

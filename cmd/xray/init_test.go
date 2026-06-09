@@ -158,7 +158,7 @@ func TestInitCmd_FilledScaffoldValidatesCleanly(t *testing.T) {
 		t.Fatalf("load filled: %v", err)
 	}
 	if diags := config.Validate(cfg, meta, outPath); len(diags) != 0 {
-		got := []string{}
+		got := make([]string, 0, len(diags))
 		for _, d := range diags {
 			got = append(got, d.Error())
 		}
