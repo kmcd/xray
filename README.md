@@ -66,7 +66,7 @@ xray check xray.toml
 xray run xray.toml
 
 # Machine-readable output. One NDJSON event per progress tick, terminated
-# by a {"kind":"summary",...} object on stdout. See docs/spec.md.
+# by a {"kind":"run_summary",...} object on stdout. See docs/spec.md.
 xray run xray.toml --output json | jq .
 
 # Quiet success: only the artifact path is written to stdout.
