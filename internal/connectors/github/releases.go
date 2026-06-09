@@ -34,6 +34,10 @@ func (c *Connector) extractReleases(ctx context.Context, repo connector.Repo, wi
 		rels, resp, err := c.rest.Repositories.ListReleases(ctx, owner, name, opts)
 		if err != nil {
 			prov.Errors["releases"] = err.Error()
+			prov.Endpoints["releases"] = connector.EndpointStatus{
+				Accessible: false,
+				Reason:     err.Error(),
+			}
 			c.log.Warn("github: list releases",
 				slog.String("repo", repo.Slug),
 				slog.String("error", err.Error()),
@@ -98,6 +102,7 @@ func (c *Connector) extractReleases(ctx context.Context, repo connector.Repo, wi
 		}
 		opts.Page = resp.NextPage
 	}
+	prov.Endpoints["releases"] = connector.EndpointStatus{Accessible: true}
 }
 
 // resolveReleaseSHA returns the commit SHA the release's tag points at.

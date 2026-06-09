@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"strings"
+
+	"github.com/kmcd/xray/internal/connector"
 )
 
 // template captures the section headings extracted from a repo's
@@ -15,8 +17,15 @@ type template struct {
 
 // fetchTemplate loads .github/PULL_REQUEST_TEMPLATE.md for the given repo
 // and returns its parsed headings. The result is cached per slug. Returns
-// (nil, nil) when the template is absent; (nil, err) on real errors.
-func (c *Connector) fetchTemplate(ctx context.Context, slug string) (*template, error) {
+// (nil, nil) when the template is absent or when the endpoint is forbidden
+// (403); (nil, err) on other errors so the caller can log them.
+//
+// prov.Endpoints["pr_template"] is written on every API-touching path:
+//   - 404 (file absent) -> Accessible: true (endpoint reachable, file not there)
+//   - 403 (token lacks scope) -> Accessible: false
+//   - other err (5xx/network) -> Accessible: false; err bubbled
+//   - success -> Accessible: true
+func (c *Connector) fetchTemplate(ctx context.Context, slug string, prov *connector.Provenance) (*template, error) {
 	c.mu.Lock()
 	if t, ok := c.templateCache[slug]; ok {
 		c.mu.Unlock()
@@ -31,6 +40,17 @@ func (c *Connector) fetchTemplate(ctx context.Context, slug string) (*template, 
 	file, _, resp, err := c.rest.Repositories.GetContents(ctx, owner, name, ".github/PULL_REQUEST_TEMPLATE.md", nil)
 	if err != nil {
 		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			prov.Endpoints["pr_template"] = connector.EndpointStatus{Accessible: true}
+			c.mu.Lock()
+			c.templateCache[slug] = nil
+			c.mu.Unlock()
+			return nil, nil
+		}
+		prov.Endpoints["pr_template"] = connector.EndpointStatus{
+			Accessible: false,
+			Reason:     err.Error(),
+		}
+		if resp != nil && resp.StatusCode == http.StatusForbidden {
 			c.mu.Lock()
 			c.templateCache[slug] = nil
 			c.mu.Unlock()
@@ -38,6 +58,7 @@ func (c *Connector) fetchTemplate(ctx context.Context, slug string) (*template, 
 		}
 		return nil, err
 	}
+	prov.Endpoints["pr_template"] = connector.EndpointStatus{Accessible: true}
 	if file == nil {
 		c.mu.Lock()
 		c.templateCache[slug] = nil

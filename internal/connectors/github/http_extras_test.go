@@ -224,6 +224,40 @@ func TestExtractReleases(t *testing.T) {
 	if len(sink.deploys) != 1 {
 		t.Errorf("expected 1 deploy, got %d", len(sink.deploys))
 	}
+	if ep := prov.Endpoints["releases"]; !ep.Accessible {
+		t.Errorf("expected endpoints[releases].Accessible=true after clean walk, got %+v", ep)
+	}
+}
+
+func TestExtractReleases_Forbidden(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/kmcd/foo/releases", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"forbidden"}`, http.StatusForbidden)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestConnector(t, srv)
+	sink := &extraSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
+	c.extractReleases(context.Background(), connector.Repo{Slug: "kmcd/foo"}, standardWindow(), sink, &prov)
+
+	if len(sink.releases) != 0 {
+		t.Errorf("expected 0 release rows on 403, got %d", len(sink.releases))
+	}
+	ep, ok := prov.Endpoints["releases"]
+	if !ok {
+		t.Fatalf("expected endpoints[releases] entry on 403")
+	}
+	if ep.Accessible {
+		t.Errorf("expected Accessible=false on 403; got %+v", ep)
+	}
+	if ep.Reason == "" {
+		t.Errorf("expected Reason populated on 403; got empty")
+	}
+	if prov.RowsReturned["releases"] != 0 {
+		t.Errorf("expected RowsReturned[releases]=0 on 403; got %d", prov.RowsReturned["releases"])
+	}
 }
 
 func TestIsFullSHA(t *testing.T) {

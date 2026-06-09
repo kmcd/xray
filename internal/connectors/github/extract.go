@@ -139,44 +139,71 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 // (already resolved by the caller from the local clone); the rest is
 // pulled from the API.
 func (c *Connector) insertRepoRow(ctx context.Context, repo connector.Repo, window connector.Window, sink connector.Sink, prov *connector.Provenance) error {
-	owner, name, ok := splitSlug(repo.Slug)
 	row := model.Repo{
 		Slug:          repo.Slug,
 		DefaultBranch: repo.DefaultBranch,
 		HeadSHA:       repo.HeadSHA,
 		Team:          repo.Team,
 	}
-	if ok {
-		r, _, err := c.rest.Repositories.Get(ctx, owner, name)
-		if err == nil && r != nil {
-			row.PrimaryLanguage = r.GetLanguage()
-			if r.CreatedAt != nil {
-				t := r.CreatedAt.UTC()
-				row.CreatedAt = &t
-			}
-			row.IsFork = r.GetFork()
-			row.IsArchived = r.GetArchived()
-			row.Visibility = r.GetVisibility()
-			if row.DefaultBranch == "" {
-				row.DefaultBranch = r.GetDefaultBranch()
-			}
-		} else if err != nil {
-			c.log.Warn("github: get repo metadata",
-				slog.String("repo", repo.Slug),
-				slog.String("error", err.Error()),
-			)
-		}
-
-		// Contributor count via list endpoint (anon=true, per_page=1, walk Link).
-		if n, err := c.countContributors(ctx, owner, name); err == nil {
-			row.ContributorCount = n
-		}
+	if owner, name, ok := splitSlug(repo.Slug); ok {
+		c.enrichRepoMetadata(ctx, repo.Slug, owner, name, &row, prov)
+		c.enrichContributorCount(ctx, owner, name, &row, prov)
 	}
 	if err := sink.InsertRepo(row); err != nil {
 		return err
 	}
 	prov.RowsReturned["repos"]++
 	return nil
+}
+
+// enrichRepoMetadata fills repo-row enrichment fields from the REST repo-Get
+// endpoint and records EndpointStatus["repo_metadata"] on every code path.
+func (c *Connector) enrichRepoMetadata(ctx context.Context, slug, owner, name string, row *model.Repo, prov *connector.Provenance) {
+	r, _, err := c.rest.Repositories.Get(ctx, owner, name)
+	if err != nil {
+		prov.Endpoints["repo_metadata"] = connector.EndpointStatus{
+			Accessible: false,
+			Reason:     err.Error(),
+		}
+		c.log.Warn("github: get repo metadata",
+			slog.String("repo", slug),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	prov.Endpoints["repo_metadata"] = connector.EndpointStatus{Accessible: true}
+	if r == nil {
+		return
+	}
+	row.PrimaryLanguage = r.GetLanguage()
+	if r.CreatedAt != nil {
+		t := r.CreatedAt.UTC()
+		row.CreatedAt = &t
+	}
+	row.IsFork = r.GetFork()
+	row.IsArchived = r.GetArchived()
+	row.Visibility = r.GetVisibility()
+	if row.DefaultBranch == "" {
+		row.DefaultBranch = r.GetDefaultBranch()
+	}
+}
+
+// enrichContributorCount populates ContributorCount via the contributors list
+// endpoint and records EndpointStatus["contributors"] on every code path.
+func (c *Connector) enrichContributorCount(ctx context.Context, owner, name string, row *model.Repo, prov *connector.Provenance) {
+	n, err := c.countContributors(ctx, owner, name)
+	if err != nil {
+		prov.Endpoints["contributors"] = connector.EndpointStatus{
+			Accessible: false,
+			Reason:     err.Error(),
+		}
+		if prov.Errors["contributors"] == "" {
+			prov.Errors["contributors"] = err.Error()
+		}
+		return
+	}
+	prov.Endpoints["contributors"] = connector.EndpointStatus{Accessible: true}
+	row.ContributorCount = n
 }
 
 // countContributors returns the total number of contributors by paginating

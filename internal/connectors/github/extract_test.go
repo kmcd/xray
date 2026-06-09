@@ -44,6 +44,54 @@ func TestInsertRepoRow(t *testing.T) {
 	if prov.RowsReturned["repos"] != 1 {
 		t.Errorf("expected provenance.repos++; got %d", prov.RowsReturned["repos"])
 	}
+	if ep := prov.Endpoints["repo_metadata"]; !ep.Accessible {
+		t.Errorf("expected endpoints[repo_metadata].Accessible=true on success, got %+v", ep)
+	}
+	if ep := prov.Endpoints["contributors"]; !ep.Accessible {
+		t.Errorf("expected endpoints[contributors].Accessible=true on success, got %+v", ep)
+	}
+}
+
+func TestInsertRepoRow_Forbidden(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/kmcd/foo", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"forbidden"}`, http.StatusForbidden)
+	})
+	mux.HandleFunc("/repos/kmcd/foo/contributors", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"forbidden"}`, http.StatusForbidden)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestConnector(t, srv)
+	sink := &extraSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
+	if err := c.insertRepoRow(context.Background(), connector.Repo{Slug: "kmcd/foo"}, standardWindow(), sink, &prov); err != nil {
+		t.Fatalf("insertRepoRow: %v", err)
+	}
+	ep, ok := prov.Endpoints["repo_metadata"]
+	if !ok {
+		t.Fatalf("expected endpoints[repo_metadata] entry on 403")
+	}
+	if ep.Accessible {
+		t.Errorf("repo_metadata Accessible=false expected on 403; got %+v", ep)
+	}
+	if ep.Reason == "" {
+		t.Errorf("repo_metadata Reason expected on 403; got empty")
+	}
+	cep, ok := prov.Endpoints["contributors"]
+	if !ok {
+		t.Fatalf("expected endpoints[contributors] entry on 403")
+	}
+	if cep.Accessible {
+		t.Errorf("contributors Accessible=false expected on 403; got %+v", cep)
+	}
+	if cep.Reason == "" {
+		t.Errorf("contributors Reason expected on 403; got empty")
+	}
+	if prov.Errors["contributors"] == "" {
+		t.Errorf("expected prov.Errors[contributors] populated on 403; got empty")
+	}
 }
 
 func TestCountContributors(t *testing.T) {

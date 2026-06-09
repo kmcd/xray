@@ -415,7 +415,7 @@ func isTransientEOF(err error) bool {
 // the per-row emit; lifting it into fetchPRs would burn an extra REST
 // round-trip during the prefetch path with no upside.
 func (c *Connector) emitPRs(ctx context.Context, repo connector.Repo, nodes []prGraph, sink connector.Sink, prov *connector.Provenance) {
-	tpl, err := c.fetchTemplate(ctx, repo.Slug)
+	tpl, err := c.fetchTemplate(ctx, repo.Slug, prov)
 	if err != nil {
 		c.log.Warn("github: fetch PR template",
 			slog.String("repo", repo.Slug),
