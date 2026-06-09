@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -11,6 +13,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kmcd/xray/internal/config"
+	"github.com/kmcd/xray/internal/connector"
+	"github.com/kmcd/xray/internal/progress"
 	"github.com/kmcd/xray/internal/run"
 )
 
@@ -60,7 +64,14 @@ func newRunCmd() *cobra.Command {
 			}
 
 			loggerQuiet := flagQuiet || mode == ModeQuiet || mode == ModeJSON
-			logger := run.NewLogger(flagVerbose, loggerQuiet)
+
+			// TTY-grid mode owns stdout for the grid and would clash with
+			// any stderr log lines on the same terminal. When active, route
+			// the logger only to the run log file (or discard, if
+			// --no-run-log).
+			ttyGrid := mode == ModeAuto && stdoutIsTTY(cmd)
+
+			var logFile *os.File
 			if !opts.noRunLog {
 				logPath := strings.TrimSuffix(outPath, ".tar.gz") + ".log"
 				// #nosec G304 -- logPath derived from user-supplied --out; O_APPEND preserves prior runs.
@@ -69,8 +80,22 @@ func newRunCmd() *cobra.Command {
 					fmt.Fprintf(errOut, "warn: could not create run log %s: %v\n", logPath, ferr)
 				} else {
 					defer lf.Close()
-					logger = run.NewLogger(flagVerbose, loggerQuiet, lf)
+					logFile = lf
 				}
+			}
+
+			var logger *slog.Logger
+			switch {
+			case ttyGrid && logFile != nil:
+				logger = run.NewLoggerNoStderr(flagVerbose, loggerQuiet, logFile)
+			case ttyGrid:
+				// --no-run-log + auto + TTY: nowhere to land logs without
+				// clobbering the grid. Drop them; the grid is the UI.
+				logger = run.NewLoggerNoStderr(flagVerbose, loggerQuiet)
+			case logFile != nil:
+				logger = run.NewLogger(flagVerbose, loggerQuiet, logFile)
+			default:
+				logger = run.NewLogger(flagVerbose, loggerQuiet)
 			}
 
 			ctx := withLogger(cmd.Context(), logger)
@@ -80,6 +105,9 @@ func newRunCmd() *cobra.Command {
 				return fmt.Errorf("connector setup: %w", err)
 			}
 
+			sink, stopSink := buildProgressSink(ctx, cmd, mode, logger, cfg, connectors, opts.workers)
+			defer stopSink()
+
 			artifact, err := run.Run(ctx, cfg, run.Options{
 				Out:         outPath,
 				Workers:     opts.workers,
@@ -87,7 +115,12 @@ func newRunCmd() *cobra.Command {
 				Connectors:  connectors,
 				Logger:      logger,
 				ToolVersion: version,
+				Progress:    sink,
 			})
+			// Drain the progress sink before writing the summary line so
+			// the TTY grid finalises above "wrote …" instead of overlapping it.
+			stopSink()
+
 			switch {
 			case errors.Is(err, run.ErrPartial):
 				if mode != ModeQuiet && mode != ModeJSON {
@@ -108,6 +141,62 @@ func newRunCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.keepClones, "keep-clones", false, "skip cleanup of temp clones (debugging)")
 	cmd.Flags().BoolVar(&opts.noRunLog, "no-run-log", false, "disable run log file (mirrors stderr output alongside the artifact by default)")
 	return cmd
+}
+
+// buildProgressSink wires the right progress.Sink for the resolved
+// output mode. ModeAuto on a TTY gets the live status grid; everywhere
+// else (non-TTY auto, log, json, quiet) gets the appropriate fallback.
+// Returns the sink and a stop function — call stop before writing the
+// summary line so the grid finalises cleanly. stop is safe to call
+// multiple times.
+func buildProgressSink(
+	ctx context.Context,
+	cmd *cobra.Command,
+	mode Mode,
+	logger *slog.Logger,
+	cfg *config.Config,
+	connectors []connector.Connector,
+	workers int,
+) (progress.Sink, func()) {
+	stdout := cmd.OutOrStdout()
+	switch mode {
+	case ModeQuiet:
+		return progress.NopSink{}, func() {}
+	case ModeJSON:
+		return progress.NewJSONSink(stdout), func() {}
+	case ModeLog:
+		return progress.NewLogSink(logger, flagVerbose), func() {}
+	default: // ModeAuto
+		if !stdoutIsTTY(cmd) {
+			return progress.NewLogSink(logger, flagVerbose), func() {}
+		}
+		f := stdout.(*os.File)
+		tty := progress.NewTTYSink(f)
+		tty.Plan(cfg.AllRepos(), connectorNames(connectors), workers)
+		tty.Start(ctx)
+		return tty, tty.Stop
+	}
+}
+
+// stdoutIsTTY reports whether the command's stdout is a real terminal.
+// Used to decide between the TTY grid and the line-log fallback in
+// ModeAuto. Returns false whenever stdout is anything other than an
+// *os.File (the typical case in tests).
+func stdoutIsTTY(cmd *cobra.Command) bool {
+	f, ok := cmd.OutOrStdout().(*os.File)
+	if !ok {
+		return false
+	}
+	return IsTTY(f)
+}
+
+func connectorNames(cs []connector.Connector) []string {
+	out := make([]string, 0, len(cs)+1)
+	out = append(out, "clone")
+	for _, c := range cs {
+		out = append(out, c.Name())
+	}
+	return out
 }
 
 // emitRunSummary writes the final per-mode output line(s) for a run.

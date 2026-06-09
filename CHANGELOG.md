@@ -11,6 +11,7 @@ Breaking: `schema_version` bumps `1 → 2`. Author-identity columns now hold opa
 ### Operational
 
 - **run log file.** `xray run` now writes a `<artifact-stem>.log` sibling file alongside the `.tar.gz` by default, mirroring everything written to stderr. Useful for post-mortem inspection of runs on client machines where `2>&1 | tee` was not set up in advance. Opt out with `--no-run-log`. The file inherits the existing token-safety guarantee — the logging code never accepts credentials. ([#68])
+- **run-time status display.** `xray run` on a TTY (`--output auto`, the default) now renders a live `(repo × connector)` grid showing each pair's state (`▢ pending`, `● running`, `✔ done`, `✘ error`, `🔒 inaccessible`), elapsed wall-clock, a per-connector ETA, and the most recent rate-limit / retry message. The redraw runs at ~5 Hz via hand-rolled ANSI cursor-up + clear-to-end; no new dependency. Non-TTY runs (CI, pipe to file) fall back to one stderr log line per phase boundary, matching today's content plus structured `phase=…`, `repo=…`, `connector=…` tags. `--output log` forces the log fallback even on a TTY. The `internal/progress.Sink` contract underpinning the grid is the load-bearing seam for `cli-ux` follow-ups (rate-limit visibility #82, post-run summary #84). ([#81])
 
 ### Performance
 

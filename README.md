@@ -51,6 +51,18 @@ xray check xray.toml
 
 # Full extraction. Produces ./xray-export-<UTC-timestamp>.tar.gz and a
 # sibling .log file mirroring stderr (suppress with --no-run-log).
+# On a TTY, the default (--output auto) renders a live (repo × connector)
+# status grid:
+#
+#   xray run · elapsed 04:12 · ETA 14:47 ±2m · 3/4 workers
+#
+#   repo                clone           github           gh_actions       sentry
+#   kmcd/foo            ✔ done          ✔ 4213 rows      ● gh_actions     ✔ 312 rows
+#   kmcd/bar            ✔ done          ● prs            ▢ pending        🔒 inaccessible
+#   kmcd/baz            ● clone         ▢ pending        ▢ pending        ▢ pending
+#
+# Non-TTY (CI, pipe to file) falls back to a stderr log with one line
+# per phase boundary; force the log explicitly with --output log.
 xray run xray.toml
 
 # Machine-readable output. One NDJSON event per progress tick, terminated

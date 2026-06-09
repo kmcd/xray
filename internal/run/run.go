@@ -21,6 +21,7 @@ import (
 	"github.com/kmcd/xray/internal/manifest"
 	"github.com/kmcd/xray/internal/model"
 	"github.com/kmcd/xray/internal/postprocess"
+	"github.com/kmcd/xray/internal/progress"
 	"github.com/kmcd/xray/internal/store"
 )
 
@@ -47,7 +48,11 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (string, error) 
 	if opts.Workers <= 0 {
 		opts.Workers = 4
 	}
+	if opts.Progress == nil {
+		opts.Progress = progress.NopSink{}
+	}
 	log := opts.Logger
+	sink := opts.Progress
 
 	runID := newRunID()
 	startedAt := time.Now().UTC()
@@ -92,7 +97,18 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (string, error) 
 		go func(i int, slug, dest string) {
 			defer cloneWg.Done()
 			log.Info("run: cloning", slog.String("repo", slug))
+			sink.Emit(progress.Event{
+				Kind: progress.PhaseStart, Repo: slug, Connector: "clone", Phase: "clone", At: time.Now().UTC(),
+			})
 			clones[i] = cloneOneRepo(ctx, git, log, slug, dest, cfg, opts, win)
+			ev := progress.Event{Repo: slug, Connector: "clone", Phase: "clone", At: time.Now().UTC()}
+			if clones[i].err != nil {
+				ev.Kind = progress.PhaseError
+				ev.Message = clones[i].err.Error()
+			} else {
+				ev.Kind = progress.PhaseDone
+			}
+			sink.Emit(ev)
 		}(i, slug, dest)
 	}
 	cloneWg.Wait()
@@ -166,8 +182,12 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (string, error) 
 						slog.String("repo", j.repo.Slug),
 						slog.String("connector", j.conn.Name()),
 					)
+					sink.Emit(progress.Event{
+						Kind: progress.PhaseStart, Repo: j.repo.Slug, Connector: j.conn.Name(), Phase: j.conn.Name(), At: time.Now().UTC(),
+					})
 					p := j.conn.Extract(ctx, j.repo, win, st)
 					addProv(p)
+					emitExtractResult(sink, j.repo.Slug, j.conn.Name(), p)
 				}
 			}()
 		}
@@ -189,17 +209,26 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (string, error) 
 	// as a synthetic "postprocess" provenance entry but do NOT abort the
 	// run — the artifact still ships with whatever extraction produced.
 	ppProv := connector.NewProvenance("postprocess", "", win)
+	sink.Emit(progress.Event{
+		Kind: progress.PhaseStart, Phase: "postprocess", Message: "postprocess: linking", At: time.Now().UTC(),
+	})
 	if stats, err := postprocess.Run(ctx, st.DB(), log); err != nil {
 		log.Error("run: postprocess failed", slog.String("error", err.Error()))
 		ppProv.Errors["postprocess"] = err.Error()
 		ppProv.PaginationComplete = false
 		addProv(ppProv)
+		sink.Emit(progress.Event{
+			Kind: progress.PhaseError, Phase: "postprocess", Message: err.Error(), At: time.Now().UTC(),
+		})
 	} else {
 		log.Info("run: postprocess",
 			slog.Int("incidents_linked", stats.IncidentsLinked),
 			slog.Int("deploys_rolled_back", stats.DeploysRolledBack),
 			slog.Int("landed_via_pr_matched", stats.LandedViaPRMatched),
 		)
+		sink.Emit(progress.Event{
+			Kind: progress.PhaseDone, Phase: "postprocess", At: time.Now().UTC(),
+		})
 	}
 
 	// 4. Build manifest.
@@ -392,6 +421,66 @@ func sortProvs(in []connector.Provenance) []connector.Provenance {
 		return out[i].Connector < out[j].Connector
 	})
 	return out
+}
+
+// emitExtractResult translates a returned Provenance into the
+// PhaseDone / PhaseError / PhaseSkipped event the sink expects. The
+// classifier mirrors the manifest's existing logic: any populated
+// Errors map → PhaseError; otherwise an EndpointStatus with
+// Accessible=false at the top level → PhaseSkipped; otherwise
+// PhaseDone with the summed row count.
+func emitExtractResult(sink progress.Sink, repo, conn string, p connector.Provenance) {
+	at := time.Now().UTC()
+	if len(p.Errors) > 0 {
+		sink.Emit(progress.Event{
+			Kind: progress.PhaseError, Repo: repo, Connector: conn, Phase: conn,
+			Message: firstErrorMessage(p.Errors), At: at,
+		})
+		return
+	}
+	if anyEndpointInaccessible(p) {
+		sink.Emit(progress.Event{
+			Kind: progress.PhaseSkipped, Repo: repo, Connector: conn, Phase: conn, At: at,
+		})
+		return
+	}
+	var rows int64
+	for _, n := range p.RowsReturned {
+		rows += int64(n)
+	}
+	sink.Emit(progress.Event{
+		Kind: progress.PhaseDone, Repo: repo, Connector: conn, Phase: conn,
+		Done: rows, At: at,
+	})
+}
+
+// firstErrorMessage returns the value at the lexicographically first key in
+// errs. Map iteration in Go is unordered, so picking by sorted key keeps the
+// rendered message stable across reruns of the same provenance.
+func firstErrorMessage(errs map[string]string) string {
+	if len(errs) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(errs))
+	for k := range errs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return errs[keys[0]]
+}
+
+func anyEndpointInaccessible(p connector.Provenance) bool {
+	if len(p.RowsReturned) > 0 {
+		// Connector produced rows — even if some endpoints were
+		// permission-gated, the overall pair counts as done.
+		return false
+	}
+	for _, st := range p.Endpoints {
+		if !st.Accessible {
+			return true
+		}
+	}
+	return false
 }
 
 func hasErrors(provs []connector.Provenance) bool {
