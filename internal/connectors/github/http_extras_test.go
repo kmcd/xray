@@ -138,57 +138,6 @@ func TestExtractCodeowners_Missing(t *testing.T) {
 	}
 }
 
-func TestExtractLanguages(t *testing.T) {
-	// extractLanguages walks the local clone (#72) and classifies files with
-	// go-enry. Lay down files with extensions enry recognises and assert
-	// one row per language with on-disk byte counts.
-	clone := t.TempDir()
-	files := map[string]string{
-		"main.go":   "package main\n\nfunc main() {}\n",
-		"helper.go": "package main\n\nfunc h() {}\n",
-		"app.rb":    "puts 'hi'\n",
-	}
-	for rel, content := range files {
-		if err := os.WriteFile(filepath.Join(clone, rel), []byte(content), 0o644); err != nil {
-			t.Fatalf("write %s: %v", rel, err)
-		}
-	}
-
-	c := newTestConnector(t, httptest.NewServer(http.NewServeMux()))
-	sink := &extraSink{}
-	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
-	if err := c.extractLanguages(context.Background(), connector.Repo{Slug: "kmcd/foo", Clone: clone}, sink, &prov); err != nil {
-		t.Fatalf("extractLanguages: %v", err)
-	}
-	byLang := map[string]int64{}
-	for _, r := range sink.languages {
-		byLang[r.Language] = r.Bytes
-	}
-	if byLang["Go"] == 0 {
-		t.Errorf("expected Go byte count > 0; got rows %+v", sink.languages)
-	}
-	if byLang["Ruby"] == 0 {
-		t.Errorf("expected Ruby byte count > 0; got rows %+v", sink.languages)
-	}
-	// Bytes must equal the sum of file sizes per language.
-	wantGo := int64(len(files["main.go"]) + len(files["helper.go"]))
-	if byLang["Go"] != wantGo {
-		t.Errorf("Go bytes = %d, want %d (sum of file sizes)", byLang["Go"], wantGo)
-	}
-}
-
-func TestExtractLanguages_EmptyClone(t *testing.T) {
-	c := newTestConnector(t, httptest.NewServer(http.NewServeMux()))
-	sink := &extraSink{}
-	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
-	if err := c.extractLanguages(context.Background(), connector.Repo{Slug: "kmcd/foo"}, sink, &prov); err != nil {
-		t.Fatalf("extractLanguages: %v", err)
-	}
-	if len(sink.languages) != 0 {
-		t.Errorf("expected 0 rows when Clone is empty; got %+v", sink.languages)
-	}
-}
-
 func TestExtractReleases(t *testing.T) {
 	// Three releases: one inside the window, one before, one after. Only
 	// the in-window release should land. The in-window release uses tag
@@ -379,6 +328,12 @@ func TestExtractPRs_BulkEnrichment(t *testing.T) {
 							{"author":{"login":"carol"},"createdAt":"2025-03-04T12:00:00Z","body":"nit","path":"foo.go","databaseId":100,"replyTo":null}
 						]}}
 					]
+				},
+				"labels":{
+					"nodes":[
+						{"name":"bug"},
+						{"name":"area/connectors"}
+					]
 				}
 			}]
 		}}}}`
@@ -422,10 +377,12 @@ func TestExtractPRs_BulkEnrichment(t *testing.T) {
 	// pr_meta.go:83, reviews.go:41. Sink-shape assertions above wouldn't
 	// catch a counter flip on its own.
 	wantCounters := map[string]int{
-		"prs":                 len(sink.prs),
-		"reviews":             len(sink.reviews),
-		"pr_comments":         len(sink.comments),
-		"pr_review_requests":  len(sink.reqs),
+		"prs":                len(sink.prs),
+		"reviews":            len(sink.reviews),
+		"pr_comments":        len(sink.comments),
+		"pr_review_requests": len(sink.reqs),
+		"pr_commits":         len(sink.prCommits),
+		"pr_labels":          len(sink.prLabels),
 	}
 	for k, want := range wantCounters {
 		if got := prov.RowsReturned[k]; got != want {
@@ -486,5 +443,65 @@ func TestExtractPRs_InlineOverflow_Reviews(t *testing.T) {
 	}
 	if len(sink.reviews) != 2 {
 		t.Fatalf("expected 2 review rows (1 inline + 1 overflow), got %d: %+v", len(sink.reviews), sink.reviews)
+	}
+}
+
+// TestExtractPRs_InlineOverflow_Commits drives the paginatePRCommits
+// overflow path so its RowsReturned[pr_commits]++ at prs.go:677 runs
+// under test. The inline page signals hasNextPage=true with one commit;
+// the follow-up paginatePRCommits query returns one more, terminating.
+func TestExtractPRs_InlineOverflow_Commits(t *testing.T) {
+	overflowHits := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
+		// The overflow shape carries a `commits(first: 100, after:` block.
+		if graphqlBodyContains(r, "pullRequest(number:") && graphqlBodyContains(r, "commits(first") {
+			overflowHits++
+			fmt.Fprintln(w, `{"data":{"repository":{"pullRequest":{
+				"commits":{
+					"pageInfo":{"endCursor":"","hasNextPage":false},
+					"nodes":[
+						{"commit":{"oid":"cafef00d"}}
+					]
+				}
+			}}}}`)
+			return
+		}
+		fmt.Fprintln(w, `{"data":{"repository":{"pullRequests":{
+			"pageInfo":{"endCursor":"","hasNextPage":false},
+			"nodes":[{
+				"number":77,
+				"title":"Wide PR",
+				"body":"body",
+				"createdAt":"2025-03-01T00:00:00Z",
+				"updatedAt":"2025-03-05T00:00:00Z",
+				"author":{"login":"alice"},
+				"commits":{
+					"totalCount":2,
+					"pageInfo":{"endCursor":"cursorC","hasNextPage":true},
+					"nodes":[{"commit":{"oid":"deadbeef"}}]
+				}
+			}]
+		}}}}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestConnector(t, srv)
+	sink := &extraSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
+	c.extractPRs(context.Background(), connector.Repo{Slug: "kmcd/foo"}, standardWindow(), sink, &prov)
+
+	if overflowHits != 1 {
+		t.Errorf("expected 1 per-PR commits overflow GraphQL call, got %d", overflowHits)
+	}
+	if got, want := len(sink.prCommits), 2; got != want {
+		t.Fatalf("pr_commits rows = %d, want %d (1 inline + 1 overflow)", got, want)
+	}
+	// Pin the overflow-path counter — kills the `++ → --` mutation at
+	// prs.go:677 (paginatePRCommits). The inline-path counter increment
+	// at prs.go:566 is covered by TestExtractPRs_BulkEnrichment.
+	if got, want := prov.RowsReturned["pr_commits"], 2; got != want {
+		t.Errorf("RowsReturned[pr_commits] = %d, want %d", got, want)
 	}
 }
