@@ -4,9 +4,24 @@ Read-only extractor that produces a portable metrics artifact from a client's en
 
 The artifact is a single `.tar.gz` containing a SQLite database and a JSON manifest. It contains no source code and no secrets. Nothing leaves the client's environment except the artifact, and only when the client chooses to send it.
 
+## Guarantees
+
+- **Read-only**: no writes to any provider, ever.
+- **No source content**: structural metadata and parsed fields only.
+- **Team-level only**: no per-individual rollups.
+- **Verifiable**: SHA256 + cosign on the binary; per-row provenance in the manifest.
+
 ## Status
 
 Pre-1.0. The schema is unstable; minor version bumps may introduce breaking schema changes. See the compatibility table below.
+
+## What xray does not do
+
+- Issue any `POST`, `PATCH`, `PUT`, or `DELETE` to any provider — read calls only, even when the token has write scope.
+- Capture source code, diff text, PR bodies, commit message bodies, or any text body marked sensitive. Parsed at extract time; dropped before the variable leaves scope.
+- Store or transmit secrets. The token in `xray.toml` never leaves the machine. The artifact is a `.tar.gz` of a SQLite DB and a JSON manifest — no tokens, no environment variables, no source.
+- Aggregate per-individual data. The artifact carries team-level rollups; opaque `*_handle` strings exist only for linkage, never for ranking.
+- Run as a daemon, scheduled job, or web service. CLI only. Idempotent. Each run is full within the window.
 
 ## Install
 
@@ -138,3 +153,29 @@ Apache-2.0. See [LICENSE](LICENSE).
 
 `xray` is a read-only extraction tool. It never writes to any remote system and
 never stores credentials or source content in the output artifact.
+
+## FAQ
+
+**Why a static binary instead of a script or container?**\
+A single static binary has one thing to verify: one file, one SHA256, one cosign signature. No runtime dependencies to audit — no pip, no npm, no base image. See [`docs/threat-model.md`](docs/threat-model.md).
+
+**What happens if I revoke the token mid-run?**\
+The next API call returns `401`. The connector records `accessible: false` on that endpoint and continues; subsequent calls are recorded identically. The run completes with exit code `2` (partial — artifact produced, errors in manifest). See [`docs/security.md`](docs/security.md#7-failure-modes-for-security-review).
+
+**Can I run this against repositories with sensitive history?**\
+Yes. `xray` reads git metadata — SHAs, timestamps, author handles, file paths, numstat. No diff text, no commit bodies, no file content is read or stored. See the full capture inventory in [`docs/security.md`](docs/security.md#2-no-source-content-stored).
+
+**Does the tool need network access from inside my VPC?**\
+Outbound HTTPS to configured providers (GitHub, Sentry, etc.) and to `github.com` for repo cloning. No inbound ports, no callbacks. Egress-only. See [`docs/spec.md`](docs/spec.md) for the full connector list.
+
+**What if a provider returns 403 on a required endpoint?**\
+The endpoint records `accessible: false` with the reason and emits no rows. The analyser treats absence as *unknown*, not *no signal* — a critical distinction for analyses that depend on data presence. The run continues. See [`docs/security.md`](docs/security.md#7-failure-modes-for-security-review).
+
+**Can I keep the temp clones for inspection?**\
+Pass `--keep-clones` to skip cleanup; clone paths are logged to stderr and recorded in the `.log` file. By default, clones are deleted after each repo finishes. See [`docs/spec.md`](docs/spec.md) → `xray run` → flags.
+
+**How do I verify the artifact has no secrets in it before sending?**\
+Unpack the `.tar.gz`. `manifest.json` contains row counts, endpoint status, and provenance metadata — no credentials. A real example is at [`docs/sample-manifest.json`](docs/sample-manifest.json).
+
+**What is in `manifest.json` vs. the SQLite database?**\
+`manifest.json` is the run summary: schema version, extraction window, connector versions, per-endpoint access status, row counts, and errors. The SQLite DB is the metrics: commits, PRs, reviews, CI builds, error rates, observability signals. Full schema: [`docs/schema.md`](docs/schema.md).
