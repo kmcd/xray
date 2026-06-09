@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -216,3 +217,40 @@ func TestScopes_Unauthorized(t *testing.T) {
 		t.Fatal("Scopes err = nil, want non-nil on 401")
 	}
 }
+
+func TestIsTransientProbeError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"io.EOF sentinel", io.EOF, true},
+		{"io.ErrUnexpectedEOF sentinel", io.ErrUnexpectedEOF, true},
+		{"unexpected eof string", strErr("decode: unexpected EOF"), true},
+		{"connection reset", strErr("read tcp: connection reset by peer"), true},
+		{"connection refused", strErr("dial tcp: connection refused"), true},
+		{"no such host", strErr("dial: lookup api.github.com: no such host"), true},
+		{"i/o timeout", strErr("read tcp: i/o timeout"), true},
+		{"primary rate limit body", strErr("API rate limit exceeded for user"), true},
+		{"secondary rate limit body", strErr("You have triggered a secondary rate limit"), true},
+		{"http 502", strErr("Server returned 502 Bad Gateway"), true},
+		{"http 503", strErr("Server returned 503 Service Unavailable"), true},
+		{"http 504", strErr("Server returned 504 Gateway Timeout"), true},
+		{"admin scope required", strErr("Resource not accessible: must have admin"), false},
+		{"saml sso", strErr("Resource protected by organization SAML enforcement"), false},
+		{"not found", strErr("Could not resolve to a Repository: NOT_FOUND"), false},
+		{"unrelated", strErr("malformed query: parse error"), false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isTransientProbeError(tt.err); got != tt.want {
+				t.Errorf("isTransientProbeError(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+type strErr string
+
+func (s strErr) Error() string { return string(s) }

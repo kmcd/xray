@@ -135,3 +135,33 @@ func TestConnectorNames_DeclarationOrder(t *testing.T) {
 		t.Errorf("connectorNames = %v, want %v", got, want)
 	}
 }
+
+func TestFormatBytes_Boundaries(t *testing.T) {
+	const (
+		kib int64 = 1024
+		mib       = 1024 * kib
+		gib       = 1024 * mib
+	)
+	tests := []struct {
+		name string
+		in   int64
+		want string
+	}{
+		{"zero", 0, "0 B"},
+		{"sub-kib", 512, "512 B"},
+		{"kib-boundary-low", kib - 1, "1023 B"},
+		{"kib-boundary-high", kib, "1.0 KiB"},
+		{"mib-boundary-low", mib - 1, "1024.0 KiB"},
+		{"mib-boundary-high", mib, "1.0 MiB"},
+		{"gib-boundary-low", gib - 1, "1024.0 MiB"},
+		{"gib-boundary-high", gib, "1.0 GiB"},
+		{"large-gib", 2*gib + gib/2, "2.5 GiB"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := FormatBytes(tt.in); got != tt.want {
+				t.Errorf("FormatBytes(%d) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
