@@ -1,70 +1,89 @@
 # Commit
 
-Commit only files related to the current work. Multiple Claude Code sessions may be active
-on `main`, so the shared `.git/index` may carry files that belong to other work.
+Commit, push, close — for files this session touched, and only those.
 
-**Mechanical safeguard:** `git commit` is gated by `.claude/hooks/guard-commit.sh`, which
-requires every commit to use the `-- <pathspec>` form. The hook also blocks `-a`/`--all`/
-`--amend`. The `Co-Authored-By` trailer is also disallowed by project convention.
+This project runs trunk-based on shared `main` with multiple concurrent sessions. The working tree and `.git/index` are shared. A bare `git commit -m '...'` would sweep every staged file, including ones another session was preparing. Pathspec scoping is the safeguard.
 
-## Step 1: Identify your session's files
+**Mechanical guard:** `.claude/hooks/guard-commit.sh` rejects any commit that lacks an explicit `-- <paths…>`, plus `-a` / `--all` / `--amend`.
+
+## Step 1: identify *your* files
 
 ```
-git status
+git status --short
 git diff --stat
 ```
 
-Look at the conversation context to identify which files belong to **this session's work**.
-Ignore anything that looks like another session's work — pathspec scoping keeps it out of
-your commit; you don't need to unstage it.
+Read the conversation: which files did **this session** edit or create? List them explicitly. Ignore anything else — it belongs to another session and pathspec scoping will keep it out.
 
-## Step 2: Group by issue or logical unit
+If unsure whether a file is yours, check `git diff <file>` against what you remember writing. Don't guess.
 
-If files clearly belong to a single issue, make one commit. If files span multiple issues,
-plan one commit per issue.
+## Step 2: group by logical unit
 
-## Step 3: Commit using pathspec form
+One commit per coherent change. If your files span two issues, that's two commits. Don't bundle unrelated work to save typing.
 
-For each group, in a logical order:
+## Step 3: write a message
 
-```
-git add path/to/file1 path/to/file2
-git commit -m "<concise natural english subject>
-
-<optional body — why, not what>" -- path/to/file1 path/to/file2
-```
-
-Subject conventions:
-
-- Concise natural English. **No** Conventional-Commits prefix (`feat:`, `fix:`, …).
+- Concise, natural English, imperative ("Add ratelimit budget", not "Added").
+- **No** Conventional-Commits prefix (`feat:`, `fix:`, `chore:`).
 - **No** `Co-Authored-By` trailer.
-- Imperative mood ("Add ratelimit budget", not "Added").
-- Issue references inline when relevant ("Close #8") — not as a trailer.
+- Issue refs inline ("Close #87") when relevant, not as trailer.
+- Body optional; if present, explain *why* the change exists, not *what* it does.
 
-The HEREDOC-in-`-m` form silently fails through the Bash tool. For multi-line
-messages, write to `/tmp/commit_msg.txt` with Write and use `-F`:
+Examples:
 
 ```
+ratelimit: budget snapshot + predictive primary-low-water warning. Close #82.
+repo-health: LICENSE, SECURITY, CONTRIBUTING, CoC, GitHub templates
+github: record EndpointStatus for releases, pr_template, repo_metadata, contributors
+```
+
+## Step 4: commit with pathspec
+
+Single-line subject — inline `-m`:
+
+```
+git commit -m "<subject>" -- path/to/file1 path/to/file2 path/to/dir/
+```
+
+Multi-line message — HEREDOC silently fails through the Bash tool, use `Write` + `-F`:
+
+```
+# write the message
+Write /tmp/commit_msg.txt
+# then commit
 git commit -F /tmp/commit_msg.txt -- path/to/file1 path/to/file2
 rm /tmp/commit_msg.txt
 ```
 
-## Step 4: Verify
+Directory pathspecs (`.github/`) include everything beneath them — useful and safe when you own the whole subtree.
+
+## Step 5: verify scope
 
 ```
-git status
 git log -1 --stat
 ```
 
-Confirm the commit captures exactly the intended files, and that no other session's files
-crept in. If they did: amend is blocked — revert with `git reset HEAD~1` (which leaves
-files unstaged) and re-commit with a tighter pathspec.
+Confirm the commit captures exactly your files and nothing else. If something foreign got in: `--amend` is blocked. Revert and re-commit with tighter pathspec:
 
-## Step 5: Push
+```
+git reset HEAD~1     # leaves files unstaged
+git commit -m "..." -- <tighter paths>
+```
 
-When the user asked you to commit, push too — don't defer it back. Standing
-rule from auto-memory.
+## Step 6: push
+
+When the user asks you to commit, push too — don't defer it back. Standing rule.
 
 ```
 git push
 ```
+
+## Step 7: close the issue (if the work closes one)
+
+Only after `/ready` reported clean — `make gates` green + push are necessary but not sufficient. See `CLAUDE.md` → Gates.
+
+```
+gh issue close <N>
+```
+
+If `/ready` hasn't run for this work, stop and run it before closing.

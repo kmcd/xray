@@ -173,6 +173,21 @@ recognise. Pre-1.0, expect several bumps as the schema settles.
 
 ---
 
+## Workflow
+
+- **Trunk-based on `main`.** No feature branches, no per-agent worktrees, no
+  PR-driven merges. Commits land directly on `main`, gated by `/ready`.
+- **Pathspec commits only.** `git commit -m '...' -- <paths…>` so concurrent
+  sessions don't sweep each other's staged files. Enforced by `guard-commit.sh`.
+- **Sequential work on shared paths.** When two pieces of work touch the same
+  file, they run serially. Surface the conflict; do not parallelize.
+- **Sessions claim disjoint file sets.** Orchestrators partition by file
+  ownership before fan-out.
+- **No worktrees.** Enforced by `guard-worktree.sh` and the `Bash` matcher
+  on `git worktree add`.
+
+---
+
 ## Gates
 
 - `make gates` — `lint` + `govulncheck` + `coverage` (the three CI gates
