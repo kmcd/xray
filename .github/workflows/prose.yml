@@ -37,6 +37,9 @@ jobs:
             docs/threat-model.md
             docs/style-guide.md
             docs/adr
+            .claude/agent_prompt_template.md
+            .claude/diff_review.md
+            .claude/commands
           fail_on_error: true
           reporter: github-pr-review
           filter_mode: nofilter

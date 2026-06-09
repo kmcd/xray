@@ -343,3 +343,16 @@ CVE
 (?i)globals
 (?i)inflightTracker
 CI's
+(?i)nullability
+(?i)accessor
+(?i)vulns
+(?i)pathspecs
+(?i)subtree
+(?i)unstage
+(?i)routings
+in_progress
+(?i)arg
+
+(?i)npm
+(?i)dedupes
+(?i)revive

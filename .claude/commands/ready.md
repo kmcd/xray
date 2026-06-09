@@ -2,7 +2,7 @@
 
 Run this checklist after finishing implementation work, before declaring done. Do not skip steps. Do not summarise results until every step passes.
 
-## Step 1: gates
+## Step 1: Gates
 
 Run the full local gate suite:
 
@@ -12,7 +12,7 @@ make gates
 
 This runs lint, govulncheck, and the test+coverage pair (the same three jobs CI runs on push). If any fail, fix the issue and re-run. Do not proceed until all three are green locally — CI will fail the same way otherwise.
 
-## Step 2: self-review (deterministic)
+## Step 2: Self-review (deterministic)
 
 Review the working-tree diff against [`.claude/diff_review.md`](.claude/diff_review.md). Use judgement — not every criterion applies to every diff. The categories that always apply:
 
@@ -21,9 +21,9 @@ Review the working-tree diff against [`.claude/diff_review.md`](.claude/diff_rev
 - **Read-only and provenance discipline**
 - **No secrets in logs**
 
-Fix anything you spot. Do not just report it. **Do not file it as a follow-up issue either** — any bug surfaced during review (in your diff, adjacent to it, or pre-existing in code you happen to read) gets fixed in this session. Only genuine scope additions become new issues. See `CLAUDE.md` → Workflow → "Never defer bugs."
+Fix anything you spot. Do not merely report it. **Do not file it as a follow-up issue either** — any bug surfaced during review (in your diff, adjacent to it, or pre-existing in code you happen to read) gets fixed in this session. Only genuine scope additions become new issues. See `CLAUDE.md` → Workflow → "Never defer bugs."
 
-## Step 3: self-review (inferential)
+## Step 3: Self-review (inferential)
 
 Invoke the `code-review` skill against the working-tree diff:
 
@@ -33,7 +33,7 @@ Skill code-review
 
 Treat its output as a peer review, not a vote: address every concern with a fix or an explicit "won't fix because ...". Run `make gates` again after any change. **A finding is not "addressed" by filing a follow-up issue.** Bugs get fixed in this session; the only exit other than fix is "won't fix because the concern is wrong (here's why)."
 
-## Step 4: scope sweep
+## Step 4: Scope sweep
 
 Force-compare the work against the original request. Completion criteria are tempted to optimise for "the code I wrote is clean" rather than "the request is satisfied". Produce three lists and surface them to the user:
 
@@ -41,13 +41,13 @@ Force-compare the work against the original request. Completion criteria are tem
 - **Done** — what the diff actually changed. Cross-reference against Asked.
 - **Deferred (with reason)** — anything in Asked but not Done. **Scope from the original ask only** — not bugs found during review. Bugs found during review do not appear here; they were already fixed in Steps 2–3 or the work is not ready. Name each deferred ask item explicitly; do not bury. If empty, say so.
 
-Then run the same-class scan — don't just make this instance go away, apply the fix or feature consistently wherever the same shape exists in the codebase:
+Then run the same-class scan — don't stop at this instance, apply the fix or feature consistently wherever the same shape exists in the codebase:
 
-- What is the abstract shape of what I just changed — a missing index, a new schema column, a connector field, a parsing rule, a permission-gated endpoint?
+- What is the abstract shape of what changed — a missing index, a new schema column, a connector field, a parsing rule, a permission-gated endpoint?
 - Grep for other instances of that shape. Use actual identifiers (sibling connector names, sibling model fields) rather than relying on memory.
 - For every peer that has the same shape: fix it in this commit when small, file a tracking issue when not, name it in the handoff when out of scope.
 
-## Step 5: docs
+## Step 5: Docs
 
 Skip for pure bug fixes or refactors with no user-visible behaviour change. Otherwise:
 
@@ -56,7 +56,7 @@ Skip for pure bug fixes or refactors with no user-visible behaviour change. Othe
 - `CLAUDE.md` — when a settled assumption changes (rare; bumps the spec)
 - `tmp/adr.md` — record non-obvious decisions made during this work
 
-Fix any gaps. Do not just report them.
+Fix any gaps. Do not merely report them.
 
 ## Step 6: smoke (for empirically-measurable changes)
 

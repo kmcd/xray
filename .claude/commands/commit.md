@@ -57,7 +57,7 @@ rm /tmp/commit_msg.txt
 
 Directory pathspecs (`.github/`) include everything beneath them — useful and safe when you own the whole subtree.
 
-## Step 5: verify scope
+## Step 5: Verify scope
 
 ```
 git log -1 --stat
@@ -70,7 +70,7 @@ git reset HEAD~1     # leaves files unstaged
 git commit -m "..." -- <tighter paths>
 ```
 
-## Step 6: push
+## Step 6: Push
 
 When the user asks you to commit, push too — don't defer it back. Standing rule.
 
