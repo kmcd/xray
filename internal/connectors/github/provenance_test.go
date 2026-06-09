@@ -224,6 +224,80 @@ func TestExtractReleases_MidWalkError_FlipsPaginationComplete(t *testing.T) {
 	}
 }
 
+// TestExtractReleases_InvalidSlug_RecordsInaccessible covers the early-return
+// path on a malformed slug. The endpoint was never tried; recording
+// Accessible:false with a clear Reason lets the analyser distinguish a config
+// error from an empty-but-reachable endpoint.
+func TestExtractReleases_InvalidSlug_RecordsInaccessible(t *testing.T) {
+	c := newTestConnector(t, httptest.NewServer(http.NewServeMux()))
+	sink := &extraSink{}
+	prov := connector.NewProvenance(c.Name(), "malformed", standardWindow())
+	c.extractReleases(context.Background(), connector.Repo{Slug: "malformed"}, standardWindow(), sink, &prov)
+
+	ep, ok := prov.Endpoints["releases"]
+	if !ok {
+		t.Fatalf("expected endpoints[releases] entry on invalid slug")
+	}
+	if ep.Accessible {
+		t.Errorf("expected Accessible=false on invalid slug; got %+v", ep)
+	}
+	if ep.Reason == "" {
+		t.Errorf("expected Reason populated on invalid slug; got empty")
+	}
+}
+
+// TestInsertRepoRow_InvalidSlug_RecordsInaccessible mirrors the above for the
+// insertRepoRow path. Both repo_metadata and contributors must record
+// Accessible:false; the repos row is still emitted (the slug is what we know).
+func TestInsertRepoRow_InvalidSlug_RecordsInaccessible(t *testing.T) {
+	c := newTestConnector(t, httptest.NewServer(http.NewServeMux()))
+	sink := &extraSink{}
+	prov := connector.NewProvenance(c.Name(), "malformed", standardWindow())
+	if err := c.insertRepoRow(context.Background(), connector.Repo{Slug: "malformed"}, standardWindow(), sink, &prov); err != nil {
+		t.Fatalf("insertRepoRow: %v", err)
+	}
+	for _, key := range []string{"repo_metadata", "contributors"} {
+		ep, ok := prov.Endpoints[key]
+		if !ok {
+			t.Errorf("expected endpoints[%s] entry on invalid slug", key)
+			continue
+		}
+		if ep.Accessible {
+			t.Errorf("expected endpoints[%s].Accessible=false on invalid slug; got %+v", key, ep)
+		}
+		if ep.Reason == "" {
+			t.Errorf("expected endpoints[%s].Reason populated; got empty", key)
+		}
+	}
+	if prov.RowsReturned["repos"] != 1 {
+		t.Errorf("expected repos row still emitted on invalid slug; got RowsReturned=%d", prov.RowsReturned["repos"])
+	}
+}
+
+// TestExtractBranches_InvalidSlug_RecordsBranchProtectionInaccessible covers
+// the early-return path in extractBranches. branch_protection is the only
+// GitHub-endpoint key extractBranches owns (branches itself is git-clone-derived
+// and falls outside the EndpointStatus contract).
+func TestExtractBranches_InvalidSlug_RecordsBranchProtectionInaccessible(t *testing.T) {
+	clone := setupCloneWithRemoteRefs(t, []string{"main"})
+
+	c := newTestConnector(t, httptest.NewServer(http.NewServeMux()))
+	sink := &extraSink{}
+	prov := connector.NewProvenance(c.Name(), "malformed", standardWindow())
+	c.extractBranches(context.Background(), connector.Repo{Slug: "malformed", Clone: clone}, sink, &prov)
+
+	ep, ok := prov.Endpoints["branch_protection"]
+	if !ok {
+		t.Fatalf("expected endpoints[branch_protection] entry on invalid slug")
+	}
+	if ep.Accessible {
+		t.Errorf("expected Accessible=false on invalid slug; got %+v", ep)
+	}
+	if ep.Reason == "" {
+		t.Errorf("expected Reason populated on invalid slug; got empty")
+	}
+}
+
 // TestExtractPRs_PrefetchError_RecordsProvErrors covers the prefetch
 // failure-recording path in extract_prs.go's switch — when consumePRPrefetch
 // returns err != nil with a resume cursor, the err is captured in

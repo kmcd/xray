@@ -22,6 +22,10 @@ func (c *Connector) extractBranches(ctx context.Context, repo connector.Repo, si
 	}
 	owner, name, ok := splitSlug(repo.Slug)
 	if !ok {
+		prov.Endpoints["branch_protection"] = connector.EndpointStatus{
+			Accessible: false,
+			Reason:     "invalid slug: " + repo.Slug,
+		}
 		return
 	}
 

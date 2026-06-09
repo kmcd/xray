@@ -23,6 +23,10 @@ import (
 func (c *Connector) extractReleases(ctx context.Context, repo connector.Repo, window connector.Window, sink connector.Sink, prov *connector.Provenance) {
 	owner, name, ok := splitSlug(repo.Slug)
 	if !ok {
+		prov.Endpoints["releases"] = connector.EndpointStatus{
+			Accessible: false,
+			Reason:     "invalid slug: " + repo.Slug,
+		}
 		return
 	}
 	opts := &gh.ListOptions{PerPage: 100}

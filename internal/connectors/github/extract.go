@@ -142,6 +142,10 @@ func (c *Connector) insertRepoRow(ctx context.Context, repo connector.Repo, wind
 	if owner, name, ok := splitSlug(repo.Slug); ok {
 		c.enrichRepoMetadata(ctx, repo.Slug, owner, name, &row, prov)
 		c.enrichContributorCount(ctx, owner, name, &row, prov)
+	} else {
+		reason := "invalid slug: " + repo.Slug
+		prov.Endpoints["repo_metadata"] = connector.EndpointStatus{Accessible: false, Reason: reason}
+		prov.Endpoints["contributors"] = connector.EndpointStatus{Accessible: false, Reason: reason}
 	}
 	if err := sink.InsertRepo(row); err != nil {
 		return err
