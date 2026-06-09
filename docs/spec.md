@@ -115,8 +115,39 @@ point and is stable.
 | 1 | Config or pre-flight error; no artifact produced. |
 | 2 | Partial run; artifact produced; one or more connectors failed for one or more repos (failure is recorded in the manifest). |
 | 3 | Fatal error; artifact may or may not exist; investigate the run log. |
+| 130 | Run interrupted by `SIGINT` / `SIGTERM`; no artifact produced. See [Cancellation](#cancellation). |
 
 `xray validate` and `xray check` use only exit codes 0 and 1.
+
+#### Cancellation
+
+`xray run` traps `SIGINT` (Ctrl-C) and `SIGTERM` and shuts down
+cooperatively:
+
+- **First signal** → in-flight goroutines drain to the nearest
+  checkpoint, the per-run temp directory `/tmp/xray-<run-id>-<rand>` is
+  removed (preserved with `--keep-clones`), and a summary block is
+  printed to stderr regardless of `--output` mode:
+
+  ```
+  Interrupted at phase 'extract' (kmcd/foo:github, kmcd/bar:github in flight).
+  Cleaned up temp directory /tmp/xray-…-abc.
+  No artifact produced. Re-run from scratch to retry; runs are non-incremental.
+  Exit code: 130.
+  ```
+
+  Phase is one of `clone`, `extract`, `postprocess`. The in-flight list
+  is included for the `extract` phase only.
+
+- **Second signal** (at any time during graceful drain) → immediate
+  `exit(130)` skipping all cleanup. The temp directory is named in a
+  `force exit; temp dir <path> not cleaned` line on stderr so the
+  operator can remove it manually. Use this when graceful drain is
+  taking too long against a slow API.
+
+No artifact is produced for either path. Runs are
+non-incremental, so resuming after Ctrl-C means re-running from
+scratch.
 
 #### JSON event schema
 

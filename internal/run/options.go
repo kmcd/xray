@@ -20,4 +20,9 @@ type Options struct {
 	// no-op; the CLI selects a TTY grid / line log / NDJSON / no-op sink
 	// based on the --output mode resolved in cmd/xray/output.go.
 	Progress progress.Sink
+	// OnTempDir, if non-nil, is invoked exactly once with the absolute
+	// path of the per-run temp directory immediately after creation. The
+	// CLI uses it so the signal handler can name the leaked path in the
+	// double-Ctrl-C force-exit log line.
+	OnTempDir func(string)
 }

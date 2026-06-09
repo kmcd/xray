@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -66,6 +67,103 @@ func TestRunDegenerateProducesArtifact(t *testing.T) {
 	if m["run_id"] == nil || m["run_id"] == "" {
 		t.Errorf("run_id missing")
 	}
+}
+
+func TestRun_CancelBeforeStart_NoArtifact(t *testing.T) {
+	// Pre-canceled context: Run reaches the post-clone ctx.Err() gate (no
+	// repos to clone) and returns an interrupted Result with phase set,
+	// no artifact written, and the temp dir cleaned up.
+	cfg := &config.Config{
+		Window: config.Window{
+			Start: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+			End:   time.Date(2025, 6, 30, 0, 0, 0, 0, time.UTC),
+			Raw:   "2025-01-01..2025-06-30",
+		},
+		Teams: map[string][]string{},
+	}
+	dir := t.TempDir()
+	out := filepath.Join(dir, "x.tar.gz")
+
+	var capturedTmpDir string
+	opts := run.Options{
+		Out:         out,
+		ToolVersion: "test",
+		Logger:      run.NewLogger(false, true),
+		OnTempDir: func(p string) {
+			capturedTmpDir = p
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := run.Run(ctx, cfg, opts)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run err = %v, want context.Canceled", err)
+	}
+	if !result.Interrupted {
+		t.Errorf("Result.Interrupted = false, want true")
+	}
+	if result.InterruptedPhase != "clone" {
+		t.Errorf("Result.InterruptedPhase = %q, want %q", result.InterruptedPhase, "clone")
+	}
+	if result.ArtifactPath != "" {
+		t.Errorf("Result.ArtifactPath = %q, want empty", result.ArtifactPath)
+	}
+	if _, statErr := os.Stat(out); statErr == nil {
+		t.Errorf("artifact %s exists; interrupted run should not produce one", out)
+	}
+	if capturedTmpDir == "" {
+		t.Errorf("OnTempDir not invoked")
+	}
+	if _, statErr := os.Stat(capturedTmpDir); statErr == nil {
+		t.Errorf("temp dir %s not cleaned up after interrupt", capturedTmpDir)
+	}
+	if result.TempDir != capturedTmpDir {
+		t.Errorf("Result.TempDir = %q, want %q", result.TempDir, capturedTmpDir)
+	}
+}
+
+func TestRun_KeepClonesOnInterrupt(t *testing.T) {
+	// --keep-clones should preserve the temp dir even on graceful cancel
+	// so the operator can inspect partial clones.
+	cfg := &config.Config{
+		Window: config.Window{
+			Start: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+			End:   time.Date(2025, 6, 30, 0, 0, 0, 0, time.UTC),
+			Raw:   "2025-01-01..2025-06-30",
+		},
+		Teams: map[string][]string{},
+	}
+	dir := t.TempDir()
+	out := filepath.Join(dir, "x.tar.gz")
+
+	var capturedTmpDir string
+	opts := run.Options{
+		Out:         out,
+		KeepClones:  true,
+		ToolVersion: "test",
+		Logger:      run.NewLogger(false, true),
+		OnTempDir: func(p string) {
+			capturedTmpDir = p
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := run.Run(ctx, cfg, opts)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run err = %v, want context.Canceled", err)
+	}
+	if capturedTmpDir == "" {
+		t.Fatal("OnTempDir not invoked")
+	}
+	if _, statErr := os.Stat(capturedTmpDir); statErr != nil {
+		t.Errorf("temp dir %s removed despite KeepClones=true: %v", capturedTmpDir, statErr)
+	}
+	// Clean up since KeepClones suppressed the auto-cleanup.
+	_ = os.RemoveAll(capturedTmpDir)
 }
 
 func readTarGz(t *testing.T, path string) map[string][]byte {
