@@ -3,7 +3,7 @@ module github.com/kmcd/xray
 go 1.26.4
 
 require (
-	github.com/BurntSushi/toml v1.4.0
+	github.com/BurntSushi/toml v1.6.0
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/go-enry/go-enry/v2 v2.9.1
 	github.com/google/go-github/v66 v66.0.0
