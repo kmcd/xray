@@ -125,6 +125,13 @@ what a representative run actually looks like.
   permission-gated 403 → `EndpointStatus{accessible: false}` flow,
   and the post-run summary.
 
+## Security
+
+Report vulnerabilities privately — see [SECURITY.md](SECURITY.md).
+
 ## License
 
-TBD.
+Apache-2.0. See [LICENSE](LICENSE).
+
+`xray` is a read-only extraction tool. It never writes to any remote system and
+never stores credentials or source content in the output artifact.
