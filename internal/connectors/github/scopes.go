@@ -155,10 +155,11 @@ type branchProtectionProbeQuery struct {
 	} `graphql:"repository(owner: $owner, name: $name)"`
 }
 
-// ProbeEndpoints implements preflight.EndpointProber. Today this probes
-// branch_protection only — the other admin-gated endpoints (org audit
-// log, repo admin) are not yet exercised by xray. Add probes here as
-// new endpoints are pulled in.
+// ProbeEndpoints reports any permission-gated GitHub endpoints xray
+// touches during a run that aren't accessible to the current token.
+// Today this probes branch_protection only — the other admin-gated
+// endpoints (org audit log, repo admin) are not yet exercised by xray.
+// Add probes here as new endpoints are pulled in.
 func (c *Connector) ProbeEndpoints(ctx context.Context, repos []string) ([]preflight.InaccessibleEndpoint, error) {
 	var out []preflight.InaccessibleEndpoint
 	for _, slug := range repos {

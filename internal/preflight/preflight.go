@@ -8,7 +8,6 @@
 package preflight
 
 import (
-	"context"
 	"sort"
 	"time"
 
@@ -76,14 +75,6 @@ type RepoStat struct {
 	DiskUsageKB  int64 // GraphQL repository.diskUsage; 0 if unavailable.
 	PullRequests int   // totalCount across all states.
 	Commits      int   // estimated commits in window; 0 if unknown.
-}
-
-// Prober is the read-only data source the planner consults for cost
-// inputs. Implementations are expected to issue only GraphQL aggregate
-// queries (diskUsage, totalCount) — nothing paginated, nothing that
-// mutates anything.
-type Prober interface {
-	RepoStats(ctx context.Context, repos []string) ([]RepoStat, error)
 }
 
 // BuildPlan composes a Plan from the config and the supplied per-repo
@@ -167,10 +158,3 @@ type InaccessibleEndpoint struct {
 	Reason   string
 }
 
-// EndpointProber probes the per-repo permission-gated endpoints xray
-// touches during a run (branch protection, audit log, admin endpoints).
-// Implementations return one entry per inaccessible endpoint; accessible
-// endpoints produce no entry.
-type EndpointProber interface {
-	ProbeEndpoints(ctx context.Context, repos []string) ([]InaccessibleEndpoint, error)
-}
