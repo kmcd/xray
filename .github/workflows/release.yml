@@ -17,15 +17,15 @@ jobs:
     outputs:
       hashes: ${{ steps.hash.outputs.hashes }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - uses: sigstore/cosign-installer@v3
-      - uses: anchore/sbom-action/download-syft@v0.17.8
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: anchore/sbom-action/download-syft@v0.24.0
+      - uses: goreleaser/goreleaser-action@v7
         id: goreleaser
         with:
           distribution: goreleaser
