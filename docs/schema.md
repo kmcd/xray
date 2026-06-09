@@ -332,7 +332,7 @@ Snapshot at `repos.head_sha`. **No content stored.** Walked at extract time.
 | `is_generated`           | INTEGER | linguist heuristics + `.gitattributes` |
 | `is_vendored`            | INTEGER | linguist heuristics |
 | `is_test`                | INTEGER | path patterns: `*_test.*`, `*.test.*`, `*.spec.*`, `/spec/`, `/__tests__/` |
-| `is_dependency_manifest` | INTEGER | static filename allow-list (see ADR 008) |
+| `is_dependency_manifest` | INTEGER | static filename allow-list (see [ADR 008](adr/0008-is-dependency-manifest-heuristic.md)) |
 | `size_bytes`             | INTEGER | |
 | `loc_total`              | INTEGER | |
 | `loc_code`               | INTEGER | non-blank lines |

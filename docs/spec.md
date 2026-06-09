@@ -564,7 +564,7 @@ no connector.
   `pr_review_requests`. The `merge_method` classifier reads
   `mergeCommit.parents.totalCount` from the same query; the local-clone
   reachability check (`git merge-base --is-ancestor` against the per-run
-  clone, per ADR 021) is unchanged. Bodies are length-measured at parse
+  clone, per [ADR 021](adr/0021-merge-method-derivation.md)) is unchanged. Bodies are length-measured at parse
   time and discarded — they never reach a column. Per-PR overflow
   paginators fire only when an inner connection's `pageInfo.HasNextPage`
   is true (more than 100 reviews, 100 top-level comments, 100 review
@@ -580,7 +580,7 @@ no connector.
   by running the paginated `prListQuery` walk during the clone window
   and stashing the resulting `prGraph` nodes per slug on the connector;
   `Extract` consumes the cache when present and falls back to a live
-  fetch on cache miss. The connector contract from ADR 022 is unchanged
+  fetch on cache miss. The connector contract from [ADR 022](adr/0022-coverage-thresholds-revised.md) is unchanged
   — `Extract(ctx, repo, window, sink) Provenance` is still the canonical
   entry point and the row-emit path. Provenance semantics are unchanged
   too: a new `(*Provenance).Merge` helper folds the two intra-Extract
