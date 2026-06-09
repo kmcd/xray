@@ -191,6 +191,11 @@ recognise. Pre-1.0, expect several bumps as the schema settles.
   bug is **not allowed**. Only genuine scope additions (new features, new
   capabilities, design questions that need user input) become new issues.
   The test: *missing correctness, or a new thing?* If correctness, fix now.
+- **Same-class scan before fixing.** Articulate the bug's abstract shape;
+  grep for siblings; the class is the unit of work, not the instance.
+  Peers found in scope get fixed in the same PR; peers out of scope become
+  a single class-level issue, never N instance-level ones. Done at plan
+  time (informs the fix) and again at `/ready` Step 4 (catches drift).
 
 ---
 

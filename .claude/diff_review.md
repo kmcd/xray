@@ -38,6 +38,13 @@ Apply these criteria when reviewing any code change in xray. Not all sections ap
 - **Fixture stability** — date-relative test data uses fixed `time.Time` constructors; never `time.Now()` in a fixture.
 - **No body content in tests** — fixture PR/commit bodies are short strings checked for length and markers, never for their actual text being preserved.
 
+## Same-class scan
+
+- **Shape, not symbol.** Every bug or feature in this diff has an abstract shape — *"error path that should write to multiple provenance keys but only writes to one,"* *"permission-gated endpoint missing `EndpointStatus`,"* *"byte-size formatting drift between adjacent customer outputs."* Name the shape in one sentence before reviewing.
+- **grep for peers.** Search the codebase for the shape. Use real identifiers (sibling connector names, sibling model fields); do not rely on memory. The grep is what makes the scan honest.
+- **Peer handling.** Every peer found has a verdict: *(a)* fixed in this diff, *(b)* filed as one class-level issue covering the remaining N sites, or *(c)* ignored with a reason in the PR body. Filing N instance-level follow-up issues for the same class is a smell — collapse to one.
+- **No new bugs of an existing class.** If the diff introduces a new instance of a class already named in `CLAUDE.md` ("Non-negotiable invariants") or `docs/spec.md`, that is a contract break — fix it or surface it explicitly.
+
 ## Style and discipline
 
 - **Concise English commit messages** — imperative subject, no Claude co-author trailer, no emojis.
@@ -48,6 +55,6 @@ Apply these criteria when reviewing any code change in xray. Not all sections ap
 
 ## Tooling and gates
 
-- **CI must mirror local** — every gate that fails on `make gates` must also fail in CI. If you exclude a lint locally, exclude it in `.golangci.yml`, not just in your invocation.
+- **CI must mirror local** — every gate that fails on `make gates` must also fail in CI. If you exclude a lint locally, exclude it in `.golangci.yml`, not only in your invocation.
 - **Coverage thresholds** — keep `.testcoverage.yml` permissive at v0.x; tighten once the connector test surface stabilises.
 - **govulncheck** — bumping the `go` directive in `go.mod` is the canonical fix for stdlib vulnerabilities. Connector-side vulns get an indirect upgrade via `go mod tidy`.

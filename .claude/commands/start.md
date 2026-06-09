@@ -49,7 +49,7 @@ work, enter Plan mode.
 
 ---
 
-## Mode B: `/start <N>`
+## Mode B: /start \<N\>
 
 Walk every step in order. Don't skip ahead even if the issue looks small —
 the up-front context is the value.
@@ -142,15 +142,51 @@ Required before starting. Don't begin work without a green baseline —
 otherwise you can't tell whether your change broke something or it was
 already broken.
 
-### Step 8: Plan or proceed
+### Step 8: Same-class scan
+
+Before the plan: **name the shape, grep the siblings.** Single-instance
+framing produces single-instance fixes; the next sibling regression files
+as a new issue and the loop never converges. The class is the unit of work,
+not the instance.
+
+1. **Articulate the shape.** State the bug or feature as a *pattern*, not
+   an instance. "Walk failure sets `prov.Errors[walk]` but not
+   `prov.Errors[repo_languages]`" is an instance; the shape is *"error
+   paths that should write to multiple provenance keys but only write to
+   one."* If you cannot name the shape in one sentence, refine before
+   continuing.
+
+2. **grep for siblings.** Search the codebase for the *pattern*, not just
+   the symbol. The grep is what makes the scan honest. Common shapes in
+   `xray`:
+
+   - Provenance write coverage: `grep -rn 'prov\.Errors\[' internal/connectors/`
+   - Permission-gated 403/404: `grep -rn 'StatusForbidden\|StatusNotFound' internal/connectors/`
+   - Paginated walks: error paths near `pageInfo`, `opts.Page++`
+   - Byte-size formatting: `grep -rn 'humanBytes\|formatSize\|MiB\|MB' cmd/ internal/`
+   - Context propagation: `grep -rn 'http\.Get\|http\.NewRequest[^WithContext]'`
+
+3. **Decide per peer.** For every grep match:
+
+   - Same bug, small fix → include in this PR's scope
+   - Same bug, large fix → file *one* class-level issue ("apply X
+     consistently across N sites"), not N instance-level issues
+   - Different bug that happens to match the grep → ignore for this PR;
+     document why in the PR body
+
+The scan's output is one sentence: *"shape is X; N peers found; M fixed
+here; K filed under #..."*. Carry it into the plan or task description.
+
+### Step 9: Plan or proceed
 
 - **Invariant-touching, OR multi-file, OR new connector, OR schema
   change**: enter Plan mode. Write the plan to the plan file. Get the
-  user's approval before any edit.
+  user's approval before any edit. **The plan must list every peer
+  identified in Step 8 and how each is handled.**
 - **Single-file, fully-scoped, sub-100-LOC change**: skip Plan mode.
   Create a task with `TaskCreate`, mark it in_progress, and implement.
 
-### Step 9: Implement
+### Step 10: Implement
 
 Standing rules carry from `CLAUDE.md`:
 
@@ -160,9 +196,9 @@ Standing rules carry from `CLAUDE.md`:
 - No worktrees (enforced by `.claude/hooks/guard-worktree.sh`).
 - When the work is done and `make gates` is green, commit and push without
   asking. **Do not run `gh issue close` here** — closing is gated on
-  `/ready` in Step 11.
+  `/ready` in Step 12.
 
-### Step 10: Update the cross-cutting docs
+### Step 11: Update the cross-cutting docs
 
 If the issue's `Acceptance` section listed any of these, update them in the
 same commit (or a follow-up before pushing):
@@ -173,7 +209,7 @@ same commit (or a follow-up before pushing):
 - `CHANGELOG.md` — for cross-cutting work that lands in the next release
 - `README.md` — for any user-visible command or output change
 
-### Step 11: Close
+### Step 12: Close
 
 **Always invoke `/ready` before closing.** `make gates` green + pushed is
 necessary but not sufficient. `/ready` runs the full completion gate (gates
