@@ -1,8 +1,3 @@
-# PARKED until the repo flips public. `open-pull-requests-limit: 0` stops
-# Dependabot from raising version-update PRs (security advisories may still
-# flow). The fanout on first enable (9 PRs in 44 seconds, each kicking ci
-# + codeql jobs) exhausted Free-tier Actions minutes on the private repo.
-# When the repo goes public, restore the limit to 5 on both ecosystems.
 version: 2
 updates:
   - package-ecosystem: gomod
@@ -12,7 +7,7 @@ updates:
       day: monday
       time: "07:00"
       timezone: Etc/UTC
-    open-pull-requests-limit: 0
+    open-pull-requests-limit: 5
     commit-message:
       prefix: gomod
     labels:
@@ -26,7 +21,7 @@ updates:
       day: monday
       time: "07:00"
       timezone: Etc/UTC
-    open-pull-requests-limit: 0
+    open-pull-requests-limit: 5
     commit-message:
       prefix: actions
     labels:
