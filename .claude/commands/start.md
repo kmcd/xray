@@ -156,8 +156,8 @@ not the instance.
    one."* If you cannot name the shape in one sentence, refine before
    continuing.
 
-2. **grep for siblings.** Search the codebase for the *pattern*, not just
-   the symbol. The grep is what makes the scan honest. Common shapes in
+2. **grep for siblings.** Search the codebase for the *pattern*, not the
+   symbol alone. The grep is what makes the scan honest. Common shapes in
    `xray`:
 
    - Provenance write coverage: `grep -rn 'prov\.Errors\[' internal/connectors/`

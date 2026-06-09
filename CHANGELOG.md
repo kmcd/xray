@@ -18,6 +18,13 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 [#98]: https://github.com/kmcd/xray/issues/98
 
+### Supply chain
+
+- **SLSA L3 provenance + SBOM in releases; CodeQL, Scorecard, Dependabot.** The release workflow now emits a signed `*.intoto.jsonl` build attestation alongside the binary via the SLSA GitHub generator's `generator_generic_slsa3` reusable workflow, consuming goreleaser's `checksums.txt` as the subjects. `goreleaser` also produces an SPDX-JSON SBOM per archive via `syft`; both the SBOM and the archive are covered by the existing `checksums.txt` + cosign signature and by the new SLSA attestation. New `.github/workflows/codeql.yml` runs Go analysis with the `security-extended,security-and-quality` query packs on push/PR and weekly; `.github/workflows/scorecard.yml` runs `ossf/scorecard-action` weekly and uploads SARIF to the Security tab. `.github/dependabot.yml` opens weekly `gomod` and `github-actions` updates (auto-merge intentionally off). Top-level `permissions:` in `release.yml` tightened to `contents: read`, with `contents: write` / `id-token: write` declared only on the jobs that need them. ([#103])
+- **Branch protection policy + audit.** `CONTRIBUTING.md` documents the `main` branch-protection contract (PRs required, ≥1 approving review, required status checks `test`/`lint`/`vuln`/`coverage`, strict, no force-push, no deletion; admin bypass intentionally on for trunk-based maintainer commits). New `bin/verify-branch-protection` (also `make verify-branch-protection`) asserts the policy via `gh api` on demand, supporting both legacy `.required_status_checks.contexts` and Rulesets-era `.checks[].context`. ([#103])
+
+[#103]: https://github.com/kmcd/xray/issues/103
+
 ## [0.3.0] — 2026-06-08
 
 Breaking: `schema_version` bumps `1 → 2`. Author-identity columns now hold opaque `h_<15 digits>` tokens, not raw logins or git idents. Analysers built for `schema_version = 1` must be updated (assay v1.1.0 already reads the new form). Smoke-verified against `goreleaser/chglog` (~12-month window): 36 commits + 36 PRs + 68 file_complexity_history rows; `mailmap_applied=false`, `squash_rate=1.0`, all author handles match `^h_\d{15}$`.

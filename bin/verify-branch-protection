@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Audit the branch-protection policy on main against the documented contract
+# in CONTRIBUTING.md. Read-only; uses `gh api` against the current repo.
+#
+# Exits non-zero if any required rule is missing. Admin-bypass (enforce_admins
+# off) is reported but does not fail — trunk-based work on this repo is
+# admin-only and that bypass is intentional, per CONTRIBUTING.md.
+
+set -euo pipefail
+
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+BRANCH=${BRANCH:-main}
+
+echo "==> Branch protection audit: $REPO@$BRANCH"
+echo
+
+protection=$(gh api "repos/$REPO/branches/$BRANCH/protection" 2>/dev/null || echo "MISSING")
+
+if [[ "$protection" == "MISSING" ]]; then
+  echo "FAIL: no branch protection rule on $BRANCH"
+  echo "      configure via: Settings → Branches → Add rule"
+  exit 1
+fi
+
+fail=0
+
+check() {
+  local label=$1 expr=$2 want=$3
+  local got
+  got=$(echo "$protection" | jq -r "$expr")
+  if [[ "$got" == "$want" ]]; then
+    printf "  OK   %-44s = %s\n" "$label" "$got"
+  else
+    printf "  FAIL %-44s = %s (want %s)\n" "$label" "$got" "$want"
+    fail=1
+  fi
+}
+
+note() {
+  local label=$1 expr=$2
+  local got
+  got=$(echo "$protection" | jq -r "$expr")
+  printf "  NOTE %-44s = %s\n" "$label" "$got"
+}
+
+check "required_pull_request_reviews enabled"  '.required_pull_request_reviews != null'                'true'
+check "required_approving_review_count >= 1"   '.required_pull_request_reviews.required_approving_review_count >= 1' 'true'
+check "required_status_checks strict"          '.required_status_checks.strict'                       'true'
+check "allow_force_pushes"                     '.allow_force_pushes.enabled'                          'false'
+check "allow_deletions"                        '.allow_deletions.enabled'                             'false'
+
+echo
+echo "Required status checks:"
+# GitHub's branch-protection API populates .contexts (legacy) and/or .checks
+# (modern, used by Rulesets). Merge both so this audit works regardless of
+# how the protection was configured.
+checks=$(echo "$protection" | jq -r '
+  (.required_status_checks.contexts // []) +
+  (.required_status_checks.checks // [] | map(.context))
+  | unique
+  | .[]
+')
+if [[ -z "$checks" ]]; then
+  echo "  (none configured)"
+else
+  while IFS= read -r c; do echo "  - $c"; done <<< "$checks"
+fi
+
+for ctx in test lint vuln coverage; do
+  # Match the bare name or the matrix expansion `name (variant)`. Anchored
+  # on both sides so `test` does not silently match `testing-experimental`.
+  match=$(printf '%s\n' "$checks" | grep -E "^${ctx}( \(|$)" || true)
+  if [[ -z "$match" ]]; then
+    echo "  FAIL required status check missing: $ctx"
+    fail=1
+  fi
+done
+
+echo
+note "enforce_admins (admin-bypass intentional per CONTRIBUTING.md)" '.enforce_admins.enabled'
+note "require_linear_history"                                       '.required_linear_history.enabled'
+note "require_signed_commits"                                       '.required_signatures.enabled'
+
+echo
+if [[ $fail -eq 0 ]]; then
+  echo "OK: branch protection matches the documented policy."
+else
+  echo "FAIL: branch protection drift from the documented policy."
+  exit 1
+fi

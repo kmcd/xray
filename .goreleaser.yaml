@@ -42,6 +42,12 @@ checksum:
   name_template: checksums.txt
   algorithm: sha256
 
+sboms:
+  - id: spdx
+    artifacts: archive
+    documents:
+      - "${artifact}.spdx.json"
+
 signs:
   - id: cosign
     cmd: cosign

@@ -12,7 +12,7 @@ LDFLAGS := -s -w \
 
 export CGO_ENABLED := 0
 
-.PHONY: build test lint vuln coverage gates prose sweep mutation-audit release-snapshot clean
+.PHONY: build test lint vuln coverage gates prose sweep mutation-audit release-snapshot verify-branch-protection clean
 
 build:
 	go build -trimpath -ldflags "$(LDFLAGS)" -o xray ./cmd/xray
@@ -67,6 +67,11 @@ mutation-audit:
 
 release-snapshot:
 	goreleaser release --snapshot --clean
+
+# Audit GitHub branch protection on main against the policy in CONTRIBUTING.md.
+# Read-only; requires `gh` authenticated.
+verify-branch-protection:
+	bin/verify-branch-protection
 
 clean:
 	rm -rf xray dist/ coverage.out

@@ -26,6 +26,32 @@ Before 1.0, both the CLI surface and the output schema change without notice. Th
 `schema_version` integer in `manifest.json` is the analyser contract; the binary
 version tracks the binary only. Expect bumps.
 
+## Branch protection on `main`
+
+The repo enforces a documented policy on `main`. The contract:
+
+- **Pull requests required** to merge into `main`
+- **At least one approving review** on every PR
+- **Required status checks must pass** before merge: `test` (matrix), `lint`,
+  `vuln`, `coverage`
+- **Strict checks** — branches must be up to date with `main` before merge
+- **Force pushes disabled**; **branch deletion disabled**
+
+**Admin bypass is intentionally on.** The maintainer commits directly to
+`main` for trunk-based work per `CLAUDE.md`; the protection rule applies to
+non-admin contributors. This trade-off is documented and the audit script
+treats `enforce_admins=false` as expected, not a violation.
+
+Audit the live policy against the contract:
+
+```
+make verify-branch-protection
+```
+
+The script is read-only (`gh api`) and exits non-zero if any required rule
+has drifted. Use it after a clone, before granting write access to a new
+collaborator, or when investigating an unexpected merge.
+
 ## Code of Conduct
 
 This project follows the [Contributor Covenant v2.1](CODE_OF_CONDUCT.md).
