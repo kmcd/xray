@@ -593,6 +593,32 @@ no connector.
 
 ---
 
+## Code-quality sensors
+
+Three layers, three cadences. See
+[ADR 029](./adr/0029-three-layer-sensor-architecture.md) for the
+rationale.
+
+- **`make gates`** — every push / PR. Linters tuned above v0.2.0
+  baseline so regressions fire without forcing a refactor sweep.
+  Includes `bodyclose`, `noctx`, `errorlint`, `unconvert`,
+  `wastedassign`, `prealloc`, `usestdlibvars`, `depguard` (encodes the
+  core/connector seam: `internal/connector/**` may not import
+  `internal/connectors/...`), plus the practitioner-named sensors
+  (`funlen`, `gocognit`, `gocyclo`, `nestif`, `dupl`).
+- **`make sweep`** — quarterly. `deadcode`, `nilaway`, `gocritic`. Too
+  noisy or slow for the gate. Findings triaged into
+  `tmp/sweep-findings.md`; substantive ones become follow-up issues.
+- **`make mutation-audit`** — every release that touches a connector.
+  `gremlins` against `internal/connector/` plus the connector
+  subpackages with `provenance_test.go` files (github, githubactions,
+  bugsnag, honeycomb). Surviving mutants on the four named invariants
+  (`prov.PaginationComplete`, `prov.RowsReturned[<k>]`,
+  `prov.Errors[<k>]`, `EndpointStatus`) get killing tests in the same
+  PR. `sentry` and `circleci` excluded until VCR cassettes land.
+
+---
+
 ## Distribution
 
 - **Releases**: GitHub Releases with SHA256 checksums per asset and a

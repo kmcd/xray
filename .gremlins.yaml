@@ -1,0 +1,20 @@
+# Gremlins mutation-testing config. See ADR 029 for the cadence
+# (once-per-release that touches a connector).
+#
+# Path scoping is via CLI args, not config — `make mutation-audit`
+# enumerates the provenance-emitting paths.
+silent: false
+
+# Single worker → deterministic results. Parallel workers introduce
+# test-run jitter that flips a mutant between LIVED and KILLED across
+# runs. Determinism wins over wall-clock for an audit.
+workers: 1
+
+# Generous timeout coefficient — HTTP-stub tests can be slow under
+# mutation pressure (extra retry loops). 5× nominal keeps false-positive
+# "timed out" mutants down.
+timeout-coefficient: 5
+
+# Mutators left at default (all enabled). The ratio of LIVED/KILLED is
+# the signal; disabling mutators biases the audit toward "everything
+# kills".

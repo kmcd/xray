@@ -4,6 +4,14 @@ All notable changes to `xray` per release. Format follows [Keep a Changelog](htt
 
 The analyser refuses to load artifacts at an unknown `schema_version`. See the [compatibility table](./README.md#compatibility) in the README for the binary-to-schema mapping.
 
+## [Unreleased]
+
+### Quality
+
+- **three-layer sensor architecture.** Three new code-quality sensors with distinct cadences: `make gates` adds eight gate-time linters (`bodyclose`, `noctx`, `errorlint`, `unconvert`, `wastedassign`, `prealloc`, `usestdlibvars`, `depguard` — the last encoding the core/connector seam at lint time); `make sweep` is a once-per-quarter pass with `deadcode`, `nilaway`, and `gocritic` (findings triaged into `tmp/sweep-findings.md`); `make mutation-audit` is a once-per-release `gremlins` audit against the provenance-emitting paths (config in `.gremlins.yaml`, scope in the Makefile target). Surviving mutants on the four named invariants (`prov.PaginationComplete`, `prov.RowsReturned[<k>]`, `prov.Errors[<k>]`, `EndpointStatus`) get killing tests in the same PR. No new runtime dependencies; static-binary constraint unaffected. ([#98], [ADR 029](./docs/adr/0029-three-layer-sensor-architecture.md))
+
+[#98]: https://github.com/kmcd/xray/issues/98
+
 ## [0.3.0] — 2026-06-08
 
 Breaking: `schema_version` bumps `1 → 2`. Author-identity columns now hold opaque `h_<15 digits>` tokens, not raw logins or git idents. Analysers built for `schema_version = 1` must be updated (assay v1.1.0 already reads the new form). Smoke-verified against `goreleaser/chglog` (~12-month window): 36 commits + 36 PRs + 68 file_complexity_history rows; `mailmap_applied=false`, `squash_rate=1.0`, all author handles match `^h_\d{15}$`.

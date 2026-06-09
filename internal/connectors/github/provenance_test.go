@@ -103,6 +103,40 @@ func TestExtractWorkingTree_HarnessArtifactInsertError_RecordsProvErrors(t *test
 	if sink.harnessCalls < 2 {
 		t.Errorf("walk aborted on failure: only %d InsertHarnessArtifact calls; expected 2", sink.harnessCalls)
 	}
+	// Pin RowsReturned[harness_artifacts] — kills `++ → --` mutation on
+	// walk.go:185. With failOnHarness=1, exactly one successful insert.
+	if got, want := prov.RowsReturned["harness_artifacts"], sink.harnessCalls-1; got != want {
+		t.Errorf("RowsReturned[harness_artifacts] = %d, want %d (successful inserts)", got, want)
+	}
+}
+
+// TestExtractWorkingTree_RepoLanguages_RowsReturned pins the language-totals
+// emission at walk.go:199 — kills `++ → --` and other mutations on that
+// increment. Two Go files + one Python file → 2 language rows + at least
+// one repo_languages row per distinct language.
+func TestExtractWorkingTree_RepoLanguages_RowsReturned(t *testing.T) {
+	clone := t.TempDir()
+	if err := os.WriteFile(filepath.Join(clone, "a.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write a.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(clone, "b.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write b.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(clone, "c.py"), []byte("print('hi')\n"), 0o644); err != nil {
+		t.Fatalf("write c.py: %v", err)
+	}
+
+	c := newTestConnector(t, httptest.NewServer(http.NewServeMux()))
+	sink := &extraSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
+	c.extractWorkingTree(context.Background(), connector.Repo{Slug: "kmcd/foo", Clone: clone}, standardWindow(), sink, &prov)
+
+	if prov.RowsReturned["repo_languages"] == 0 {
+		t.Errorf("RowsReturned[repo_languages] = 0; expected > 0 (mutation `++ → --` would also yield 0 or negative)")
+	}
+	if got := prov.RowsReturned["repo_languages"]; got != len(sink.languages) {
+		t.Errorf("RowsReturned[repo_languages] = %d, sink got %d", got, len(sink.languages))
+	}
 }
 
 // TestInsertTeamMapping_Success_IncrementsRowsReturned covers extract.go:84

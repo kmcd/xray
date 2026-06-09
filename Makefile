@@ -12,7 +12,7 @@ LDFLAGS := -s -w \
 
 export CGO_ENABLED := 0
 
-.PHONY: build test lint vuln coverage gates sweep release-snapshot clean
+.PHONY: build test lint vuln coverage gates sweep mutation-audit release-snapshot clean
 
 build:
 	go build -trimpath -ldflags "$(LDFLAGS)" -o xray ./cmd/xray
@@ -47,6 +47,17 @@ sweep:
 	@echo
 	@echo "== gocritic =="
 	@golangci-lint run --default=none --enable=gocritic --enable-only || true
+
+# Once-per-release-touching-connector mutation audit — not in CI (see ADR 029).
+# Scoped to packages with provenance-write coverage. sentry + circleci
+# excluded until VCR cassettes land (#66 follow-ups). Config in .gremlins.yaml.
+# Install: go install github.com/go-gremlins/gremlins/cmd/gremlins@latest
+mutation-audit:
+	@echo "== connector =="; gremlins unleash ./internal/connector/ || true
+	@echo "== github =="; gremlins unleash ./internal/connectors/github/ || true
+	@echo "== githubactions =="; gremlins unleash ./internal/connectors/githubactions/ || true
+	@echo "== bugsnag =="; gremlins unleash ./internal/connectors/bugsnag/ || true
+	@echo "== honeycomb =="; gremlins unleash ./internal/connectors/honeycomb/ || true
 
 release-snapshot:
 	goreleaser release --snapshot --clean

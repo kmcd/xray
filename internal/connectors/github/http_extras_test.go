@@ -90,6 +90,10 @@ func TestExtractCodeowners(t *testing.T) {
 	if gotUser != 2 || gotTeam != 1 {
 		t.Errorf("user/team counts = %d/%d, want 2/1", gotUser, gotTeam)
 	}
+	// Pin RowsReturned — kills the `++ → --` mutation on codeowners.go:63.
+	if got, want := prov.RowsReturned["codeowners"], len(sink.codeowners); got != want {
+		t.Errorf("RowsReturned[codeowners] = %d, want %d", got, want)
+	}
 	if ep := prov.Endpoints["codeowners"]; !ep.Accessible {
 		t.Errorf("expected codeowners endpoint Accessible=true, got %+v", ep)
 	}
@@ -226,6 +230,13 @@ func TestExtractReleases(t *testing.T) {
 	}
 	if ep := prov.Endpoints["releases"]; !ep.Accessible {
 		t.Errorf("expected endpoints[releases].Accessible=true after clean walk, got %+v", ep)
+	}
+	// Pin RowsReturned — kills the `++ → --` mutation on releases.go.
+	if got, want := prov.RowsReturned["releases"], len(sink.releases); got != want {
+		t.Errorf("RowsReturned[releases] = %d, want %d", got, want)
+	}
+	if got, want := prov.RowsReturned["deploys"], len(sink.deploys); got != want {
+		t.Errorf("RowsReturned[deploys] = %d, want %d", got, want)
 	}
 }
 
@@ -405,6 +416,21 @@ func TestExtractPRs_BulkEnrichment(t *testing.T) {
 	}
 	if sink.prs[0].FirstReviewAt == nil {
 		t.Errorf("expected first_review_at populated from inline reviews")
+	}
+	// Pin RowsReturned for every PR-derived emission — kills the lived
+	// `++ → --` mutations on prs.go:566/619/677, pr_comments.go:33/71,
+	// pr_meta.go:83, reviews.go:41. Sink-shape assertions above wouldn't
+	// catch a counter flip on its own.
+	wantCounters := map[string]int{
+		"prs":                 len(sink.prs),
+		"reviews":             len(sink.reviews),
+		"pr_comments":         len(sink.comments),
+		"pr_review_requests":  len(sink.reqs),
+	}
+	for k, want := range wantCounters {
+		if got := prov.RowsReturned[k]; got != want {
+			t.Errorf("RowsReturned[%s] = %d, want %d", k, got, want)
+		}
 	}
 }
 

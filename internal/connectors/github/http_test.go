@@ -532,6 +532,15 @@ func TestExtractBranches_ProtectionAccessible(t *testing.T) {
 	if !ep.Accessible {
 		t.Errorf("expected endpoints[branch_protection].Accessible = true, got %+v", ep)
 	}
+	// Pin RowsReturned counters — a `++ → --` mutation on the branches.go
+	// emit sites flips these to -N. The sink-shape assertion above wouldn't
+	// catch that.
+	if got, want := prov.RowsReturned["branches"], len(sink.branches); got != want {
+		t.Errorf("RowsReturned[branches] = %d, want %d", got, want)
+	}
+	if got, want := prov.RowsReturned["branch_protection"], len(sink.branchProtection); got != want {
+		t.Errorf("RowsReturned[branch_protection] = %d, want %d", got, want)
+	}
 }
 
 func TestExtractBranches_Protection403(t *testing.T) {

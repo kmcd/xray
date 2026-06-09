@@ -99,6 +99,67 @@ func TestProvenance_Merge_RateLimitORed(t *testing.T) {
 	}
 }
 
+// TestProvenance_Merge_GraphQLPoints: Used counters sum across fragments;
+// Remaining tracks the minimum non-zero observation across fragments
+// (lowest budget after merging is the live signal — see #71 + ADR 025).
+// Zero on `other` is treated as "no observation", not "zero remaining".
+func TestProvenance_Merge_GraphQLPoints(t *testing.T) {
+	t.Run("Used sums across both fragments", func(t *testing.T) {
+		a := newProv(t)
+		b := newProv(t)
+		a.GraphQLPointsUsed = 17
+		b.GraphQLPointsUsed = 23
+		a.Merge(b)
+		if a.GraphQLPointsUsed != 40 {
+			t.Errorf("Used: got %d want 40", a.GraphQLPointsUsed)
+		}
+	})
+
+	t.Run("zero on other leaves a's Remaining intact", func(t *testing.T) {
+		a := newProv(t)
+		b := newProv(t)
+		a.GraphQLPointsRemaining = 100
+		b.GraphQLPointsRemaining = 0 // no observation from b
+		a.Merge(b)
+		if a.GraphQLPointsRemaining != 100 {
+			t.Errorf("Remaining: got %d want 100 (b's 0 means no observation)", a.GraphQLPointsRemaining)
+		}
+	})
+
+	t.Run("zero on a takes other's Remaining", func(t *testing.T) {
+		a := newProv(t)
+		b := newProv(t)
+		a.GraphQLPointsRemaining = 0
+		b.GraphQLPointsRemaining = 250
+		a.Merge(b)
+		if a.GraphQLPointsRemaining != 250 {
+			t.Errorf("Remaining: got %d want 250 (a had no observation)", a.GraphQLPointsRemaining)
+		}
+	})
+
+	t.Run("minimum non-zero wins when both observed", func(t *testing.T) {
+		a := newProv(t)
+		b := newProv(t)
+		a.GraphQLPointsRemaining = 100
+		b.GraphQLPointsRemaining = 40 // lower budget — live signal
+		a.Merge(b)
+		if a.GraphQLPointsRemaining != 40 {
+			t.Errorf("Remaining: got %d want 40 (min wins)", a.GraphQLPointsRemaining)
+		}
+	})
+
+	t.Run("higher remaining on other leaves a's Remaining intact", func(t *testing.T) {
+		a := newProv(t)
+		b := newProv(t)
+		a.GraphQLPointsRemaining = 40
+		b.GraphQLPointsRemaining = 100
+		a.Merge(b)
+		if a.GraphQLPointsRemaining != 40 {
+			t.Errorf("Remaining: got %d want 40 (a's lower value stays)", a.GraphQLPointsRemaining)
+		}
+	})
+}
+
 // TestProvenance_Merge_EndpointsAndFlagsFirstWins: like Errors, existing
 // entries on p win.
 func TestProvenance_Merge_EndpointsAndFlagsFirstWins(t *testing.T) {

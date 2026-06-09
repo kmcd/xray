@@ -30,3 +30,4 @@
 | [0026](0026-github-prefetch-resilience.md) | GitHub Prefetch resilience | accepted | `queryWithEOFRetry` + `costInterceptor` body-read fix; cursor-handoff on partial cache |
 | [0027](0027-go-vcr-v4-for-http-replay.md) | go-vcr/v4 for HTTP replay fixtures | accepted | VCR cassettes under `testdata/cassettes/`; `ModeReplayOnly` in CI |
 | [0028](0028-graceful-ctrl-c.md) | Graceful Ctrl-C | accepted | Two-state signal handler; first signal cancels, second force-exits; exit code 130 |
+| [0029](0029-three-layer-sensor-architecture.md) | Three-layer sensor architecture | accepted | `make gates` (linters) + `make sweep` (quarterly deadcode/nilaway/gocritic) + `make mutation-audit` (per-release gremlins) |
