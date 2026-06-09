@@ -59,15 +59,17 @@ type SummaryArtifact struct {
 }
 
 // SummaryProvenance collapses the per-row provenance stream into the
-// aggregate counters the customer sees.
+// aggregate counters the customer sees. RateLimitTruncated counts
+// connectors whose pagination was cut off by the rate-limit budget; the
+// raw wait count + cumulative wait time will be added once #82's events
+// flow back into the manifest's provenance.
 type SummaryProvenance struct {
-	EndpointsAccessible    int `json:"endpoints_accessible"`
-	EndpointsTotal         int `json:"endpoints_total"`
-	EndpointsInaccessible  int `json:"endpoints_inaccessible"`
-	PerRowErrors           int `json:"per_row_errors"`
-	RateLimitWaits         int `json:"rate_limit_waits"`
-	RateLimitWaitTotalS    int `json:"rate_limit_wait_total_s"`
-	PartialPaginations     int `json:"partial_paginations"`
+	EndpointsAccessible   int `json:"endpoints_accessible"`
+	EndpointsTotal        int `json:"endpoints_total"`
+	EndpointsInaccessible int `json:"endpoints_inaccessible"`
+	PerRowErrors          int `json:"per_row_errors"`
+	RateLimitTruncated    int `json:"rate_limit_truncated"`
+	PartialPaginations    int `json:"partial_paginations"`
 }
 
 // Summarize renders the post-run summary block. Pure: no filesystem, no DB,
@@ -177,12 +179,11 @@ func writeRowsBlock(b *strings.Builder, counts map[string]int) {
 		count int
 	}
 	rows := make([]row, 0, len(counts))
-	totalTables := 0
+	totalTables := len(counts)
 	for k, v := range counts {
 		if v > 0 {
 			rows = append(rows, row{k, v})
 		}
-		totalTables++
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].count != rows[j].count {
@@ -235,11 +236,7 @@ func writeProvenanceBlock(b *strings.Builder, p SummaryProvenance) {
 	}
 	fmt.Fprintf(b, "  per-row errors:        %d%s\n", p.PerRowErrors, errNote)
 
-	rlNote := ""
-	if p.RateLimitWaits > 0 && p.RateLimitWaitTotalS > 0 {
-		rlNote = fmt.Sprintf(" (total %ds)", p.RateLimitWaitTotalS)
-	}
-	fmt.Fprintf(b, "  rate-limit waits:      %d%s\n", p.RateLimitWaits, rlNote)
+	fmt.Fprintf(b, "  rate-limit truncated:  %d\n", p.RateLimitTruncated)
 	fmt.Fprintf(b, "  partial paginations:   %d\n", p.PartialPaginations)
 }
 
@@ -256,7 +253,7 @@ func summarizeProvenance(provs []connector.Provenance) SummaryProvenance {
 		}
 		out.PerRowErrors += len(p.Errors)
 		if p.RateLimitTruncated {
-			out.RateLimitWaits++
+			out.RateLimitTruncated++
 		}
 		if !p.PaginationComplete {
 			out.PartialPaginations++

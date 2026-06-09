@@ -120,7 +120,7 @@ func newRunCmd() *cobra.Command {
 			stopSink()
 
 			logPath := ""
-			if !opts.noRunLog {
+			if logFile != nil {
 				logPath = strings.TrimSuffix(outPath, ".tar.gz") + ".log"
 			}
 
