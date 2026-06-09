@@ -31,6 +31,12 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 	}
 	if err != nil {
 		prov.Errors["markers"] = err.Error()
+		prov.Endpoints["markers"] = connector.EndpointStatus{
+			Accessible: false,
+			Reason:     err.Error(),
+		}
+	} else {
+		prov.Endpoints["markers"] = connector.EndpointStatus{Accessible: true}
 	}
 
 	incidents := c.extractIncidents(ctx, repo.Slug, window, sink)

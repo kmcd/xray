@@ -67,6 +67,59 @@ func testConnector(t *testing.T, baseURL string) *Connector {
 	}
 }
 
+// TestExtract_Forbidden_RecordsProjectInaccessible covers bugsnag/extract.go
+// — a 403 on the project errors list must set
+// Endpoints["project:<id>"]={Accessible:false}.
+func TestExtract_Forbidden_RecordsProjectInaccessible(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/projects/p1/errors", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"forbidden"}`, http.StatusForbidden)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := testConnector(t, srv.URL)
+	c.projects = map[string]string{"p1": "kmcd/foo"}
+	sink := &stubSink{}
+	prov := c.Extract(context.Background(), connector.Repo{Slug: "kmcd/foo"}, connector.Window{
+		Start: time.Date(2026, 6, 8, 0, 0, 0, 0, time.UTC),
+		End:   time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+	}, sink)
+
+	ep, ok := prov.Endpoints["project:p1"]
+	if !ok {
+		t.Fatalf("expected endpoints[project:p1] entry on 403")
+	}
+	if ep.Accessible {
+		t.Errorf("expected Accessible=false on 403; got %+v", ep)
+	}
+	if ep.Reason == "" {
+		t.Errorf("expected Reason populated on 403; got empty")
+	}
+}
+
+// TestExtract_Success_RecordsProjectAccessible covers the success path.
+func TestExtract_Success_RecordsProjectAccessible(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/projects/p1/errors", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintln(w, `[]`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := testConnector(t, srv.URL)
+	c.projects = map[string]string{"p1": "kmcd/foo"}
+	sink := &stubSink{}
+	prov := c.Extract(context.Background(), connector.Repo{Slug: "kmcd/foo"}, connector.Window{
+		Start: time.Date(2026, 6, 8, 0, 0, 0, 0, time.UTC),
+		End:   time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+	}, sink)
+
+	if ep := prov.Endpoints["project:p1"]; !ep.Accessible {
+		t.Errorf("expected Accessible=true on success; got %+v", ep)
+	}
+}
+
 // TestListErrors_InsertError_ContinuesWalk_PerIDKey verifies that a failing
 // InsertIncident on the second of three errors doesn't truncate the page or
 // the outer next-link walk. Per-id key recorded in prov.Errors; complete=true

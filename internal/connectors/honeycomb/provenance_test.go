@@ -68,6 +68,56 @@ func testConnector(t *testing.T, baseURL string) *Connector {
 	}
 }
 
+// TestExtract_Forbidden_RecordsMarkersInaccessible covers honeycomb/extract.go
+// — a 403 on the markers list call must set Endpoints["markers"]={Accessible:false}.
+func TestExtract_Forbidden_RecordsMarkersInaccessible(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/markers/myds", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"forbidden"}`, http.StatusForbidden)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := testConnector(t, srv.URL)
+	sink := &stubSink{}
+	prov := c.Extract(context.Background(), connector.Repo{Slug: "kmcd/foo"}, connector.Window{
+		Start: time.Date(2026, 6, 8, 0, 0, 0, 0, time.UTC),
+		End:   time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+	}, sink)
+
+	ep, ok := prov.Endpoints["markers"]
+	if !ok {
+		t.Fatalf("expected endpoints[markers] entry on 403")
+	}
+	if ep.Accessible {
+		t.Errorf("expected Accessible=false on 403; got %+v", ep)
+	}
+	if ep.Reason == "" {
+		t.Errorf("expected Reason populated on 403; got empty")
+	}
+}
+
+// TestExtract_Success_RecordsMarkersAccessible covers the success path.
+func TestExtract_Success_RecordsMarkersAccessible(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/markers/myds", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintln(w, `[]`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := testConnector(t, srv.URL)
+	sink := &stubSink{}
+	prov := c.Extract(context.Background(), connector.Repo{Slug: "kmcd/foo"}, connector.Window{
+		Start: time.Date(2026, 6, 8, 0, 0, 0, 0, time.UTC),
+		End:   time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+	}, sink)
+
+	if ep := prov.Endpoints["markers"]; !ep.Accessible {
+		t.Errorf("expected Accessible=true on success; got %+v", ep)
+	}
+}
+
 // TestExtractDeploys_InsertError_ContinuesWalk_PerIDKey verifies that a failing
 // InsertDeploy on the second of three markers doesn't truncate the walk and
 // records a per-id key in prov.Errors. The function still returns complete=true

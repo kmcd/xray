@@ -64,6 +64,142 @@ func newTestConnector(t *testing.T, srv *httptest.Server) *Connector {
 	return c
 }
 
+// TestBuilds_Forbidden_RecordsEndpoint covers builds.go:42 — a 403 on the
+// workflow-runs list call must set Endpoints["workflow_runs"]={Accessible:false}.
+func TestBuilds_Forbidden_RecordsEndpoint(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/kmcd/foo/actions/runs", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"forbidden"}`, http.StatusForbidden)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestConnector(t, srv)
+	sink := &failingSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", testWindow)
+
+	c.builds(context.Background(), "kmcd", "foo", connector.Repo{Slug: "kmcd/foo"}, testWindow, sink, &prov)
+
+	ep, ok := prov.Endpoints["workflow_runs"]
+	if !ok {
+		t.Fatalf("expected endpoints[workflow_runs] entry on 403")
+	}
+	if ep.Accessible {
+		t.Errorf("expected Accessible=false on 403; got %+v", ep)
+	}
+	if ep.Reason == "" {
+		t.Errorf("expected Reason populated on 403; got empty")
+	}
+	if prov.RowsReturned["builds"] != 0 {
+		t.Errorf("expected RowsReturned[builds]=0 on 403; got %d", prov.RowsReturned["builds"])
+	}
+}
+
+// TestBuilds_Success_RecordsAccessibleTrue covers the success path —
+// Endpoints["workflow_runs"].Accessible=true after a clean walk (even with 0 runs).
+func TestBuilds_Success_RecordsAccessibleTrue(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/kmcd/foo/actions/runs", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintln(w, `{"total_count": 0, "workflow_runs": []}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestConnector(t, srv)
+	sink := &failingSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", testWindow)
+
+	c.builds(context.Background(), "kmcd", "foo", connector.Repo{Slug: "kmcd/foo"}, testWindow, sink, &prov)
+
+	if ep := prov.Endpoints["workflow_runs"]; !ep.Accessible {
+		t.Errorf("expected Accessible=true on clean walk; got %+v", ep)
+	}
+}
+
+// TestJobsForRun_Forbidden_RecordsEndpoint covers builds.go:100 — 403 on
+// workflow-jobs list must set Endpoints["workflow_jobs"]={Accessible:false}.
+func TestJobsForRun_Forbidden_RecordsEndpoint(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/kmcd/foo/actions/runs/", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"forbidden"}`, http.StatusForbidden)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestConnector(t, srv)
+	sink := &failingSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", testWindow)
+
+	runID := int64(7777)
+	attempt := 1
+	run := &github.WorkflowRun{ID: &runID, RunAttempt: &attempt}
+	c.jobsForRun(context.Background(), "kmcd", "foo", "kmcd/foo", run, sink, &prov)
+
+	ep, ok := prov.Endpoints["workflow_jobs"]
+	if !ok {
+		t.Fatalf("expected endpoints[workflow_jobs] entry on 403")
+	}
+	if ep.Accessible {
+		t.Errorf("expected Accessible=false on 403; got %+v", ep)
+	}
+}
+
+// TestDeploys_Forbidden_RecordsEndpoint covers deploys.go:36 — 403 on
+// deployments list must set Endpoints["deployments"]={Accessible:false}.
+func TestDeploys_Forbidden_RecordsEndpoint(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/kmcd/foo/deployments", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"forbidden"}`, http.StatusForbidden)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestConnector(t, srv)
+	sink := &failingSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", testWindow)
+
+	c.deploys(context.Background(), "kmcd", "foo", connector.Repo{Slug: "kmcd/foo"}, testWindow, sink, &prov)
+
+	ep, ok := prov.Endpoints["deployments"]
+	if !ok {
+		t.Fatalf("expected endpoints[deployments] entry on 403")
+	}
+	if ep.Accessible {
+		t.Errorf("expected Accessible=false on 403; got %+v", ep)
+	}
+}
+
+// TestDeploys_DeployStatusesForbidden_RecordsEndpoint covers deploys.go:60
+// (statusErr path). When latestDeploymentState fails on at least one
+// deployment, Endpoints["deploy_statuses"].Accessible=false.
+func TestDeploys_DeployStatusesForbidden_RecordsEndpoint(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/kmcd/foo/deployments", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintln(w, `[
+			{"id": 2001, "sha": "aaa", "environment": "prod", "task": "deploy", "ref": "v1", "created_at": "2026-06-09T01:00:00Z"}
+		]`)
+	})
+	mux.HandleFunc("/repos/kmcd/foo/deployments/2001/statuses", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"forbidden"}`, http.StatusForbidden)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestConnector(t, srv)
+	sink := &failingSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", testWindow)
+
+	c.deploys(context.Background(), "kmcd", "foo", connector.Repo{Slug: "kmcd/foo"}, testWindow, sink, &prov)
+
+	ep, ok := prov.Endpoints["deploy_statuses"]
+	if !ok {
+		t.Fatalf("expected endpoints[deploy_statuses] entry when statuses fetch fails")
+	}
+	if ep.Accessible {
+		t.Errorf("expected Accessible=false on statuses 403; got %+v", ep)
+	}
+}
+
 // TestBuilds_InsertError_ContinuesWalk_PerIDKey verifies that a failing
 // InsertBuild on the second of three runs doesn't abort the page: the third
 // run still emits, and prov.Errors carries a per-id key for the failure.

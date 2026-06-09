@@ -30,6 +30,12 @@ func (c *Connector) Extract(
 		}
 		if err != nil {
 			prov.Errors["project:"+projectID] = err.Error()
+			prov.Endpoints["project:"+projectID] = connector.EndpointStatus{
+				Accessible: false,
+				Reason:     err.Error(),
+			}
+		} else {
+			prov.Endpoints["project:"+projectID] = connector.EndpointStatus{Accessible: true}
 		}
 	}
 

@@ -42,6 +42,10 @@ func (c *Connector) builds(
 		runs, resp, err := c.client.Actions.ListRepositoryWorkflowRuns(ctx, owner, name, opts)
 		if err != nil {
 			prov.Errors["builds"] = err.Error()
+			prov.Endpoints["workflow_runs"] = connector.EndpointStatus{
+				Accessible: false,
+				Reason:     err.Error(),
+			}
 			prov.PaginationComplete = false
 			return
 		}
@@ -73,6 +77,7 @@ func (c *Connector) builds(
 		}
 		opts.Page = resp.NextPage
 	}
+	prov.Endpoints["workflow_runs"] = connector.EndpointStatus{Accessible: true}
 }
 
 // jobsForRun pages the jobs for a single workflow run and emits build_jobs.
@@ -100,6 +105,10 @@ func (c *Connector) jobsForRun(
 		jobs, resp, err := c.client.Actions.ListWorkflowJobs(ctx, owner, name, runID, jOpts)
 		if err != nil {
 			prov.Errors["build_jobs"] = err.Error()
+			prov.Endpoints["workflow_jobs"] = connector.EndpointStatus{
+				Accessible: false,
+				Reason:     err.Error(),
+			}
 			prov.PaginationComplete = false
 			return
 		}
@@ -122,6 +131,7 @@ func (c *Connector) jobsForRun(
 		}
 		jOpts.Page = resp.NextPage
 	}
+	prov.Endpoints["workflow_jobs"] = connector.EndpointStatus{Accessible: true}
 }
 
 // mapBuild converts a github.WorkflowRun to a model.Build. Extracted as a

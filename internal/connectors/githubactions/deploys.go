@@ -26,6 +26,12 @@ func (c *Connector) deploys(
 		ListOptions: github.ListOptions{PerPage: 100},
 	}
 
+	// Track per-deployment status-endpoint accessibility across the loop.
+	// triedStatuses gates whether we record Endpoints["deploy_statuses"] at
+	// all (no deployments in window → no status calls → no entry).
+	var triedStatuses, statusesAccessible bool
+	statusesAccessible = true
+
 	for {
 		if err := ctx.Err(); err != nil {
 			prov.Errors["deploys"] = err.Error()
@@ -36,6 +42,10 @@ func (c *Connector) deploys(
 		deployments, resp, err := c.client.Repositories.ListDeployments(ctx, owner, name, opts)
 		if err != nil {
 			prov.Errors["deploys"] = err.Error()
+			prov.Endpoints["deployments"] = connector.EndpointStatus{
+				Accessible: false,
+				Reason:     err.Error(),
+			}
 			prov.PaginationComplete = false
 			return
 		}
@@ -52,9 +62,19 @@ func (c *Connector) deploys(
 				continue
 			}
 
+			triedStatuses = true
 			state, statusErr := c.latestDeploymentState(ctx, owner, name, int64Of(d.ID))
 			if statusErr != nil {
-				prov.Errors["deploy_statuses"] = statusErr.Error()
+				if prov.Errors["deploy_statuses"] == "" {
+					prov.Errors["deploy_statuses"] = statusErr.Error()
+				}
+				if statusesAccessible {
+					statusesAccessible = false
+					prov.Endpoints["deploy_statuses"] = connector.EndpointStatus{
+						Accessible: false,
+						Reason:     statusErr.Error(),
+					}
+				}
 				// Continue with empty status mapped to in_progress.
 			}
 
@@ -70,6 +90,10 @@ func (c *Connector) deploys(
 			break
 		}
 		opts.Page = resp.NextPage
+	}
+	prov.Endpoints["deployments"] = connector.EndpointStatus{Accessible: true}
+	if triedStatuses && statusesAccessible {
+		prov.Endpoints["deploy_statuses"] = connector.EndpointStatus{Accessible: true}
 	}
 }
 

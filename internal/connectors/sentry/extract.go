@@ -24,9 +24,14 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 		issues, complete, err := c.listIssues(ctx, sentrySlug, window)
 		if err != nil {
 			prov.Errors[sentrySlug] = err.Error()
+			prov.Endpoints[sentrySlug] = connector.EndpointStatus{
+				Accessible: false,
+				Reason:     err.Error(),
+			}
 			prov.PaginationComplete = false
 			continue
 		}
+		prov.Endpoints[sentrySlug] = connector.EndpointStatus{Accessible: true}
 		if !complete {
 			prov.PaginationComplete = false
 		}
