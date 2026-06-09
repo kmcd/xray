@@ -110,6 +110,66 @@ func TestExtractWorkingTree_HarnessArtifactInsertError_RecordsProvErrors(t *test
 	}
 }
 
+// TestExtractWorkingTree_WalkRootError_RecordsRepoLanguagesError verifies that
+// a root-directory walk failure sets prov.Errors["repo_languages"] in addition
+// to prov.Errors["walk"], so analysts inspecting the manifest can see why
+// repo_languages is absent rather than finding an empty error key.
+func TestExtractWorkingTree_WalkRootError_RecordsRepoLanguagesError(t *testing.T) {
+	c := newTestConnector(t, httptest.NewServer(http.NewServeMux()))
+	sink := &extraSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
+
+	// Use a path guaranteed absent: a child of a fresh temp dir that was never created.
+	absentClone := filepath.Join(t.TempDir(), "does-not-exist")
+	c.extractWorkingTree(context.Background(), connector.Repo{Slug: "kmcd/foo", Clone: absentClone}, standardWindow(), sink, &prov)
+
+	for _, key := range []string{"walk", "file_metrics", "harness_artifacts", "repo_languages"} {
+		if prov.Errors[key] == "" {
+			t.Errorf("expected prov.Errors[%q] set on root walk failure; got empty", key)
+		}
+	}
+}
+
+// TestExtractWorkingTree_RepoLanguages_ByteCounts verifies that the per-language
+// byte totals accumulated in the walk equal the sum of on-disk file sizes for
+// each language. Replaces the deleted TestExtractLanguages assertion that was
+// removed in #105.
+func TestExtractWorkingTree_RepoLanguages_ByteCounts(t *testing.T) {
+	goContent1 := "package main\n\nfunc main() {}\n"
+	goContent2 := "package main\n\nfunc h() {}\n"
+	rbContent := "puts 'hi'\n"
+
+	clone := t.TempDir()
+	for name, content := range map[string]string{
+		"main.go":   goContent1,
+		"helper.go": goContent2,
+		"app.rb":    rbContent,
+	} {
+		if err := os.WriteFile(filepath.Join(clone, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	c := newTestConnector(t, httptest.NewServer(http.NewServeMux()))
+	sink := &extraSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
+	c.extractWorkingTree(context.Background(), connector.Repo{Slug: "kmcd/foo", Clone: clone}, standardWindow(), sink, &prov)
+
+	byLang := make(map[string]int64)
+	for _, row := range sink.languages {
+		byLang[row.Language] = row.Bytes
+	}
+
+	wantGo := int64(len(goContent1) + len(goContent2))
+	if byLang["Go"] != wantGo {
+		t.Errorf("Go bytes = %d, want %d (sum of .go file sizes)", byLang["Go"], wantGo)
+	}
+	wantRuby := int64(len(rbContent))
+	if byLang["Ruby"] != wantRuby {
+		t.Errorf("Ruby bytes = %d, want %d", byLang["Ruby"], wantRuby)
+	}
+}
+
 // TestExtractWorkingTree_RepoLanguages_RowsReturned pins the language-totals
 // emission at walk.go:199 — kills `++ → --` and other mutations on that
 // increment. Two Go files + one Python file → 2 language rows + at least

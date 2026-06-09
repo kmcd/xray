@@ -65,6 +65,9 @@ func (c *Connector) extractWorkingTree(ctx context.Context, repo connector.Repo,
 		if err != nil {
 			if path == root {
 				prov.Errors["walk"] = err.Error()
+				prov.Errors["file_metrics"] = err.Error()
+				prov.Errors["harness_artifacts"] = err.Error()
+				prov.Errors["repo_languages"] = err.Error()
 				return err
 			}
 			logger.Debug("walk error", slog.String("path", path), slog.String("err", err.Error()))
