@@ -21,6 +21,7 @@ Breaking: `schema_version` bumps `1 → 2`. Author-identity columns now hold opa
 - **github**: `prListQuery` nested connection sizes lowered from `first: 100` to `first: 25` for `commits`, `timelineItems`, `reviews`, `comments`, and `reviewThreads`. GitHub charges GraphQL points on the *requested* connection size, not the count returned; the previous values over-provisioned ~4× for typical PRs. Overflow paginators handle the rare PRs that exceed 25; `paginatePRTimelineOverflow` extended to request all four item types and update `ready_for_review_at`, `first_review_at`, and `force_pushed_after_review` so derived fields are correct even when those events fall past position 25. ([#77])
 - **ratelimit**: proactive primary-limit pacing via `Policy.LowWaterMark` (default 200). After a response where `X-RateLimit-Remaining < LowWaterMark`, `ratelimit.Transport` sets an internal `paceUntil` timestamp (reset + 5 s) and sleeps at the *start of the next request* rather than after the current response. The deferred-sleep design means the goroutine that received the triggering response is never blocked — specifically, the prefetch goroutine can return normally so `cloneOneRepo` is not serialised behind a rate-limit window. ([#76])
 - **github**: GraphQL point cost recorded in connector provenance. A `costInterceptor` wraps the outermost HTTP transport and parses `extensions.cost.actualQueryCost` and `extensions.cost.throttleStatus.remaining` from every `/graphql` response. Accumulated totals appear in `manifest.json` as `graphql_points_used` and `graphql_points_remaining` under `extraction_provenance`. Fields are additive, non-breaking, and omit when zero (classic PATs and non-GitHub tokens do not return extensions). ([#78])
+- **github**: PR-list prefetch resilient to mid-walk EOF. `costInterceptor` now propagates body-read errors instead of swallowing them and re-attaching a partial body that the downstream JSON decoder would surface as `"unexpected EOF"`. `fetchPRs` wraps each `prListQuery` page in a small `queryWithEOFRetry` (3 attempts, 60 s budget, 500 ms initial backoff) that catches `io.ErrUnexpectedEOF`/`io.EOF`/decoder-surfaced "unexpected EOF" and resumes the same GraphQL cursor. A single transient network blip during the Prefetch goroutine no longer abandons the prefetch cache and silently drops every PR after the failing page. Other code paths and the `ratelimit.Transport` retry classes are unchanged. ([#80])
 
 ### Author alias resolution via `.mailmap` (assay v1.1 contract #20, Tornhill Ch 13)
 
@@ -74,6 +75,7 @@ Verified against `goreleaser/chglog` post-fix (~18-month window): 65 commits wit
 [#76]: https://github.com/kmcd/xray/issues/76
 [#77]: https://github.com/kmcd/xray/issues/77
 [#78]: https://github.com/kmcd/xray/issues/78
+[#80]: https://github.com/kmcd/xray/issues/80
 [#55]: https://github.com/kmcd/xray/issues/55
 [#56]: https://github.com/kmcd/xray/issues/56
 [#57]: https://github.com/kmcd/xray/issues/57

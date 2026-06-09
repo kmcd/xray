@@ -89,20 +89,30 @@ func (ci *costInterceptor) RoundTrip(req *http.Request) (*http.Response, error) 
 	}
 	body, readErr := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	resp.Body = io.NopCloser(bytes.NewReader(body))
 	if readErr != nil {
-		return resp, nil
+		// Mid-response truncation (server reset, network drop). Returning the
+		// partial body would surface as a downstream JSON decoder
+		// "unexpected EOF" that nothing retries. Propagate the read error
+		// instead so callers (fetchPRs' queryWithEOFRetry, etc.) can retry
+		// the same request. RoundTripper contract: response is nil when
+		// error is non-nil.
+		return nil, readErr
 	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	// GitHub returns extensions.cost as a nested object, not a plain int.
 	var ext struct {
 		Extensions struct {
-			Cost           int `json:"cost"`
-			ThrottleStatus struct {
-				Remaining int `json:"remaining"`
-			} `json:"throttleStatus"`
+			Cost struct {
+				RequestedQueryCost int `json:"requestedQueryCost"`
+				ActualQueryCost    int `json:"actualQueryCost"`
+				ThrottleStatus     struct {
+					Remaining int `json:"remaining"`
+				} `json:"throttleStatus"`
+			} `json:"cost"`
 		} `json:"extensions"`
 	}
-	if jsonErr := json.Unmarshal(body, &ext); jsonErr == nil && ext.Extensions.Cost > 0 {
-		ci.onCost(ext.Extensions.Cost, ext.Extensions.ThrottleStatus.Remaining)
+	if jsonErr := json.Unmarshal(body, &ext); jsonErr == nil && ext.Extensions.Cost.ActualQueryCost > 0 {
+		ci.onCost(ext.Extensions.Cost.ActualQueryCost, ext.Extensions.Cost.ThrottleStatus.Remaining)
 	}
 	return resp, nil
 }

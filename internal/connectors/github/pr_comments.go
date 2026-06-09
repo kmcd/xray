@@ -105,6 +105,7 @@ func (c *Connector) paginatePRIssueCommentsOverflow(ctx context.Context, owner, 
 			if prov.Errors["pr_comments"] == "" {
 				prov.Errors["pr_comments"] = err.Error()
 			}
+			prov.PaginationComplete = false
 			c.log.Warn("github: graphql issue-comments overflow",
 				slog.String("repo", slug),
 				slog.Int("pr", number),
@@ -155,6 +156,7 @@ func (c *Connector) paginatePRReviewThreadsOverflow(ctx context.Context, owner, 
 			if prov.Errors["pr_comments"] == "" {
 				prov.Errors["pr_comments"] = err.Error()
 			}
+			prov.PaginationComplete = false
 			c.log.Warn("github: graphql review-threads overflow",
 				slog.String("repo", slug),
 				slog.Int("pr", number),

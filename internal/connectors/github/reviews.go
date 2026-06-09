@@ -83,6 +83,7 @@ func (c *Connector) paginatePRReviewsOverflow(ctx context.Context, owner, name s
 			if prov.Errors["reviews"] == "" {
 				prov.Errors["reviews"] = err.Error()
 			}
+			prov.PaginationComplete = false
 			c.log.Warn("github: graphql reviews overflow",
 				slog.String("repo", slug),
 				slog.Int("pr", number),

@@ -119,6 +119,7 @@ func (c *Connector) paginatePRTimelineOverflow(ctx context.Context, owner, name 
 			if prov.Errors["pr_review_requests"] == "" {
 				prov.Errors["pr_review_requests"] = err.Error()
 			}
+			prov.PaginationComplete = false
 			c.log.Warn("github: graphql timeline overflow",
 				slog.String("repo", slug),
 				slog.Int("pr", number),
