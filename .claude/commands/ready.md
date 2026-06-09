@@ -21,7 +21,7 @@ Review the working-tree diff against [`.claude/diff_review.md`](.claude/diff_rev
 - **Read-only and provenance discipline**
 - **No secrets in logs**
 
-Fix anything you spot. Do not just report it.
+Fix anything you spot. Do not just report it. **Do not file it as a follow-up issue either** — any bug surfaced during review (in your diff, adjacent to it, or pre-existing in code you happen to read) gets fixed in this session. Only genuine scope additions become new issues. See `CLAUDE.md` → Workflow → "Never defer bugs."
 
 ## Step 3: self-review (inferential)
 
@@ -31,7 +31,7 @@ Invoke the `code-review` skill against the working-tree diff:
 Skill code-review
 ```
 
-Treat its output as a peer review, not a vote: address every concern with a fix or an explicit "won't fix because ...". Run `make gates` again after any change.
+Treat its output as a peer review, not a vote: address every concern with a fix or an explicit "won't fix because ...". Run `make gates` again after any change. **A finding is not "addressed" by filing a follow-up issue.** Bugs get fixed in this session; the only exit other than fix is "won't fix because the concern is wrong (here's why)."
 
 ## Step 4: scope sweep
 
@@ -39,7 +39,7 @@ Force-compare the work against the original request. Completion criteria are tem
 
 - **Asked** — re-read the originating request as written (issue body, the user message that started the work, the GitHub comment thread). Enumerate every concrete item. Do not paraphrase from memory.
 - **Done** — what the diff actually changed. Cross-reference against Asked.
-- **Deferred (with reason)** — anything in Asked but not Done. Name each item explicitly; do not bury. If empty, say so.
+- **Deferred (with reason)** — anything in Asked but not Done. **Scope from the original ask only** — not bugs found during review. Bugs found during review do not appear here; they were already fixed in Steps 2–3 or the work is not ready. Name each deferred ask item explicitly; do not bury. If empty, say so.
 
 Then run the same-class scan — don't just make this instance go away, apply the fix or feature consistently wherever the same shape exists in the codebase:
 

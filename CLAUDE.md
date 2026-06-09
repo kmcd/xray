@@ -185,6 +185,12 @@ recognise. Pre-1.0, expect several bumps as the schema settles.
   ownership before fan-out.
 - **No worktrees.** Enforced by `guard-worktree.sh` and the `Bash` matcher
   on `git worktree add`.
+- **Never defer bugs.** Any bug surfaced during `/ready` — in your own diff,
+  adjacent to it, or pre-existing in code you read while reviewing — gets
+  fixed in the same session before close. Filing a follow-up issue for a
+  bug is **not allowed**. Only genuine scope additions (new features, new
+  capabilities, design questions that need user input) become new issues.
+  The test: *missing correctness, or a new thing?* If correctness, fix now.
 
 ---
 
