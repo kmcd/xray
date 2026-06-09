@@ -9,13 +9,6 @@
 - **Touches**: GitHub, GitHub Actions, CircleCI, Sentry, Bugsnag, Honeycomb — read-only, even when tokens hold write scope.
 - **Doesn't do**: source-content capture, per-individual rankings, daemon mode, scheduled runs.
 
-## Guarantees
-
-- **Read-only**: no writes to any provider, ever.
-- **No source content**: structural metadata and parsed fields only.
-- **Team-level only**: no per-individual rollups.
-- **Verifiable**: SHA256 + cosign on the binary; per-row provenance in the manifest.
-
 ## Status
 
 Pre-1.0. The schema is unstable; minor version bumps may introduce breaking schema changes. See the compatibility table below.
