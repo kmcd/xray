@@ -1,183 +1,77 @@
 {
   "tool_version": "0.3.0",
   "schema_version": 2,
-  "run_id": "01JZSAMPLE000000000000000",
-  "run_started_at": "2026-04-01T09:14:22Z",
-  "run_completed_at": "2026-04-01T09:31:48Z",
+  "run_id": "0019ea7f8b8dda4b7d7af4e8065e4",
+  "run_started_at": "2026-06-08T16:02:35.869035Z",
+  "run_completed_at": "2026-06-08T16:02:50.168325Z",
   "window": {
-    "start": "2026-01-01",
-    "end": "2026-03-31"
+    "start": "2024-12-01",
+    "end": "2026-06-06"
   },
   "teams": {
-    "payments": [
-      "acme/billing"
-    ],
-    "platform": [
-      "acme/api",
-      "acme/web"
+    "smoke": [
+      "goreleaser/chglog"
     ]
   },
   "repos": [
     {
-      "slug": "acme/api",
-      "head_sha": "9f1c8b2d4e6a0c5f7b3d9e1a8c2b4d6e0f1a3c5b",
-      "default_branch": "main"
-    },
-    {
-      "slug": "acme/web",
-      "head_sha": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
-      "default_branch": "main"
-    },
-    {
-      "slug": "acme/billing",
-      "head_sha": "f0e1d2c3b4a5968778695a4b3c2d1e0f9a8b7c6d",
+      "slug": "goreleaser/chglog",
+      "head_sha": "fcbb27211bbbcef61266f132e5bf3be8b8ab802b",
       "default_branch": "main"
     }
   ],
   "connectors_used": [
-    "github",
-    "github_actions",
-    "sentry",
-    "honeycomb"
+    "github"
   ],
   "counts": {
-    "build_jobs": 4126,
-    "builds": 1714,
-    "commit_coauthors": 412,
-    "commit_files": 8633,
-    "commits": 1284,
-    "defects": 71,
-    "deploys": 88,
-    "file_metrics": 3902,
-    "harness_artifacts": 4,
-    "incidents": 23,
-    "pr_comments": 944,
-    "pr_review_requests": 312,
-    "prs": 207,
-    "reviews": 388
+    "branches": 2,
+    "codeowners": 1,
+    "commit_coauthors": 117,
+    "commit_files": 256,
+    "commits": 65,
+    "defects": 309,
+    "deploys": 6,
+    "file_complexity_history": 256,
+    "file_metrics": 144,
+    "pr_comments": 14,
+    "pr_commits": 66,
+    "pr_labels": 123,
+    "prs": 64,
+    "releases": 6,
+    "repo_languages": 6,
+    "repos": 1,
+    "reviews": 56
   },
-  "mailmap_applied": true,
-  "n_squash_merged_prs": 158,
-  "n_total_merged_prs": 198,
-  "squash_rate": 0.7979797979797979,
+  "mailmap_applied": false,
+  "n_squash_merged_prs": 61,
+  "n_total_merged_prs": 61,
+  "squash_rate": 1,
   "extraction_provenance": [
     {
       "connector": "github",
-      "repo": "acme/api",
+      "repo": "goreleaser/chglog",
       "window_covered": {
-        "start": "2026-01-01T00:00:00Z",
-        "end": "2026-03-31T00:00:00Z"
+        "start": "2024-12-01T00:00:00Z",
+        "end": "2026-06-06T00:00:00Z"
       },
       "rows_returned": {
-        "branches": 14,
-        "codeowners": 9,
-        "commit_coauthors": 167,
-        "commit_files": 3517,
-        "commits": 542,
-        "file_metrics": 1614,
-        "pr_comments": 411,
-        "pr_review_requests": 132,
-        "prs": 87,
-        "reviews": 156
-      },
-      "pagination_complete": true,
-      "rate_limit_truncated": false,
-      "errors": {},
-      "endpoints": {
-        "branch_protection": {
-          "accessible": false,
-          "reason": "403 Forbidden; requires admin scope"
-        },
-        "codeowners": {
-          "accessible": true
-        },
-        "contributors": {
-          "accessible": true
-        },
-        "pr_template": {
-          "accessible": true
-        },
-        "releases": {
-          "accessible": true
-        },
-        "repo_metadata": {
-          "accessible": true
-        }
-      },
-      "flags": {
-        "mailmap_applied": true
-      },
-      "graphql_points_used": 412,
-      "graphql_points_remaining": 4588
-    },
-    {
-      "connector": "github",
-      "repo": "acme/web",
-      "window_covered": {
-        "start": "2026-01-01T00:00:00Z",
-        "end": "2026-03-31T00:00:00Z"
-      },
-      "rows_returned": {
-        "branches": 9,
-        "codeowners": 4,
-        "commit_coauthors": 198,
-        "commit_files": 4117,
-        "commits": 612,
-        "file_metrics": 2103,
-        "pr_comments": 481,
-        "pr_review_requests": 158,
-        "prs": 96,
-        "reviews": 184
-      },
-      "pagination_complete": false,
-      "rate_limit_truncated": true,
-      "errors": {
-        "pr_overflow_acme/web#418": "GraphQL secondary rate limit; review thread paginator interrupted at page 2"
-      },
-      "endpoints": {
-        "branch_protection": {
-          "accessible": true
-        },
-        "codeowners": {
-          "accessible": true
-        },
-        "contributors": {
-          "accessible": true
-        },
-        "pr_template": {
-          "accessible": true
-        },
-        "releases": {
-          "accessible": true
-        },
-        "repo_metadata": {
-          "accessible": true
-        }
-      },
-      "flags": {
-        "mailmap_applied": true
-      },
-      "graphql_points_used": 487,
-      "graphql_points_remaining": 4101
-    },
-    {
-      "connector": "github",
-      "repo": "acme/billing",
-      "window_covered": {
-        "start": "2026-01-01T00:00:00Z",
-        "end": "2026-03-31T00:00:00Z"
-      },
-      "rows_returned": {
-        "branches": 6,
-        "codeowners": 3,
-        "commit_coauthors": 47,
-        "commit_files": 999,
-        "commits": 130,
-        "file_metrics": 185,
-        "pr_comments": 52,
-        "pr_review_requests": 22,
-        "prs": 24,
-        "reviews": 48
+        "branches": 2,
+        "codeowners": 1,
+        "commit_coauthors": 117,
+        "commit_files": 256,
+        "commits": 65,
+        "defects": 309,
+        "deploys": 6,
+        "file_complexity_history": 256,
+        "file_metrics": 144,
+        "pr_comments": 14,
+        "pr_commits": 66,
+        "pr_labels": 123,
+        "prs": 64,
+        "releases": 6,
+        "repo_languages": 6,
+        "repos": 1,
+        "reviews": 56
       },
       "pagination_complete": true,
       "rate_limit_truncated": false,
@@ -188,211 +82,10 @@
         },
         "codeowners": {
           "accessible": true
-        },
-        "contributors": {
-          "accessible": true
-        },
-        "pr_template": {
-          "accessible": false,
-          "reason": "404 — no .github/PULL_REQUEST_TEMPLATE.md at HEAD"
-        },
-        "releases": {
-          "accessible": true
-        },
-        "repo_metadata": {
-          "accessible": true
         }
       },
       "flags": {
-        "mailmap_applied": true
-      },
-      "graphql_points_used": 119,
-      "graphql_points_remaining": 3982
-    },
-    {
-      "connector": "github_actions",
-      "repo": "acme/api",
-      "window_covered": {
-        "start": "2026-01-01T00:00:00Z",
-        "end": "2026-03-31T00:00:00Z"
-      },
-      "rows_returned": {
-        "build_jobs": 2114,
-        "builds": 884,
-        "deploys": 41
-      },
-      "pagination_complete": true,
-      "rate_limit_truncated": false,
-      "errors": {},
-      "endpoints": {
-        "deploy_statuses": {
-          "accessible": true
-        },
-        "deployments": {
-          "accessible": true
-        },
-        "workflow_jobs": {
-          "accessible": true
-        },
-        "workflow_runs": {
-          "accessible": true
-        }
-      }
-    },
-    {
-      "connector": "github_actions",
-      "repo": "acme/web",
-      "window_covered": {
-        "start": "2026-01-01T00:00:00Z",
-        "end": "2026-03-31T00:00:00Z"
-      },
-      "rows_returned": {
-        "build_jobs": 1788,
-        "builds": 718,
-        "deploys": 39
-      },
-      "pagination_complete": true,
-      "rate_limit_truncated": false,
-      "errors": {},
-      "endpoints": {
-        "deploy_statuses": {
-          "accessible": true
-        },
-        "deployments": {
-          "accessible": true
-        },
-        "workflow_jobs": {
-          "accessible": true
-        },
-        "workflow_runs": {
-          "accessible": true
-        }
-      }
-    },
-    {
-      "connector": "github_actions",
-      "repo": "acme/billing",
-      "window_covered": {
-        "start": "2026-01-01T00:00:00Z",
-        "end": "2026-03-31T00:00:00Z"
-      },
-      "rows_returned": {
-        "build_jobs": 224,
-        "builds": 112,
-        "deploys": 8
-      },
-      "pagination_complete": true,
-      "rate_limit_truncated": false,
-      "errors": {},
-      "endpoints": {
-        "deployments": {
-          "accessible": false,
-          "reason": "404 — Deployments API not used by this repo's workflows"
-        },
-        "workflow_jobs": {
-          "accessible": true
-        },
-        "workflow_runs": {
-          "accessible": true
-        }
-      }
-    },
-    {
-      "connector": "sentry",
-      "repo": "acme/api",
-      "window_covered": {
-        "start": "2026-01-01T00:00:00Z",
-        "end": "2026-03-31T00:00:00Z"
-      },
-      "rows_returned": {
-        "incidents": 14
-      },
-      "pagination_complete": true,
-      "rate_limit_truncated": false,
-      "errors": {}
-    },
-    {
-      "connector": "sentry",
-      "repo": "acme/web",
-      "window_covered": {
-        "start": "2026-01-01T00:00:00Z",
-        "end": "2026-03-31T00:00:00Z"
-      },
-      "rows_returned": {
-        "incidents": 9
-      },
-      "pagination_complete": true,
-      "rate_limit_truncated": false,
-      "errors": {}
-    },
-    {
-      "connector": "sentry",
-      "repo": "acme/billing",
-      "window_covered": {
-        "start": "2026-01-01T00:00:00Z",
-        "end": "2026-03-31T00:00:00Z"
-      },
-      "rows_returned": {},
-      "pagination_complete": true,
-      "rate_limit_truncated": false,
-      "errors": {
-        "issues:acme-billing-prod": "403 Forbidden; requires project:read on acme-billing-prod"
-      }
-    },
-    {
-      "connector": "honeycomb",
-      "repo": "acme/api",
-      "window_covered": {
-        "start": "2026-01-01T00:00:00Z",
-        "end": "2026-03-31T00:00:00Z"
-      },
-      "rows_returned": {
-        "deploys": 41
-      },
-      "pagination_complete": true,
-      "rate_limit_truncated": false,
-      "errors": {},
-      "endpoints": {
-        "markers": {
-          "accessible": true
-        }
-      }
-    },
-    {
-      "connector": "honeycomb",
-      "repo": "acme/web",
-      "window_covered": {
-        "start": "2026-01-01T00:00:00Z",
-        "end": "2026-03-31T00:00:00Z"
-      },
-      "rows_returned": {
-        "deploys": 39
-      },
-      "pagination_complete": true,
-      "rate_limit_truncated": false,
-      "errors": {},
-      "endpoints": {
-        "markers": {
-          "accessible": true
-        }
-      }
-    },
-    {
-      "connector": "honeycomb",
-      "repo": "acme/billing",
-      "window_covered": {
-        "start": "2026-01-01T00:00:00Z",
-        "end": "2026-03-31T00:00:00Z"
-      },
-      "rows_returned": {},
-      "pagination_complete": true,
-      "rate_limit_truncated": false,
-      "errors": {},
-      "endpoints": {
-        "markers": {
-          "accessible": false,
-          "reason": "404 — no honeycomb dataset configured for acme/billing"
-        }
+        "mailmap_applied": false
       }
     }
   ]

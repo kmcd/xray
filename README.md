@@ -117,13 +117,16 @@ what a representative run actually looks like.
 - [`docs/threat-model.md`](docs/threat-model.md) — one-page trust
   boundaries, attack surface, malicious-binary and leaked-artifact
   analysis.
-- [`docs/sample-manifest.json`](docs/sample-manifest.json) — a real,
-  redacted `manifest.json` showing the `extraction_provenance` block
-  with mixed-state endpoints, real row counts, and an error entry.
+- [`docs/sample-manifest.json`](docs/sample-manifest.json) — a real
+  `manifest.json` from a clean single-repo run against
+  `goreleaser/chglog`, the same target `/ready` uses for smoke. Real
+  row counts, real `extraction_provenance` block. Failure-mode
+  endpoint states are documented in
+  [`docs/security.md`](docs/security.md#7-failure-modes-for-security-review)
+  rather than reproduced here.
 - [`docs/sample-run.log`](docs/sample-run.log) — the matching `.log`
-  file demonstrating no tokens, per-phase logs, a rate-limit wait, a
-  permission-gated 403 → `EndpointStatus{accessible: false}` flow,
-  and the post-run summary.
+  file demonstrating no tokens, per-phase logs, and the post-run
+  artifact summary.
 
 ## Security
 
