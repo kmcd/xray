@@ -2,10 +2,14 @@ package github
 
 import (
 	"context"
+	"errors"
+	"io"
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/shurcooL/githubv4"
 
 	"github.com/kmcd/xray/internal/connector"
@@ -248,7 +252,7 @@ func (c *Connector) fetchPRs(ctx context.Context, repo connector.Repo, window co
 			return nodes, ctx.Err()
 		}
 		var q prListQuery
-		if err := c.gql.Query(ctx, &q, vars); err != nil {
+		if err := c.queryWithEOFRetry(ctx, &q, vars); err != nil {
 			return nodes, err
 		}
 		stopPaging := false
@@ -273,6 +277,64 @@ func (c *Connector) fetchPRs(ctx context.Context, repo connector.Repo, window co
 		vars["after"] = githubv4.NewString(end)
 	}
 	return nodes, nil
+}
+
+// queryWithEOFRetry runs c.gql.Query with bounded retries when the error is
+// a transient mid-response truncation (io.ErrUnexpectedEOF, io.EOF, or a
+// JSON-decoder "unexpected EOF" surface). The GraphQL cursor in vars is
+// unchanged across attempts — GitHub cursors hold for minutes, longer than
+// our retry budget. Non-transient errors return immediately.
+//
+// The ratelimit.Transport already retries HTTP-level transient errors
+// (429/5xx/secondary-RL), but body-read failures inside the outer
+// costInterceptor surface as transport errors *above* ratelimit and
+// bypass that layer. This helper closes that gap for the PR-list walk.
+func (c *Connector) queryWithEOFRetry(ctx context.Context, q any, vars map[string]any) error {
+	const maxAttempts = 3
+	const budget = 60 * time.Second
+	var spent time.Duration
+	bo := backoff.NewExponentialBackOff()
+	bo.InitialInterval = 500 * time.Millisecond
+	bo.MaxInterval = 10 * time.Second
+	bo.MaxElapsedTime = 0
+	bo.Reset()
+
+	for attempt := 1; ; attempt++ {
+		err := c.gql.Query(ctx, q, vars)
+		if err == nil {
+			return nil
+		}
+		if attempt >= maxAttempts || !isTransientEOF(err) {
+			return err
+		}
+		wait := bo.NextBackOff()
+		if spent+wait > budget {
+			return err
+		}
+		spent += wait
+		c.log.Warn("github: gql query transient EOF, retrying",
+			slog.Int("attempt", attempt),
+			slog.Duration("wait", wait),
+			slog.String("error", err.Error()),
+		)
+		t := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return ctx.Err()
+		case <-t.C:
+		}
+	}
+}
+
+func isTransientEOF(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+		return true
+	}
+	return strings.Contains(err.Error(), "unexpected EOF")
 }
 
 // emitPRs walks the supplied prGraph nodes and emits all PR-side rows
@@ -415,6 +477,7 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 	}
 
 	// pr_commits: emit every commit oid attached to the PR.
+	headOids := prHeadOids(p)
 	for _, n := range p.Commits.Nodes {
 		row := model.PRCommit{PRNumber: prNum, Repo: repo.Slug, SHA: string(n.Commit.Oid)}
 		if err := sink.InsertPRCommit(row); err != nil {
@@ -425,9 +488,11 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 			prov.RowsReturned["pr_commits"]++
 		}
 	}
-	// Paginate remaining commits if the PR has more than 25.
+	// Paginate remaining commits if the PR has more than 25; collect overflow
+	// OIDs so resolveMergeMethod sees the full head-commit set.
 	if bool(p.Commits.PageInfo.HasNextPage) {
-		c.paginatePRCommits(ctx, owner, name, prNum, repo.Slug, string(p.Commits.PageInfo.EndCursor), sink, prov)
+		overflowOids := c.paginatePRCommits(ctx, owner, name, prNum, repo.Slug, string(p.Commits.PageInfo.EndCursor), sink, prov)
+		headOids = append(headOids, overflowOids...)
 	}
 
 	row := model.PR{
@@ -442,7 +507,7 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 		BaseBranch:             string(p.BaseRefName),
 		HeadSHA:                string(p.HeadRefOid),
 		MergeSHA:               string(p.MergeCommit.Oid),
-		MergeMethod:            c.resolveMergeMethod(ctx, p, repo.Clone, prHeadOids(p)),
+		MergeMethod:            c.resolveMergeMethod(ctx, p, repo.Clone, headOids),
 		IsDraft:                bool(p.IsDraft),
 		ReadyForReviewAt:       readyForReviewAt,
 		FirstReviewAt:          firstReviewAt,
@@ -486,8 +551,12 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 }
 
 // paginatePRCommits drains additional commit pages for PRs with more than
-// 100 commits. Best-effort; on error the PR row is still written.
-func (c *Connector) paginatePRCommits(ctx context.Context, owner, name string, number int, slug, cursor string, sink connector.Sink, prov *connector.Provenance) {
+// 25 commits. Returns the OIDs collected from the overflow pages so the
+// caller can pass the full set to resolveMergeMethod. Best-effort; on
+// error the rows written so far are kept and the partial OID slice is
+// returned.
+func (c *Connector) paginatePRCommits(ctx context.Context, owner, name string, number int, slug, cursor string, sink connector.Sink, prov *connector.Provenance) []string {
+	var oids []string
 	for {
 		var q struct {
 			Repository struct {
@@ -514,10 +583,12 @@ func (c *Connector) paginatePRCommits(ctx context.Context, owner, name string, n
 			"after":  githubv4.String(cursor),
 		}
 		if err := c.gql.Query(ctx, &q, vars); err != nil {
-			return
+			return oids
 		}
 		for _, n := range q.Repository.PullRequest.Commits.Nodes {
-			row := model.PRCommit{PRNumber: number, Repo: slug, SHA: string(n.Commit.Oid)}
+			oid := string(n.Commit.Oid)
+			oids = append(oids, oid)
+			row := model.PRCommit{PRNumber: number, Repo: slug, SHA: oid}
 			if err := sink.InsertPRCommit(row); err != nil {
 				if prov.Errors["pr_commits"] == "" {
 					prov.Errors["pr_commits"] = err.Error()
@@ -527,7 +598,7 @@ func (c *Connector) paginatePRCommits(ctx context.Context, owner, name string, n
 			}
 		}
 		if !bool(q.Repository.PullRequest.Commits.PageInfo.HasNextPage) {
-			return
+			return oids
 		}
 		cursor = string(q.Repository.PullRequest.Commits.PageInfo.EndCursor)
 	}

@@ -1,6 +1,7 @@
 package github
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,6 +9,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/kmcd/xray/internal/connector"
 )
 
 // TestExtractPRs_PRCommitsPagination drives a PR whose commits connection
@@ -98,5 +101,54 @@ func TestExtractPRs_PRCommitsPagination(t *testing.T) {
 	}
 	if got := len(sink.prCommits); got != totalCommits {
 		t.Errorf("pr_commits rows = %d, want %d (initial 100 + 1 continuation)", got, totalCommits)
+	}
+}
+
+// TestPaginatePRCommits_ReturnsOids verifies that paginatePRCommits returns
+// every OID it collects from the overflow pages. This is the property that
+// enables resolveMergeMethod to see the full head-commit set for PRs with
+// more than 25 commits.
+func TestPaginatePRCommits_ReturnsOids(t *testing.T) {
+	const (
+		oid1 = "overflow-sha-001"
+		oid2 = "overflow-sha-002"
+	)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/graphql", func(w http.ResponseWriter, _ *http.Request) {
+		payload := map[string]any{
+			"data": map[string]any{
+				"repository": map[string]any{
+					"pullRequest": map[string]any{
+						"commits": map[string]any{
+							"pageInfo": map[string]any{"endCursor": "", "hasNextPage": false},
+							"nodes": []map[string]any{
+								{"commit": map[string]any{"oid": oid1}},
+								{"commit": map[string]any{"oid": oid2}},
+							},
+						},
+					},
+				},
+			},
+		}
+		b, _ := json.Marshal(payload)
+		_, _ = w.Write(b)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestConnector(t, srv)
+	sink := &memSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
+
+	oids := c.paginatePRCommits(context.Background(), "kmcd", "foo", 77, "kmcd/foo", "cursor-start", sink, &prov)
+
+	if len(oids) != 2 {
+		t.Fatalf("paginatePRCommits returned %d OIDs, want 2: %v", len(oids), oids)
+	}
+	if oids[0] != oid1 || oids[1] != oid2 {
+		t.Errorf("paginatePRCommits OIDs = %v, want [%s %s]", oids, oid1, oid2)
+	}
+	if len(sink.prCommits) != 2 {
+		t.Errorf("pr_commits rows = %d, want 2", len(sink.prCommits))
 	}
 }
