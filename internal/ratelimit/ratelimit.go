@@ -10,10 +10,13 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+
+	"github.com/kmcd/xray/internal/progress"
 )
 
 // Policy bounds retry behaviour. Defaults: 3 attempts shared, separate
@@ -72,6 +75,41 @@ var ErrBudgetExceeded = errors.New("ratelimit: cumulative wait budget exceeded")
 // backoff with jitter (capped at ~10s) is used. ctx.Done() is observed
 // while sleeping.
 func Do(ctx context.Context, p Policy, log *slog.Logger, fn func() (*http.Response, error)) (*http.Response, error) {
+	return doWithHooks(ctx, p, log, hooks{}, fn)
+}
+
+// hooks carries optional observation callbacks. A zero hooks is the
+// no-emit path used by Do.
+type hooks struct {
+	sink      progress.Sink
+	connector string
+	now       func() time.Time
+}
+
+func (h hooks) emit(ev progress.Event) {
+	if h.sink == nil {
+		return
+	}
+	if ev.At.IsZero() {
+		ev.At = h.timeNow()
+	}
+	h.sink.Emit(ev)
+}
+
+func (h hooks) timeNow() time.Time {
+	if h.now != nil {
+		return h.now()
+	}
+	return time.Now()
+}
+
+// rateLimitEventThreshold is the minimum wait that triggers a
+// RateLimit progress event. Sub-second backoff is noise — the
+// customer-visible "why is it stuck?" question only fires for waits
+// long enough to register as a freeze. Per #82 acceptance.
+const rateLimitEventThreshold = time.Second
+
+func doWithHooks(ctx context.Context, p Policy, log *slog.Logger, h hooks, fn func() (*http.Response, error)) (*http.Response, error) {
 	if p.MaxAttempts <= 0 {
 		p.MaxAttempts = 3
 	}
@@ -128,9 +166,9 @@ func Do(ctx context.Context, p Policy, log *slog.Logger, fn func() (*http.Respon
 
 		wait, isSecondaryRL := nextWait(lastResp, bo)
 		var (
-			thisBudget    time.Duration
-			thisSpent     *time.Duration
-			budgetLabel   string
+			thisBudget  time.Duration
+			thisSpent   *time.Duration
+			budgetLabel string
 		)
 		if isSecondaryRL {
 			thisBudget = p.SecondaryRateLimitBudget
@@ -156,6 +194,8 @@ func Do(ctx context.Context, p Policy, log *slog.Logger, fn func() (*http.Respon
 			slog.Duration("budget_spent", *thisSpent),
 		)
 
+		emitWaitAndRetry(h, lastResp, lastErr, attempt, wait, isSecondaryRL)
+
 		t := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
@@ -172,6 +212,81 @@ func Do(ctx context.Context, p Policy, log *slog.Logger, fn func() (*http.Respon
 		return lastResp, lastErr
 	}
 	return nil, lastErr
+}
+
+// emitWaitAndRetry emits a RateLimit event for any wait > 1s and a
+// Retry event for every retry attempt (per #82 acceptance criteria).
+func emitWaitAndRetry(h hooks, resp *http.Response, err error, attempt int, wait time.Duration, isSecondaryRL bool) {
+	if h.sink == nil {
+		return
+	}
+	waitSecs := int(wait / time.Second)
+	if wait >= rateLimitEventThreshold {
+		fields := map[string]any{
+			"wait_duration_s": waitSecs,
+			"secondary":       isSecondaryRL,
+		}
+		if resp != nil {
+			if v, ok := atoiHeader(resp.Header.Get("X-RateLimit-Remaining")); ok {
+				fields["remaining"] = v
+			}
+			if v, ok := atoiHeader(resp.Header.Get("X-RateLimit-Limit")); ok {
+				fields["limit"] = v
+			}
+			if v, ok := unixHeader(resp.Header.Get("X-RateLimit-Reset")); ok {
+				fields["reset_at"] = v
+			}
+		}
+		h.emit(progress.Event{
+			Kind:      progress.RateLimit,
+			Connector: h.connector,
+			Message:   fmt.Sprintf("rate limited, waiting %ds", waitSecs),
+			Fields:    fields,
+		})
+	}
+	reason := "transient"
+	switch {
+	case err != nil:
+		reason = "network_error"
+	case isSecondaryRL:
+		reason = "secondary_rate_limit"
+	case resp != nil && resp.StatusCode == http.StatusTooManyRequests:
+		reason = "rate_limited"
+	case resp != nil && resp.StatusCode >= 500:
+		reason = "server_error"
+	}
+	h.emit(progress.Event{
+		Kind:      progress.Retry,
+		Connector: h.connector,
+		Message:   fmt.Sprintf("retry attempt %d", attempt),
+		Fields: map[string]any{
+			"attempt":         attempt,
+			"reason":          reason,
+			"wait_duration_s": waitSecs,
+		},
+	})
+}
+
+func atoiHeader(v string) (int, bool) {
+	if v == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+func unixHeader(v string) (time.Time, bool) {
+	if v == "" {
+		return time.Time{}, false
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return time.Unix(n, 0).UTC(), true
 }
 
 // shouldRetryResp decides whether a response is transient and worth a
@@ -294,11 +409,34 @@ type Transport struct {
 	Base   http.RoundTripper
 	Policy Policy
 	Log    *slog.Logger
+	// Sink receives progress.RateLimit and progress.Retry events on
+	// wait/retry. Nil sink (zero value) silently no-ops; existing slog
+	// output is unchanged either way. Spec docs/spec.md:464-469.
+	Sink progress.Sink
+	// Connector overrides the host→connector mapping used to label
+	// emitted events and budget snapshots. Empty falls back to
+	// hostToConnector(req.URL.Host).
+	Connector string
 	// paceUntil stores a unix-nanosecond timestamp set when a response
 	// indicates remaining quota is below LowWaterMark. The next RoundTrip
 	// call sleeps until this time, so the goroutine that received the
 	// triggering response is never blocked by the pacing sleep.
 	paceUntil atomic.Int64
+	budgets   budgetTracker
+	// warned tracks per-connector predictive-exhaustion warnings so we
+	// emit at most one PhaseError event per connector per Transport
+	// lifetime (acceptance: "a single ... warning event").
+	warned sync.Map
+	// startedAt is the first RoundTrip's wall-clock moment, used to gate
+	// the "5+ minutes left" leg of the predictive heuristic in the
+	// absence of an ETA from #81.
+	startedAt atomic.Int64
+}
+
+// Snapshot returns the current rate-limit budget per connector. Empty
+// map if no rate-limit headers have been observed.
+func (t *Transport) Snapshot() map[string]BudgetState {
+	return t.budgets.snapshot()
 }
 
 // RoundTrip implements http.RoundTripper.
@@ -308,10 +446,17 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		base = http.DefaultTransport
 	}
 
+	connector := t.Connector
+	if connector == "" {
+		connector = hostToConnector(req.URL.Host)
+	}
+
+	t.startedAt.CompareAndSwap(0, time.Now().UnixNano())
+
 	// Proactive primary-limit pacing: if a prior response set paceUntil,
 	// sleep before issuing this request. Sleeping here (not after the prior
 	// response) means the goroutine that received the triggering response is
-	// never blocked — the sleep only fires when the next request is needed.
+	// never blocked by the pacing sleep.
 	if until := t.paceUntil.Load(); until > 0 {
 		now := time.Now().UnixNano()
 		if sleep := time.Duration(until - now); sleep > 0 {
@@ -322,6 +467,18 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 			log.Warn("ratelimit: primary limit low, sleeping until reset",
 				slog.Duration("sleep", sleep),
 			)
+			if t.Sink != nil && sleep >= rateLimitEventThreshold {
+				t.Sink.Emit(progress.Event{
+					Kind:      progress.RateLimit,
+					Connector: connector,
+					Message:   fmt.Sprintf("primary limit low, waiting %ds", int(sleep/time.Second)),
+					At:        time.Now(),
+					Fields: map[string]any{
+						"wait_duration_s": int(sleep / time.Second),
+						"reason":          "primary_low_water",
+					},
+				})
+			}
 			timer := time.NewTimer(sleep)
 			select {
 			case <-timer.C:
@@ -332,7 +489,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 	}
 
-	resp, err := Do(req.Context(), t.Policy, t.Log, func() (*http.Response, error) {
+	resp, err := doWithHooks(req.Context(), t.Policy, t.Log, hooks{sink: t.Sink, connector: connector}, func() (*http.Response, error) {
 		// Per net/http contract, callers can't reuse a request body across
 		// retries unless it is rewindable. RoundTripper is normally called
 		// by the client which arranges GetBody; we trust that contract.
@@ -341,6 +498,9 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err != nil || resp == nil {
 		return resp, err
 	}
+
+	t.budgets.update(connector, resp.Header, time.Now().UTC())
+	t.maybeEmitPredictiveWarning(connector)
 
 	// After a successful response: if remaining quota is below the low-water
 	// mark, schedule a sleep before the next request by setting paceUntil.
@@ -358,4 +518,36 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	return resp, nil
+}
+
+// maybeEmitPredictiveWarning fires one PhaseError event per connector
+// per Transport lifetime when remaining budget drops below 100 with at
+// least 5 minutes of run elapsed — a stand-in for the ETA-driven
+// heuristic until #81 lands.
+func (t *Transport) maybeEmitPredictiveWarning(connector string) {
+	if t.Sink == nil {
+		return
+	}
+	st, ok := t.budgets.get(connector)
+	if !ok || st.Remaining >= 100 {
+		return
+	}
+	started := t.startedAt.Load()
+	if started == 0 || time.Since(time.Unix(0, started)) < 5*time.Minute {
+		return
+	}
+	if _, loaded := t.warned.LoadOrStore(connector, struct{}{}); loaded {
+		return
+	}
+	t.Sink.Emit(progress.Event{
+		Kind:      progress.PhaseError,
+		Connector: connector,
+		Message:   fmt.Sprintf("rate-limit budget low: %d remaining; throttling imminent", st.Remaining),
+		At:        time.Now(),
+		Fields: map[string]any{
+			"remaining": st.Remaining,
+			"limit":     st.Limit,
+			"reset_at":  st.ResetAt,
+		},
+	})
 }

@@ -9,12 +9,37 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/kmcd/xray/internal/progress"
 	"github.com/kmcd/xray/internal/ratelimit"
 )
+
+type recordingSink struct {
+	mu     sync.Mutex
+	events []progress.Event
+}
+
+func (s *recordingSink) Emit(ev progress.Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, ev)
+}
+
+func (s *recordingSink) byKind(k progress.EventKind) []progress.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []progress.Event
+	for _, ev := range s.events {
+		if ev.Kind == k {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
 
 // mkRespBody is like mkResp but lets the test attach a body the
 // secondary-rate-limit detector can read.
@@ -319,6 +344,197 @@ func TestLowWaterMarkSleep(t *testing.T) {
 	if elapsed < 2*time.Second {
 		t.Errorf("elapsed %v: expected >= 2s sleep for low-water-mark pacing", elapsed)
 	}
+}
+
+// TestEmitsRateLimitAndRetryEvents verifies that a wait >= 1s triggers a
+// RateLimit event and every retry attempt emits a Retry event with the
+// attempt field set, per #82 acceptance.
+func TestEmitsRateLimitAndRetryEvents(t *testing.T) {
+	sink := &recordingSink{}
+
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		switch hits {
+		case 1:
+			w.Header().Set("Retry-After", "1")
+			w.Header().Set("X-RateLimit-Remaining", "0")
+			w.Header().Set("X-RateLimit-Limit", "5000")
+			w.WriteHeader(http.StatusTooManyRequests)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer srv.Close()
+
+	transport := &ratelimit.Transport{
+		Base:   http.DefaultTransport,
+		Policy: ratelimit.Policy{MaxAttempts: 3, CumulativeBudget: 5 * time.Second},
+		Sink:   sink,
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	resp, err := transport.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	rl := sink.byKind(progress.RateLimit)
+	if len(rl) != 1 {
+		t.Fatalf("RateLimit events: got %d want 1", len(rl))
+	}
+	if got, want := rl[0].Fields["wait_duration_s"], 1; got != want {
+		t.Errorf("wait_duration_s: got %v want %v", got, want)
+	}
+	if got := rl[0].Fields["remaining"]; got != 0 {
+		t.Errorf("remaining: got %v want 0", got)
+	}
+	if got := rl[0].Fields["limit"]; got != 5000 {
+		t.Errorf("limit: got %v want 5000", got)
+	}
+
+	retries := sink.byKind(progress.Retry)
+	if len(retries) != 1 {
+		t.Fatalf("Retry events: got %d want 1", len(retries))
+	}
+	if got := retries[0].Fields["attempt"]; got != 1 {
+		t.Errorf("attempt: got %v want 1", got)
+	}
+	if got := retries[0].Fields["reason"]; got != "rate_limited" {
+		t.Errorf("reason: got %v want rate_limited", got)
+	}
+}
+
+// Sub-second waits emit a Retry event but no RateLimit event — the
+// customer-visible "why is it stuck?" question only fires for waits
+// long enough to register as a freeze.
+func TestSubSecondWaitNoRateLimitEvent(t *testing.T) {
+	sink := &recordingSink{}
+	var calls int32
+	fn := func() (*http.Response, error) {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			return mkResp(429, map[string]string{"Retry-After": "0"}), nil
+		}
+		return mkResp(200, nil), nil
+	}
+	// Use Do via RoundTrip to thread sink. Instead, use Transport with a
+	// stub RoundTripper.
+	transport := &ratelimit.Transport{
+		Base: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			return fn()
+		}),
+		Policy: ratelimit.Policy{MaxAttempts: 3, CumulativeBudget: 5 * time.Second},
+		Sink:   sink,
+	}
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.invalid/", nil)
+	resp, err := transport.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	resp.Body.Close()
+
+	if rl := sink.byKind(progress.RateLimit); len(rl) != 0 {
+		t.Errorf("RateLimit events: got %d want 0 (sub-second wait should not emit)", len(rl))
+	}
+	if retries := sink.byKind(progress.Retry); len(retries) != 1 {
+		t.Errorf("Retry events: got %d want 1", len(retries))
+	}
+}
+
+// Network-error retries emit a Retry event with reason=network_error.
+func TestNetworkErrorEmitsRetryEvent(t *testing.T) {
+	sink := &recordingSink{}
+	var calls int32
+	transport := &ratelimit.Transport{
+		Base: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			n := atomic.AddInt32(&calls, 1)
+			if n < 2 {
+				return nil, io.ErrUnexpectedEOF
+			}
+			return mkResp(200, nil), nil
+		}),
+		Policy: ratelimit.Policy{MaxAttempts: 3, CumulativeBudget: 5 * time.Second},
+		Sink:   sink,
+	}
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.invalid/", nil)
+	resp, err := transport.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	resp.Body.Close()
+
+	retries := sink.byKind(progress.Retry)
+	if len(retries) != 1 {
+		t.Fatalf("Retry events: got %d want 1", len(retries))
+	}
+	if got := retries[0].Fields["reason"]; got != "network_error" {
+		t.Errorf("reason: got %v want network_error", got)
+	}
+}
+
+// Snapshot returns the most recent X-RateLimit-* triple parsed off a
+// successful response, keyed by connector.
+func TestSnapshotReturnsBudget(t *testing.T) {
+	resetAt := time.Now().Add(28 * time.Minute).UTC().Truncate(time.Second)
+	resetUnix := strconv.FormatInt(resetAt.Unix(), 10)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "4213")
+		w.Header().Set("X-RateLimit-Limit", "5000")
+		w.Header().Set("X-RateLimit-Reset", resetUnix)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	transport := &ratelimit.Transport{
+		Base:      http.DefaultTransport,
+		Policy:    ratelimit.Policy{LowWaterMark: 50},
+		Connector: "github",
+	}
+
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+	resp, err := transport.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	snap := transport.Snapshot()
+	st, ok := snap["github"]
+	if !ok {
+		t.Fatalf("Snapshot missing github connector: %v", snap)
+	}
+	if st.Remaining != 4213 {
+		t.Errorf("Remaining: got %d want 4213", st.Remaining)
+	}
+	if st.Limit != 5000 {
+		t.Errorf("Limit: got %d want 5000", st.Limit)
+	}
+	if !st.ResetAt.Equal(resetAt) {
+		t.Errorf("ResetAt: got %v want %v", st.ResetAt, resetAt)
+	}
+}
+
+// Snapshot on a fresh Transport with no observed responses returns an
+// empty map, not nil-keyed entries.
+func TestSnapshotEmptyByDefault(t *testing.T) {
+	transport := &ratelimit.Transport{}
+	if snap := transport.Snapshot(); len(snap) != 0 {
+		t.Errorf("Snapshot: got %v want empty", snap)
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
 }
 
 // TestLowWaterMarkContextCancel verifies that context cancellation during the
