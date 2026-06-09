@@ -12,7 +12,7 @@ LDFLAGS := -s -w \
 
 export CGO_ENABLED := 0
 
-.PHONY: build test lint vuln coverage gates sweep mutation-audit release-snapshot clean
+.PHONY: build test lint vuln coverage gates prose sweep mutation-audit release-snapshot clean
 
 build:
 	go build -trimpath -ldflags "$(LDFLAGS)" -o xray ./cmd/xray
@@ -29,6 +29,11 @@ vuln:
 coverage:
 	go test ./... -coverprofile=coverage.out -covermode=atomic
 	go-test-coverage --config=.testcoverage.yml
+
+prose:
+	vale README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md CLAUDE.md \
+	    docs/spec.md docs/schema.md docs/security.md docs/threat-model.md \
+	    docs/style-guide.md docs/adr/
 
 # Run every gate the CI pipeline runs. Use before pushing to main.
 gates: lint vuln coverage
