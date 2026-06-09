@@ -12,7 +12,7 @@ LDFLAGS := -s -w \
 
 export CGO_ENABLED := 0
 
-.PHONY: build test lint vuln coverage gates prose sweep mutation-audit release-snapshot verify-branch-protection clean
+.PHONY: build test lint vuln coverage gates prose sweep mutation-audit release-snapshot verify-branch-protection deps-outdated clean
 
 build:
 	go build -trimpath -ldflags "$(LDFLAGS)" -o xray ./cmd/xray
@@ -72,6 +72,18 @@ release-snapshot:
 # Read-only; requires `gh` authenticated.
 verify-branch-protection:
 	bin/verify-branch-protection
+
+# Informational view of stale dependencies. Not in `gates`: dependabot files
+# the actual update PRs server-side; this target is for ad-hoc "what's stale
+# right now?" checks before pushing. Always exits 0.
+deps-outdated:
+	@echo "== Go modules with updates available =="
+	@out=$$(go list -u -m all 2>/dev/null | grep -E ' \[' || true); \
+	    if [ -z "$$out" ]; then echo "(none)"; else echo "$$out"; fi
+	@echo
+	@echo "== GitHub Actions (current pins) =="
+	@grep -hE '^[[:space:]]*-?[[:space:]]*uses:[[:space:]]+[^[:space:]]+' .github/workflows/*.yml \
+	    | sed -E 's/^[^u]*uses:[[:space:]]*//' | sort -u
 
 clean:
 	rm -rf xray dist/ coverage.out
