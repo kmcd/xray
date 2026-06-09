@@ -21,6 +21,14 @@ type initOpts struct {
 	force bool
 }
 
+// initResult is the JSON shape emitted by `xray init --output json`.
+type initResult struct {
+	Kind        string `json:"kind"`
+	OK          bool   `json:"ok"`
+	ConfigPath  string `json:"config_path"`
+	Overwritten bool   `json:"overwritten"`
+}
+
 func newInitCmd() *cobra.Command {
 	var opts initOpts
 	cmd := &cobra.Command{
@@ -28,6 +36,10 @@ func newInitCmd() *cobra.Command {
 		Short: "Generate a starter TOML config from a GitHub org",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			mode, err := ResolveMode(flagOutput, flagQuiet)
+			if err != nil {
+				return silentCode(err, 1)
+			}
 			if opts.org == "" {
 				return errors.New("--org is required")
 			}
@@ -38,10 +50,12 @@ func newInitCmd() *cobra.Command {
 			if tok == "" {
 				return errors.New("no GitHub token provided (set --token or $GITHUB_TOKEN)")
 			}
-			if !opts.force {
-				if _, err := os.Stat(opts.out); err == nil {
+			overwritten := false
+			if _, statErr := os.Stat(opts.out); statErr == nil {
+				if !opts.force {
 					return fmt.Errorf("%s already exists (pass --force to overwrite)", opts.out)
 				}
+				overwritten = true
 			}
 
 			ctx := cmd.Context()
@@ -63,8 +77,17 @@ func newInitCmd() *cobra.Command {
 			if err := os.WriteFile(opts.out, []byte(body), 0o600); err != nil {
 				return fmt.Errorf("writing %s: %w", opts.out, err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "wrote %s (%d repos under team \"unassigned\")\n", opts.out, len(repos))
-			fmt.Fprintln(cmd.OutOrStdout(), "next: edit the file to set tokens, split repos into teams, and pick a window")
+			switch mode {
+			case ModeQuiet:
+				// success: nothing on stdout.
+			case ModeJSON:
+				_ = emitJSONLine(cmd.OutOrStdout(), initResult{
+					Kind: "init_summary", OK: true, ConfigPath: opts.out, Overwritten: overwritten,
+				})
+			default:
+				fmt.Fprintf(cmd.OutOrStdout(), "wrote %s (%d repos under team \"unassigned\")\n", opts.out, len(repos))
+				fmt.Fprintln(cmd.OutOrStdout(), "next: edit the file to set tokens, split repos into teams, and pick a window")
+			}
 			return nil
 		},
 	}

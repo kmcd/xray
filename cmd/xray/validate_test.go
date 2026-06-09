@@ -89,3 +89,34 @@ func TestValidateCmd_FileNotFound(t *testing.T) {
 		t.Errorf("exit code = %d, want 1", code)
 	}
 }
+
+func TestValidateCmd_QuietSuppressesSuccessLine(t *testing.T) {
+	p := writeTOML(t, validTOML)
+	root, stdout, stderr := newTestRoot(t)
+	root.SetArgs([]string{"validate", p, "--output", "quiet"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("validate err: %v (stderr=%q)", err, stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("quiet stdout = %q, want empty", stdout.String())
+	}
+}
+
+func TestValidateCmd_JSONEmitsSummary(t *testing.T) {
+	p := writeTOML(t, validTOML)
+	root, stdout, _ := newTestRoot(t)
+	root.SetArgs([]string{"validate", p, "--output", "json"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("validate err: %v", err)
+	}
+	line := strings.TrimSpace(stdout.String())
+	if !strings.Contains(line, `"kind":"validate_summary"`) {
+		t.Errorf("stdout = %q, want validate_summary line", line)
+	}
+	if !strings.Contains(line, `"ok":true`) {
+		t.Errorf("stdout = %q, want ok=true", line)
+	}
+	if !strings.Contains(line, `"config_path":"`+p) {
+		t.Errorf("stdout = %q, want config_path containing %q", line, p)
+	}
+}

@@ -205,6 +205,58 @@ func TestInitCmd_RefuseOverwrite(t *testing.T) {
 	}
 }
 
+func TestInitCmd_QuietSuppressesSuccessLine(t *testing.T) {
+	payload := `[{"name": "foo", "full_name": "kmcd/foo"}]`
+	withFakeGitHub(t, payload)
+	outPath := filepath.Join(t.TempDir(), "xray.toml")
+	root, stdout, _ := newTestRoot(t)
+	root.SetArgs([]string{"init", "--org", "kmcd", "--token", "x", "--out", outPath, "--output", "quiet"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("init err: %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("quiet stdout = %q, want empty", stdout.String())
+	}
+}
+
+func TestInitCmd_JSONEmitsSummary(t *testing.T) {
+	payload := `[{"name": "foo", "full_name": "kmcd/foo"}]`
+	withFakeGitHub(t, payload)
+	outPath := filepath.Join(t.TempDir(), "xray.toml")
+	root, stdout, _ := newTestRoot(t)
+	root.SetArgs([]string{"init", "--org", "kmcd", "--token", "x", "--out", outPath, "--output", "json"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("init err: %v", err)
+	}
+	line := strings.TrimSpace(stdout.String())
+	if !strings.Contains(line, `"kind":"init_summary"`) {
+		t.Errorf("stdout = %q, want init_summary line", line)
+	}
+	if !strings.Contains(line, `"ok":true`) {
+		t.Errorf("stdout = %q, want ok=true", line)
+	}
+	if !strings.Contains(line, `"overwritten":false`) {
+		t.Errorf("stdout = %q, want overwritten=false", line)
+	}
+}
+
+func TestInitCmd_JSONOverwrittenTrue(t *testing.T) {
+	payload := `[{"name": "foo", "full_name": "kmcd/foo"}]`
+	withFakeGitHub(t, payload)
+	outPath := filepath.Join(t.TempDir(), "xray.toml")
+	if err := os.WriteFile(outPath, []byte("existing"), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	root, stdout, _ := newTestRoot(t)
+	root.SetArgs([]string{"init", "--org", "kmcd", "--token", "x", "--out", outPath, "--force", "--output", "json"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("init err: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"overwritten":true`) {
+		t.Errorf("stdout = %q, want overwritten=true", stdout.String())
+	}
+}
+
 func equalStringSlices(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

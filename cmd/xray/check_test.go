@@ -35,3 +35,54 @@ func TestCheckCmd(t *testing.T) {
 		t.Errorf("check stdout missing git-on-PATH line: %q", got)
 	}
 }
+
+func TestCheckCmd_QuietSuppressesSuccessLines(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH; check requires it")
+	}
+	p := writeTOML(t, validTOML)
+	root, stdout, _ := newTestRoot(t)
+	root.SetArgs([]string{"check", p, "--output", "quiet"})
+	_ = root.Execute()
+	// In quiet mode no success lines land on stdout regardless of ls-remote
+	// outcome. The fact that the validation/git-on-PATH steps would have
+	// printed in default mode is enough to verify suppression.
+	if strings.Contains(stdout.String(), "ok  config valid") {
+		t.Errorf("quiet stdout contained config-valid line: %q", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "ok  git") {
+		t.Errorf("quiet stdout contained git-on-PATH line: %q", stdout.String())
+	}
+}
+
+func TestCheckCmd_JSONEmitsSummary(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH; check requires it")
+	}
+	p := writeTOML(t, validTOML)
+	root, stdout, _ := newTestRoot(t)
+	root.SetArgs([]string{"check", p, "--output", "json", "--no-cost-preview"})
+	_ = root.Execute()
+	out := strings.TrimSpace(stdout.String())
+	// Exactly one JSON line on stdout regardless of ls-remote outcome.
+	if !strings.Contains(out, `"kind":"check_summary"`) {
+		t.Errorf("stdout = %q, want check_summary line", out)
+	}
+	// Newline-terminated single object (no NDJSON banter).
+	if strings.Count(out, "\n") != 0 {
+		t.Errorf("stdout has %d newlines, want a single line", strings.Count(out, "\n"))
+	}
+}
+
+func TestCheckCmd_NoCostPreviewFlag(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH; check requires it")
+	}
+	p := writeTOML(t, validTOML)
+	root, stdout, _ := newTestRoot(t)
+	root.SetArgs([]string{"check", p, "--no-cost-preview"})
+	_ = root.Execute()
+	if strings.Contains(stdout.String(), "Plan") {
+		t.Errorf("Plan block present despite --no-cost-preview: %q", stdout.String())
+	}
+}
