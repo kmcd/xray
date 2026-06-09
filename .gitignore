@@ -5,3 +5,10 @@
 *.swp
 .DS_Store
 /coverage.out
+
+# Vale: ignore downloaded upstream style packs (vale sync re-fetches these).
+# The project pack (.vale/styles/xray/) is committed.
+.vale/styles/Microsoft/
+.vale/styles/Google/
+.vale/styles/write-good/
+.vale/styles/alex/

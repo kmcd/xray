@@ -1,0 +1,51 @@
+extends: capitalization
+message: "Use sentence case for headings: '%s'."
+link: https://github.com/kmcd/xray/blob/main/docs/style-guide.md
+level: warning
+scope: heading
+match: $sentence
+indicators:
+  - ":"
+exceptions:
+  - xray
+  - TOML
+  - SQLite
+  - ADR
+  - ADRs
+  - GitHub
+  - GraphQL
+  - NDJSON
+  - OIDC
+  - SLSA
+  - SBOM
+  - API
+  - APIs
+  - CLI
+  - URL
+  - URLs
+  - HTTP
+  - HTTPS
+  - SHA
+  - SHA-256
+  - Sigstore
+  - GoReleaser
+  - CircleCI
+  - Bugsnag
+  - Honeycomb
+  - PostHog
+  - OAuth
+  - POSIX
+  - CGO
+  - Go
+  - Ctrl-C
+  - Makefile
+  - Dockerfile
+  - CODEOWNERS
+  - CodeQL
+  - Dependabot
+  - CircleCI
+  - macOS
+  - Code of Conduct
+  - CI / CD
+  - CI/CD
+  - Architecture Decision Records

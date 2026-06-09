@@ -1,0 +1,16 @@
+extends: existence
+message: "Avoid hedging word '%s' in customer-facing docs."
+link: https://github.com/kmcd/xray/blob/main/docs/style-guide.md
+level: warning
+ignorecase: true
+tokens:
+  - simply
+  - "\\bjust\\b"
+  - obviously
+  - "\\bclearly\\b"
+  - "of course"
+  - "needless to say"
+  - "goes without saying"
+  - "as you can see"
+  - "as you may know"
+  - "as everyone knows"
