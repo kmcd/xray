@@ -49,8 +49,12 @@ linters:
     depguard:
       # Encode the core/connector seam from CLAUDE.md as a lint-time rule:
       # core defines the canonical model + connector contract; concrete
-      # connectors depend on core, never the reverse. Until now the seam was
-      # enforced by code review only.
+      # connectors depend on core, never the reverse. depguard's pkg field
+      # is exact-match, so both the parent and a subpackage glob are listed
+      # — without the glob, imports of internal/connectors/<x> would slip
+      # through (caught here defence-in-depth, on top of the Go compiler's
+      # import-cycle detection that fires when the offending file is
+      # reachable from the parent).
       rules:
         core-no-connectors:
           list-mode: lax
@@ -58,6 +62,8 @@ linters:
             - "**/internal/connector/**"
           deny:
             - pkg: "github.com/kmcd/xray/internal/connectors"
+              desc: "internal/connector defines the contract; concrete connectors depend on it, not the reverse"
+            - pkg: "github.com/kmcd/xray/internal/connectors/**"
               desc: "internal/connector defines the contract; concrete connectors depend on it, not the reverse"
     errcheck:
       exclude-functions:

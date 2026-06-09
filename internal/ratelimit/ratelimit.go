@@ -183,7 +183,14 @@ func doWithHooks(ctx context.Context, p Policy, log *slog.Logger, h hooks, fn fu
 			if lastResp != nil {
 				return lastResp, ErrBudgetExceeded
 			}
-			return nil, fmt.Errorf("%w: %w", ErrBudgetExceeded, lastErr)
+			// %v (not %w) for lastErr is deliberate: wrapping a
+			// context.Canceled lastErr would make errors.Is(err,
+			// context.Canceled) at cmd/xray/run.go:142 misroute a
+			// budget-exhaustion as a graceful interrupt (exit 130).
+			// Budget exhaustion is its own failure class; the diagnostic
+			// text is the only thing the caller needs from lastErr.
+			//nolint:errorlint // see comment above
+			return nil, fmt.Errorf("%w: %v", ErrBudgetExceeded, lastErr)
 		}
 		*thisSpent += wait
 

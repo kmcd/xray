@@ -282,6 +282,53 @@ func TestXRateLimitReset(t *testing.T) {
 	}
 }
 
+// TestBudgetExceededDoesNotWrapLastErr pins down the deliberate `%v` (not
+// `%w`) for lastErr at ratelimit.go:193. If lastErr happens to be
+// context.Canceled and we wrap it, `errors.Is(err, context.Canceled)` at
+// cmd/xray/run.go:142 would misroute a budget-exhaustion as a graceful
+// interrupt (exit 130). Budget exhaustion is its own failure class.
+func TestBudgetExceededDoesNotWrapLastErr(t *testing.T) {
+	fn := func() (*http.Response, error) {
+		// Return a non-cancellation error so the retry loop spins until
+		// the budget is exhausted. Use a sentinel we can distinguish.
+		return nil, io.ErrUnexpectedEOF
+	}
+	// Pathological policy: tiny budget guarantees we exhaust on the
+	// first retry.
+	p := ratelimit.Policy{MaxAttempts: 2, CumulativeBudget: 1 * time.Nanosecond}
+	resp, err := ratelimit.Do(context.Background(), p, nil, fn)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	if err == nil {
+		t.Fatalf("expected error on budget exhaustion")
+	}
+	if !errors.Is(err, ratelimit.ErrBudgetExceeded) {
+		t.Errorf("expected ErrBudgetExceeded in chain, got %v", err)
+	}
+
+	// Now exhaust the budget when lastErr is context.Canceled. The
+	// returned error must be ErrBudgetExceeded, NOT context.Canceled —
+	// otherwise cmd/xray/run.go routes a budget failure as a Ctrl-C
+	// interrupt.
+	fn2 := func() (*http.Response, error) {
+		return nil, context.Canceled
+	}
+	resp2, err := ratelimit.Do(context.Background(), p, nil, fn2)
+	if resp2 != nil {
+		_ = resp2.Body.Close()
+	}
+	if err == nil {
+		t.Fatalf("expected error on budget exhaustion (ctx-canceled lastErr)")
+	}
+	if !errors.Is(err, ratelimit.ErrBudgetExceeded) {
+		t.Errorf("expected ErrBudgetExceeded in chain, got %v", err)
+	}
+	if errors.Is(err, context.Canceled) {
+		t.Errorf("MUST NOT wrap context.Canceled — misroutes budget exhaustion as graceful interrupt. err=%v", err)
+	}
+}
+
 func TestNetworkErrorRetries(t *testing.T) {
 	var calls int32
 	fn := func() (*http.Response, error) {
