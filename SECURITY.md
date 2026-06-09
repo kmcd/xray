@@ -1,5 +1,11 @@
 # Security Policy
 
+This document is the vulnerability-reporting policy. For the full description of
+what `xray` captures, what it does not capture, and the threat model a customer's
+security team should review before running the binary, see
+[`docs/security.md`](docs/security.md) and
+[`docs/threat-model.md`](docs/threat-model.md).
+
 ## Supported Versions
 
 Pre-1.0, only the latest minor release receives security fixes.
