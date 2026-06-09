@@ -49,7 +49,8 @@ xray validate xray.toml
 # Live preflight against configured connectors.
 xray check xray.toml
 
-# Full extraction. Produces ./xray-export-<UTC-timestamp>.tar.gz.
+# Full extraction. Produces ./xray-export-<UTC-timestamp>.tar.gz and a
+# sibling .log file mirroring stderr (suppress with --no-run-log).
 xray run xray.toml
 ```
 

@@ -39,6 +39,47 @@ func TestRunCmd_OneRepoNoConnectors(t *testing.T) {
 	t.Logf("run exited with err (expected in offline / no-creds env): %v", err)
 }
 
+func TestRunCmd_RunLogCreated(t *testing.T) {
+	// A run (valid config, clone expected to fail in offline env) should
+	// write a sibling .log file next to the .tar.gz artifact by default.
+	// The log file is opened before run.Run() so it exists regardless of
+	// whether the clone or extraction succeeds.
+	p := writeTOML(t, validTOML)
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "out.tar.gz")
+	logPath := filepath.Join(dir, "out.log")
+
+	root, _, _ := newTestRoot(t)
+	root.SetArgs([]string{"run", p, "--out", outPath, "--workers", "1"})
+
+	_ = root.Execute() // error irrelevant; we're testing log file creation
+
+	info, err := os.Stat(logPath)
+	if err != nil {
+		t.Fatalf("run log not created at %s: %v", logPath, err)
+	}
+	if info.Size() == 0 {
+		t.Errorf("run log is empty at %s — expected tee'd log content", logPath)
+	}
+}
+
+func TestRunCmd_NoRunLog(t *testing.T) {
+	// When --no-run-log is set no .log sibling should be written.
+	p := writeTOML(t, validTOML)
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "out.tar.gz")
+	logPath := filepath.Join(dir, "out.log")
+
+	root, _, _ := newTestRoot(t)
+	root.SetArgs([]string{"run", p, "--out", outPath, "--workers", "1", "--no-run-log"})
+
+	_ = root.Execute()
+
+	if _, err := os.Stat(logPath); err == nil {
+		t.Errorf("run log written despite --no-run-log at %s", logPath)
+	}
+}
+
 func TestRunCmd_InvalidConfig(t *testing.T) {
 	// Window precedes itself → validate fails → run exits 2 without
 	// touching the artifact path.

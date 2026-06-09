@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -15,6 +17,7 @@ type runOpts struct {
 	out        string
 	workers    int
 	keepClones bool
+	noRunLog   bool
 }
 
 func newRunCmd() *cobra.Command {
@@ -47,6 +50,18 @@ func newRunCmd() *cobra.Command {
 			}
 
 			logger := run.NewLogger(flagVerbose, flagQuiet)
+			if !opts.noRunLog {
+				logPath := strings.TrimSuffix(outPath, ".tar.gz") + ".log"
+				// #nosec G304 -- logPath derived from user-supplied --out; O_APPEND preserves prior runs.
+				lf, ferr := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+				if ferr != nil {
+					fmt.Fprintf(errOut, "warn: could not create run log %s: %v\n", logPath, ferr)
+				} else {
+					defer lf.Close()
+					logger = run.NewLogger(flagVerbose, flagQuiet, lf)
+				}
+			}
+
 			ctx := withLogger(cmd.Context(), logger)
 
 			connectors, err := buildConnectors(cfg, logger)
@@ -72,5 +87,6 @@ func newRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.out, "out", "", "output artifact path (default ./xray-export-<UTC-timestamp>.tar.gz)")
 	cmd.Flags().IntVar(&opts.workers, "workers", 4, "parallel clone/extract worker count")
 	cmd.Flags().BoolVar(&opts.keepClones, "keep-clones", false, "skip cleanup of temp clones (debugging)")
+	cmd.Flags().BoolVar(&opts.noRunLog, "no-run-log", false, "disable run log file (mirrors stderr output alongside the artifact by default)")
 	return cmd
 }
