@@ -582,7 +582,8 @@ func (c *Connector) paginatePRCommits(ctx context.Context, owner, name string, n
 			"number": githubv4.Int(int32(number)),
 			"after":  githubv4.String(cursor),
 		}
-		if err := c.gql.Query(ctx, &q, vars); err != nil {
+		if err := c.queryWithEOFRetry(ctx, &q, vars); err != nil {
+			prov.PaginationComplete = false
 			return oids
 		}
 		for _, n := range q.Repository.PullRequest.Commits.Nodes {
