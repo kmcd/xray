@@ -17,6 +17,7 @@ go-enry
 (?i)cosign
 SLSA
 SBOM
+SBOMs
 (?i)slog
 MADR
 Nygard
