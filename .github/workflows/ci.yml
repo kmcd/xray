@@ -13,7 +13,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # macos-latest parked until the repo flips public. macOS runners cost
+        # 10x the included-minutes multiplier; with the repo private on Free,
+        # the matrix burned through the monthly pool. Restore by adding
+        # `macos-latest` back to the array.
+        os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
