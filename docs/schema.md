@@ -1,4 +1,4 @@
-# xray metrics.sqlite schema (schema_version = 2)
+# xray metrics.SQLite schema (schema_version = 2)
 
 Generated from `internal/model/schema.go`. The canonical row structs are in `internal/model/types.go`. This document mirrors the DDL applied at store-open time.
 

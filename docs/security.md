@@ -229,8 +229,8 @@ log, or transmit data outside the documented surface.
   `--keep-clones`.
 
 The artifact at the end of any of the above carries an
-`extraction_provenance` block that records exactly what happened. There
-is no path that silently writes partial data without recording it.
+`extraction_provenance` block that records exactly what happened. No path
+silently writes partial data without recording it.
 
 ## Auditing the binary
 

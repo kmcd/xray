@@ -1,4 +1,4 @@
-# Security Policy
+# Security policy
 
 This document is the vulnerability-reporting policy. For the full description of
 what `xray` captures, what it does not capture, and the threat model a customer's
@@ -6,7 +6,7 @@ security team should review before running the binary, see
 [`docs/security.md`](docs/security.md) and
 [`docs/threat-model.md`](docs/threat-model.md).
 
-## Supported Versions
+## Supported versions
 
 Pre-1.0, only the latest minor release receives security fixes.
 
@@ -15,7 +15,7 @@ Pre-1.0, only the latest minor release receives security fixes.
 | latest minor | yes |
 | older minors | no |
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
@@ -30,7 +30,7 @@ Expected response times:
 
 We will coordinate disclosure timing with the reporter.
 
-## Scope
+## Scope of coverage
 
 In scope:
 
@@ -44,7 +44,7 @@ Out of scope:
 - The client's own infrastructure that `xray` connects to
 - Third-party connectors' own APIs (report those to the respective vendors)
 
-## Token Handling
+## Token handling
 
 `xray` reads API tokens from a local config file that never leaves the client machine.
 Tokens are used only for authenticated read calls and are never logged, stored in the
