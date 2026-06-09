@@ -31,18 +31,24 @@ func TestRunDegenerateProducesArtifact(t *testing.T) {
 		ToolVersion: "test",
 		Logger:      run.NewLogger(false, true),
 	}
-	artifact, err := run.Run(context.Background(), cfg, opts)
+	result, err := run.Run(context.Background(), cfg, opts)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if artifact == "" {
+	if result.ArtifactPath == "" {
 		t.Fatalf("artifact path empty")
 	}
-	if _, err := os.Stat(artifact); err != nil {
+	if result.SHA256 == "" {
+		t.Errorf("SHA256 empty in result")
+	}
+	if result.Size <= 0 {
+		t.Errorf("Size = %d, want > 0", result.Size)
+	}
+	if _, err := os.Stat(result.ArtifactPath); err != nil {
 		t.Fatalf("artifact not present: %v", err)
 	}
 
-	entries := readTarGz(t, artifact)
+	entries := readTarGz(t, result.ArtifactPath)
 	if _, ok := entries["manifest.json"]; !ok {
 		t.Errorf("manifest.json missing from archive")
 	}

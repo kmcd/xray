@@ -31,6 +31,18 @@ import (
 // any other non-nil error from Run maps to exit code 3 (fatal).
 var ErrPartial = errors.New("run: one or more connectors or clones reported errors; see manifest")
 
+// Result is everything the CLI needs after a successful (or partial) run
+// to render the post-run summary block (issue #84). ArtifactPath is always
+// set when Run returns either nil or ErrPartial; the other fields are
+// derived from the same data the manifest records.
+type Result struct {
+	ArtifactPath string
+	SHA256       string
+	Size         int64
+	Duration     time.Duration
+	Manifest     manifest.Manifest
+}
+
 // Run is the entry point for `xray run`. It clones every repo, dispatches
 // every (repo, connector) pair across the worker pool, assembles the
 // manifest, packages the artifact, and removes the temp dir (unless
@@ -41,7 +53,7 @@ var ErrPartial = errors.New("run: one or more connectors or clones reported erro
 // failures are reported in the manifest's extraction_provenance and cause
 // a non-nil error to be returned (so the CLI exits non-zero) while still
 // completing artifact production.
-func Run(ctx context.Context, cfg *config.Config, opts Options) (string, error) {
+func Run(ctx context.Context, cfg *config.Config, opts Options) (Result, error) {
 	if opts.Logger == nil {
 		opts.Logger = NewLogger(false, false)
 	}
@@ -59,7 +71,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (string, error) 
 
 	tmpDir, err := os.MkdirTemp("", "xray-"+runID+"-")
 	if err != nil {
-		return "", fmt.Errorf("run: create temp dir: %w", err)
+		return Result{}, fmt.Errorf("run: create temp dir: %w", err)
 	}
 	keep := opts.KeepClones
 	defer func() {
@@ -123,7 +135,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (string, error) 
 	dbPath := filepath.Join(tmpDir, "metrics.sqlite")
 	st, err := store.Open(dbPath, opts.ToolVersion)
 	if err != nil {
-		return "", fmt.Errorf("run: open store: %w", err)
+		return Result{}, fmt.Errorf("run: open store: %w", err)
 	}
 
 	// 3. Dispatch (repo, connector) pairs across worker pool. Each
@@ -197,7 +209,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (string, error) 
 				close(ch)
 				wg.Wait()
 				_ = st.Close()
-				return "", ctx.Err()
+				return Result{}, ctx.Err()
 			case ch <- j:
 			}
 		}
@@ -240,19 +252,19 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (string, error) 
 	mf, err := os.Create(manifestPath)
 	if err != nil {
 		_ = st.Close()
-		return "", fmt.Errorf("run: create manifest: %w", err)
+		return Result{}, fmt.Errorf("run: create manifest: %w", err)
 	}
 	if _, err := m.WriteTo(mf); err != nil {
 		_ = mf.Close()
 		_ = st.Close()
-		return "", fmt.Errorf("run: write manifest: %w", err)
+		return Result{}, fmt.Errorf("run: write manifest: %w", err)
 	}
 	if err := mf.Close(); err != nil {
 		_ = st.Close()
-		return "", fmt.Errorf("run: close manifest: %w", err)
+		return Result{}, fmt.Errorf("run: close manifest: %w", err)
 	}
 	if err := st.Close(); err != nil {
-		return "", fmt.Errorf("run: close store: %w", err)
+		return Result{}, fmt.Errorf("run: close store: %w", err)
 	}
 
 	// 5. Archive.
@@ -262,22 +274,35 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (string, error) 
 	}
 	absOut, err := filepath.Abs(out)
 	if err != nil {
-		return "", fmt.Errorf("run: resolve out path: %w", err)
+		return Result{}, fmt.Errorf("run: resolve out path: %w", err)
 	}
-	if err := archive.WriteTarGz(absOut, map[string]string{
+	ar, err := archive.WriteTarGz(absOut, map[string]string{
 		dbPath:       "metrics.sqlite",
 		manifestPath: "manifest.json",
-	}); err != nil {
-		return "", fmt.Errorf("run: write archive: %w", err)
+	})
+	if err != nil {
+		return Result{}, fmt.Errorf("run: write archive: %w", err)
 	}
-	log.Info("run: artifact", slog.String("path", absOut))
+	log.Info("run: artifact",
+		slog.String("path", absOut),
+		slog.Int64("size", ar.Size),
+		slog.String("sha256", ar.SHA256),
+	)
+
+	res := Result{
+		ArtifactPath: absOut,
+		SHA256:       ar.SHA256,
+		Size:         ar.Size,
+		Duration:     completedAt.Sub(startedAt),
+		Manifest:     *m,
+	}
 
 	// 6. Run exits non-zero iff any connector returned a non-empty Errors
 	// map (or any repo failed to clone).
 	if hasErrors(provs) {
-		return absOut, ErrPartial
+		return res, ErrPartial
 	}
-	return absOut, nil
+	return res, nil
 }
 
 func sanitizeSlug(slug string) string {

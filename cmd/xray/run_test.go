@@ -1,9 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/kmcd/xray/internal/connector"
+	"github.com/kmcd/xray/internal/manifest"
+	"github.com/kmcd/xray/internal/run"
 )
 
 func TestRunCmd_OneRepoNoConnectors(t *testing.T) {
@@ -77,6 +85,132 @@ func TestRunCmd_NoRunLog(t *testing.T) {
 
 	if _, err := os.Stat(logPath); err == nil {
 		t.Errorf("run log written despite --no-run-log at %s", logPath)
+	}
+}
+
+func fixtureResult() run.Result {
+	return run.Result{
+		ArtifactPath: "/work/xray-export-20260609T141023Z.tar.gz",
+		SHA256:       "3f7a9b1cdeadbeef",
+		Size:         18 * 1024 * 1024,
+		Duration:     22*time.Minute + 18*time.Second,
+		Manifest: manifest.Manifest{
+			SchemaVersion: 2,
+			Counts: map[string]int{
+				"commits":     1000,
+				"prs":         100,
+				"pr_comments": 50,
+			},
+			Provenance: []connector.Provenance{
+				{
+					Connector:          "github",
+					Repo:               "kmcd/foo",
+					PaginationComplete: true,
+					Endpoints: map[string]connector.EndpointStatus{
+						"pulls":   {Accessible: true},
+						"reviews": {Accessible: true},
+					},
+					Errors: map[string]string{},
+				},
+			},
+		},
+	}
+}
+
+func TestEmitRunSummary_Quiet(t *testing.T) {
+	var buf bytes.Buffer
+	emitRunSummary(&buf, ModeQuiet, fixtureResult(), "/work/x.log", true)
+	got := buf.String()
+	want := "/work/xray-export-20260609T141023Z.tar.gz\n"
+	if got != want {
+		t.Errorf("Quiet output = %q, want %q", got, want)
+	}
+}
+
+func TestEmitRunSummary_JSON(t *testing.T) {
+	var buf bytes.Buffer
+	emitRunSummary(&buf, ModeJSON, fixtureResult(), "/work/x.log", true)
+	out := buf.String()
+	if !strings.HasSuffix(out, "\n") {
+		t.Errorf("JSON output should end with newline: %q", out)
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(out), &m); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	}
+	if m["kind"] != "run_summary" {
+		t.Errorf("kind = %v, want run_summary", m["kind"])
+	}
+	if m["ok"] != true {
+		t.Errorf("ok = %v, want true", m["ok"])
+	}
+	art, ok := m["artifact"].(map[string]any)
+	if !ok {
+		t.Fatalf("artifact not an object: %T", m["artifact"])
+	}
+	if art["path"] != "/work/xray-export-20260609T141023Z.tar.gz" {
+		t.Errorf("artifact.path = %v", art["path"])
+	}
+	if art["log_path"] != "/work/x.log" {
+		t.Errorf("artifact.log_path = %v", art["log_path"])
+	}
+	rows, ok := m["rows"].(map[string]any)
+	if !ok {
+		t.Fatalf("rows not an object: %T", m["rows"])
+	}
+	if rows["_table_count"].(float64) != 3 {
+		t.Errorf("rows._table_count = %v, want 3", rows["_table_count"])
+	}
+}
+
+func TestEmitRunSummary_Auto(t *testing.T) {
+	var buf bytes.Buffer
+	emitRunSummary(&buf, ModeAuto, fixtureResult(), "/work/x.log", true)
+	out := buf.String()
+	for _, want := range []string{
+		"Done in 22m 18s",
+		"Artifact",
+		"path:     /work/xray-export-20260609T141023Z.tar.gz",
+		"sha256:   3f7a9b1cdeadbeef",
+		"Rows captured",
+		"commits",
+		"Provenance",
+		"endpoints accessible:  2/2",
+		"Next",
+		"Send xray-export-20260609T141023Z.tar.gz to your consultant.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in auto summary:\n%s", want, out)
+		}
+	}
+}
+
+func TestEmitRunSummary_PartialFalse(t *testing.T) {
+	r := fixtureResult()
+	r.Manifest.Provenance[0].Errors["pulls"] = "503"
+	var buf bytes.Buffer
+	emitRunSummary(&buf, ModeJSON, r, "", false)
+	var m map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &m); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if m["ok"] != false {
+		t.Errorf("ok = %v, want false", m["ok"])
+	}
+	partial, ok := m["partial"].([]any)
+	if !ok {
+		t.Fatalf("partial not a slice: %T", m["partial"])
+	}
+	if len(partial) != 1 {
+		t.Errorf("partial length = %d, want 1", len(partial))
+	}
+}
+
+func TestEmitRunSummary_EmptyArtifactPath(t *testing.T) {
+	var buf bytes.Buffer
+	emitRunSummary(&buf, ModeAuto, run.Result{}, "", true)
+	if buf.Len() != 0 {
+		t.Errorf("empty artifact path should produce no output, got: %q", buf.String())
 	}
 }
 

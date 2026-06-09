@@ -241,15 +241,15 @@ func TestRun_EndToEnd_StubConnector(t *testing.T) {
 		Connectors:  []connector.Connector{stub},
 	}
 
-	artifact, err := run.Run(context.Background(), cfg, opts)
+	result, err := run.Run(context.Background(), cfg, opts)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if _, err := os.Stat(artifact); err != nil {
+	if _, err := os.Stat(result.ArtifactPath); err != nil {
 		t.Fatalf("artifact missing: %v", err)
 	}
 
-	dir, m := extractArtifact(t, artifact)
+	dir, m := extractArtifact(t, result.ArtifactPath)
 
 	// Schema row in the SQLite matches the package constant.
 	db, err := sql.Open("sqlite", filepath.Join(dir, "metrics.sqlite"))
@@ -385,12 +385,12 @@ func TestRun_PostprocessSurfaced(t *testing.T) {
 		Connectors:  []connector.Connector{stub},
 	}
 
-	artifact, err := run.Run(context.Background(), cfg, opts)
+	result, err := run.Run(context.Background(), cfg, opts)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
-	dir, _ := extractArtifact(t, artifact)
+	dir, _ := extractArtifact(t, result.ArtifactPath)
 	db, err := sql.Open("sqlite", filepath.Join(dir, "metrics.sqlite"))
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
@@ -438,19 +438,19 @@ func TestRun_FailedConnectorReported(t *testing.T) {
 		Connectors:  []connector.Connector{stub},
 	}
 
-	artifact, err := run.Run(context.Background(), cfg, opts)
+	result, err := run.Run(context.Background(), cfg, opts)
 	if err == nil {
 		t.Errorf("Run: expected non-nil error when a connector populates Errors")
 	}
 	// Even with a connector error, the artifact must still be produced.
-	if artifact == "" {
+	if result.ArtifactPath == "" {
 		t.Fatalf("artifact path empty on error")
 	}
-	if _, statErr := os.Stat(artifact); statErr != nil {
+	if _, statErr := os.Stat(result.ArtifactPath); statErr != nil {
 		t.Fatalf("artifact missing: %v", statErr)
 	}
 
-	_, m := extractArtifact(t, artifact)
+	_, m := extractArtifact(t, result.ArtifactPath)
 	provs, ok := m["extraction_provenance"].([]any)
 	if !ok {
 		t.Fatalf("extraction_provenance not a slice: %T", m["extraction_provenance"])

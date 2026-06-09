@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,9 +18,6 @@ import (
 	"github.com/kmcd/xray/internal/progress"
 	"github.com/kmcd/xray/internal/run"
 )
-
-// nowUTC is overridden in tests for deterministic JSON output.
-var nowUTC = func() time.Time { return time.Now().UTC() }
 
 type runOpts struct {
 	out        string
@@ -108,7 +106,7 @@ func newRunCmd() *cobra.Command {
 			sink, stopSink := buildProgressSink(ctx, cmd, mode, logger, cfg, connectors, opts.workers)
 			defer stopSink()
 
-			artifact, err := run.Run(ctx, cfg, run.Options{
+			result, err := run.Run(ctx, cfg, run.Options{
 				Out:         outPath,
 				Workers:     opts.workers,
 				KeepClones:  opts.keepClones,
@@ -118,21 +116,26 @@ func newRunCmd() *cobra.Command {
 				Progress:    sink,
 			})
 			// Drain the progress sink before writing the summary line so
-			// the TTY grid finalises above "wrote …" instead of overlapping it.
+			// the TTY grid finalises above the summary instead of overlapping it.
 			stopSink()
+
+			logPath := ""
+			if !opts.noRunLog {
+				logPath = strings.TrimSuffix(outPath, ".tar.gz") + ".log"
+			}
 
 			switch {
 			case errors.Is(err, run.ErrPartial):
 				if mode != ModeQuiet && mode != ModeJSON {
 					fmt.Fprintf(errOut, "run: %v\n", err)
 				}
-				emitRunSummary(cmd.OutOrStdout(), mode, artifact, 2)
+				emitRunSummary(cmd.OutOrStdout(), mode, result, logPath, false)
 				return silentCode(err, 2)
 			case err != nil:
 				fmt.Fprintf(errOut, "run: %v\n", err)
 				return silentCode(err, 3)
 			}
-			emitRunSummary(cmd.OutOrStdout(), mode, artifact, 0)
+			emitRunSummary(cmd.OutOrStdout(), mode, result, logPath, true)
 			return nil
 		},
 	}
@@ -199,25 +202,31 @@ func connectorNames(cs []connector.Connector) []string {
 	return out
 }
 
-// emitRunSummary writes the final per-mode output line(s) for a run.
-// ModeAuto / ModeLog: the historical "wrote <path>" line on stdout.
+// emitRunSummary writes the final per-mode output for a run.
+// ModeAuto / ModeLog: the full post-run summary block on stdout (issue #84).
 // ModeQuiet: bare artifact path on stdout, nothing else.
-// ModeJSON: one SummaryEvent NDJSON line on stdout. The full progress
-// event stream (phase_start, phase_progress) lands with #81.
-func emitRunSummary(w io.Writer, mode Mode, artifact string, exitCode int) {
-	if artifact == "" {
+// ModeJSON: one run_summary JSON object on stdout.
+func emitRunSummary(w io.Writer, mode Mode, result run.Result, logPath string, ok bool) {
+	if result.ArtifactPath == "" {
 		return
+	}
+	in := run.SummaryInput{
+		Manifest:     result.Manifest,
+		ArtifactPath: result.ArtifactPath,
+		SHA256:       result.SHA256,
+		Size:         result.Size,
+		Duration:     result.Duration,
+		LogPath:      logPath,
+		PartialFails: run.ExtractPartialFailures(result.Manifest.Provenance),
 	}
 	switch mode {
 	case ModeQuiet:
-		fmt.Fprintln(w, artifact)
+		fmt.Fprintln(w, result.ArtifactPath)
 	case ModeJSON:
-		_ = EmitSummary(w, SummaryEvent{
-			TS:       nowUTC().Format(time.RFC3339),
-			Artifact: artifact,
-			ExitCode: exitCode,
-		})
+		enc := json.NewEncoder(w)
+		enc.SetEscapeHTML(false)
+		_ = enc.Encode(run.BuildRunSummary(in, ok))
 	default:
-		fmt.Fprintf(w, "wrote %s\n", artifact)
+		fmt.Fprint(w, run.Summarize(in))
 	}
 }
