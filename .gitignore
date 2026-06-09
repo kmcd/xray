@@ -6,6 +6,12 @@
 .DS_Store
 /coverage.out
 
+# Claude Code runtime state. scheduled_tasks.lock is local lock state;
+# .claude/worktrees/ is forbidden by guard-worktree.sh but the directory
+# itself can be created before the hook fires.
+.claude/scheduled_tasks.lock
+.claude/worktrees/
+
 # Vale: ignore downloaded upstream style packs (vale sync re-fetches these).
 # The project pack (.vale/styles/xray/) is committed.
 .vale/styles/Microsoft/
