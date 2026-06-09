@@ -1,0 +1,44 @@
+name: prose
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**.md"
+      - ".vale.ini"
+      - ".vale/styles/xray/**"
+  pull_request:
+    paths:
+      - "**.md"
+      - ".vale.ini"
+      - ".vale/styles/xray/**"
+
+permissions:
+  contents: read
+
+jobs:
+  vale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: vale
+        uses: errata-ai/vale-action@85f9f7f2c5f449ac0ae5b66662961bae3f77ca6a
+        with:
+          files: >-
+            README.md
+            CHANGELOG.md
+            CONTRIBUTING.md
+            SECURITY.md
+            CLAUDE.md
+            docs/spec.md
+            docs/schema.md
+            docs/security.md
+            docs/threat-model.md
+            docs/style-guide.md
+            docs/adr
+          fail_on_error: true
+          reporter: github-pr-review
+          filter_mode: nofilter
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
