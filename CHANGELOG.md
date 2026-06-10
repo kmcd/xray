@@ -6,6 +6,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-06-10
+
+`schema_version` stays at 2. Release-tooling consolidation: `/release` collapses the four-step ritual (tag → push → CI wait → `/publish-tap` → smoke) into one invocation; `.goreleaser.yaml` `skip_upload: true` plus `scripts/publish-tap.sh` route tap content around `main` branch protection now that `github-actions[bot]` cannot be granted Ruleset bypass on a personal-account repo; the brew Cask carries a `postflight` xattr strip so cosign-signed-but-unnotarized binaries run without a Gatekeeper dialog.
+
 ### Release
 
 - **`/release` one-step skill.** Collapses tag → push → CI wait → `/publish-tap` → smoke into a single invocation, with pre-flight checks, intro-paragraph confirmation, CHANGELOG rollover, README compatibility-table bump, and brew install verification. `/ready` Step 6.5 surfaces a "Casks/xray.rb is at vX but latest tag is vY" advisory so a forgotten tap publish doesn't ship silently. ([#129])
