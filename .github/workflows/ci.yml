@@ -81,6 +81,7 @@ jobs:
       - name: install xray via install.sh
         env:
           XRAY_INSTALL_DIR: ${{ runner.temp }}/bin
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: sh scripts/install.sh
       - name: assert xray version
         run: ${{ runner.temp }}/bin/xray version

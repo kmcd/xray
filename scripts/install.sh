@@ -46,8 +46,16 @@ resolve_version() {
         printf '%s' "${XRAY_VERSION#v}"
         return
     fi
-    response=$(curl -sSfL --max-time 30 "https://api.github.com/repos/${REPO}/releases/latest") \
-        || err "could not fetch latest release info from GitHub API"
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+        response=$(curl -sSfL --max-time 30 \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            "https://api.github.com/repos/${REPO}/releases/latest") \
+            || err "could not fetch latest release info from GitHub API"
+    else
+        response=$(curl -sSfL --max-time 30 \
+            "https://api.github.com/repos/${REPO}/releases/latest") \
+            || err "could not fetch latest release info from GitHub API"
+    fi
     tag=$(printf '%s' "$response" \
         | grep -o '"tag_name": *"[^"]*"' \
         | head -n 1 \
