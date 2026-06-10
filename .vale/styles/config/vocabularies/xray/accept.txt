@@ -62,8 +62,9 @@ POSIX
 prListQuery
 fetchPRs
 GHE
-linux
+(?i)linux
 darwin
+(?i)windows
 amd64
 arm64
 (?i)dockerfile

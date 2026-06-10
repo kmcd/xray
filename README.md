@@ -51,25 +51,46 @@ what a representative run actually looks like.
 
 ## Install
 
-Download a release binary for your platform:
+### macOS
 
 ```bash
-VERSION=0.3.0
-OS=$(uname -s | tr A-Z a-z)                              # linux | darwin
-ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
-
-curl -L "https://github.com/kmcd/xray/releases/download/v${VERSION}/xray_${VERSION}_${OS}_${ARCH}.tar.gz" | tar -xz
-sudo mv xray /usr/local/bin/
+brew tap kmcd/xray https://github.com/kmcd/xray
+brew install kmcd/xray/xray
 ```
 
-Or, for Go developers:
+### Linux
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/kmcd/xray/main/scripts/install.sh | sh
+```
+
+The script detects OS and architecture, downloads the latest release
+archive, verifies its sha256 against `checksums.txt`, and installs to
+`/usr/local/bin/xray`. Set `XRAY_INSTALL_DIR=$HOME/.local/bin` to install
+without `sudo` — make sure that directory is on your `PATH`. Set
+`XRAY_VERIFY_COSIGN=1` to additionally verify the cosign signature
+(requires `cosign` on `PATH`).
+
+### Windows
+
+```powershell
+scoop bucket add xray https://github.com/kmcd/xray
+scoop install xray
+```
+
+### Manual download
+
+Pick the archive for your platform from
+[the releases page](https://github.com/kmcd/xray/releases/latest) and
+extract `xray` onto your `PATH`. For air-gapped or security-team
+installs, verify the cosign signature first — see
+[Verifying the binary](#verifying-the-binary).
+
+### Go developers
 
 ```bash
 go install github.com/kmcd/xray/cmd/xray@latest
 ```
-
-For production deployments, verify the cosign signature on the archive
-before installing — see [Verifying the binary](#verifying-the-binary).
 
 ## Usage
 

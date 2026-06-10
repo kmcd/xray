@@ -15,7 +15,7 @@ List every modified, added, or deleted path. For each, decide whether it belongs
 
 ## Step 2: Bucket files
 
-**Mine** — touched by this session, or clearly part of the same issue (impl, tests, docs, fixtures):
+**Mine** — touched by this session, or part of the same issue (code, tests, docs, fixtures):
 - Files this session edited or created
 - Adjacent files in the same package/feature
 - Test files for the above

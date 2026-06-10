@@ -67,3 +67,20 @@ jobs:
         uses: vladopajic/go-test-coverage@a93b868a4cbcbf18dc3781650fad241f0020e609 # v2
         with:
           config: ./.testcoverage.yml
+
+  install-sh:
+    # Smoke the curl|sh installer end-to-end against the latest published
+    # release: shellcheck, then run the script and assert `xray version`.
+    # Network-dependent (GitHub release CDN), but those are the same
+    # endpoints CI already hits for actions/checkout.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: shellcheck
+        run: shellcheck -s sh scripts/install.sh
+      - name: install xray via install.sh
+        env:
+          XRAY_INSTALL_DIR: ${{ runner.temp }}/bin
+        run: sh scripts/install.sh
+      - name: assert xray version
+        run: ${{ runner.temp }}/bin/xray version

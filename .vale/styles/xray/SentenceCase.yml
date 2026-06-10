@@ -45,6 +45,8 @@ exceptions:
   - Dependabot
   - CircleCI
   - macOS
+  - Linux
+  - Windows
   - Code of Conduct
   - CI / CD
   - CI/CD

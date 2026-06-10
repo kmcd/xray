@@ -78,3 +78,40 @@ changelog:
 release:
   draft: false
   prerelease: auto
+
+# Formula and manifest are committed to this same repo (no separate
+# kmcd/homebrew-xray / kmcd/scoop-xray repos). GoReleaser pushes both
+# files on tag-release using the release workflow's GITHUB_TOKEN; the
+# push target is `main`, so `main` branch-protection must allow the
+# github-actions[bot] actor to bypass required reviews. If the push is
+# blocked, switch `branch:` to a dedicated `dist-homebrew` /
+# `dist-scoop` branch and update README install commands to add
+# `--branch <name>` to the `brew tap` line.
+brews:
+  - name: xray
+    repository:
+      owner: kmcd
+      name: xray
+      token: "{{ .Env.GITHUB_TOKEN }}"
+    directory: Formula
+    commit_author:
+      name: goreleaser-bot
+      email: goreleaser-bot@users.noreply.github.com
+    homepage: https://github.com/kmcd/xray
+    description: Read-only extractor for engineering metrics — git, GitHub, CI, observability — into a portable .tar.gz
+    license: Apache-2.0
+    test: |
+      system "#{bin}/xray", "version"
+
+scoops:
+  - repository:
+      owner: kmcd
+      name: xray
+      token: "{{ .Env.GITHUB_TOKEN }}"
+    directory: bucket
+    commit_author:
+      name: goreleaser-bot
+      email: goreleaser-bot@users.noreply.github.com
+    homepage: https://github.com/kmcd/xray
+    description: Read-only extractor for engineering metrics
+    license: Apache-2.0
