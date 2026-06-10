@@ -33,4 +33,14 @@ cask "xray" do
   end
 
   binary "xray"
+
+  # Strip macOS Gatekeeper's quarantine xattr so the cosign-signed (but not
+  # Apple-notarized) binary runs without the "Apple could not verify..."
+  # dialog. The binary's provenance is verified by Sigstore + SLSA L3, not
+  # Apple notarization; this postflight tells macOS to skip its own check.
+  postflight do
+    system_command "/usr/bin/xattr",
+                   args: ["-dr", "com.apple.quarantine", "#{staged_path}/xray"],
+                   sudo: false
+  end
 end
