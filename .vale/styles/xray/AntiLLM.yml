@@ -1,7 +1,7 @@
 extends: substitution
 message: "LLM-tell phrasing. Use '%s' instead."
 link: https://github.com/kmcd/xray/blob/main/docs/style-guide.md
-level: error
+level: warning
 ignorecase: true
 swap:
   'delve into': 'examine'

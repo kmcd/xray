@@ -357,3 +357,5 @@ in_progress
 (?i)npm
 (?i)dedupes
 (?i)revive
+(?i)untracked
+Goodhart

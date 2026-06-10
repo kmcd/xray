@@ -54,8 +54,14 @@ Catches phrasing common in AI-generated text: "delve into", "leverage",
 These phrases undermine trust in technical documentation. Rewrite to say
 the thing directly.
 
-This rule starts at `warning` (non-blocking). Once the existing docs are
-clean, promote to `error`.
+This rule stays at `warning` permanently. Token-level rules — literal-phrase
+substitution lists — should not graduate to `error`: an agent shown the rule
+pack routes around the listed tokens and produces semantically-identical
+filler in novel surface forms (`delve` → `examine` → `explore` →
+`investigate`), making the failure mode harder to detect rather than gone.
+The defence is to internalise the register the rules point at (terse, no
+marketing, customer-facing-trust voice) at draft time — see the `/style`
+command. Vale catches stragglers as a backstop, not as the primary check.
 
 ### `SentenceCase.yml` — heading capitalisation
 
