@@ -15,6 +15,7 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 ### Quality
 
 - **three-layer sensor architecture.** Three new code-quality sensors with distinct cadences: `make gates` adds eight gate-time linters (`bodyclose`, `noctx`, `errorlint`, `unconvert`, `wastedassign`, `prealloc`, `usestdlibvars`, `depguard` — the last encoding the core/connector seam at lint time); `make sweep` is a once-per-quarter pass with `deadcode`, `nilaway`, and `gocritic` (findings triaged into `tmp/sweep-findings.md`); `make mutation-audit` is a once-per-release `gremlins` audit against the provenance-emitting paths (config in `.gremlins.yaml`, scope in the Makefile target). Surviving mutants on the four named invariants (`prov.PaginationComplete`, `prov.RowsReturned[<k>]`, `prov.Errors[<k>]`, `EndpointStatus`) get killing tests in the same PR. No new runtime dependencies; static-binary constraint unaffected. ([#98], [ADR 029](./docs/adr/0029-three-layer-sensor-architecture.md))
+- **prose register: preventive over reactive.** Token-level Vale rules (`AntiLLM.yml`, `Hedging.yml`) demoted from `level: error` to `level: warning` — they are substitution / existence lists, which agents shown the rule pack route around by emitting semantically-identical filler in novel surface forms (the Goodhart pattern documented in gauge_intelligence's `vale_promotion_policy.md`). The new `.claude/commands/style.md` slash command is the preventive loop: `--preload` loads the rule files + style guide before drafting (rules shape the draft); the no-flag default audits the diff and fix-and-reports against the same rules afterward. `docs/style-guide.md` updated to document the no-promotion stance and the new loop. `make prose` still gates on `error`-level rules (spelling, vocab); warning counts surface as advisory.
 
 [#98]: https://github.com/kmcd/xray/issues/98
 
@@ -179,7 +180,7 @@ First tagged release. Emits `schema_version` 1.
 ### Release engineering
 
 - Cross-compiled binaries for `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`, `windows/amd64`. CGO disabled across the board.
-- `checksums.txt` signed by cosign in keyless mode against the GitHub OIDC issuer; verification snippet in the [README](./README.md#install).
+- `checksums.txt` signed by cosign in keyless mode against the GitHub OIDC issuer; verification snippet in the [README](./README.md#verifying-the-binary).
 - CI gates: build + test (Ubuntu + macOS), lint (`golangci-lint` v2 with `gosec`), `govulncheck`, `go-test-coverage`.
 
 [0.2.2]: https://github.com/kmcd/xray/releases/tag/v0.2.2

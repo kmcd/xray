@@ -43,7 +43,7 @@ only by the customer's explicit choice; the fifth is the binary itself.
    Actions from a tagged commit; `checksums.txt` is signed by cosign
    (keyless, Sigstore). The customer's reviewer verifies the
    signature, then verifies the binary against the checksum, then
-   runs it. See [README → Install](../README.md#install).
+   runs it. See [README → Verifying the binary](../README.md#verifying-the-binary).
 
 ## Attack surface
 

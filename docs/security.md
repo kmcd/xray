@@ -238,7 +238,7 @@ silently writes partial data without recording it.
 
 The release archives ship with `checksums.txt` signed by cosign (keyless,
 via Sigstore's transparency log). The recommended verification flow is
-in the README's [Install](../README.md#install) section.
+in the README's [Verifying the binary](../README.md#verifying-the-binary) section.
 
 `xray version` embeds the build commit and date via Go's standard
 `-ldflags` injection. The binary is built with `CGO_ENABLED=0`; no

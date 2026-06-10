@@ -51,15 +51,127 @@ what a representative run actually looks like.
 
 ## Install
 
-- `go install github.com/kmcd/xray/cmd/xray@latest` — for Go developers.
-- Binary release + cosign verification — see below.
-
-### Binary + cosign verification
-
-Download the release for your platform, verify the cosign signature on `checksums.txt`, then verify the archive against the checksum.
+Download a release binary for your platform:
 
 ```bash
-VERSION=0.1.0
+VERSION=0.3.0
+OS=$(uname -s | tr A-Z a-z)                              # linux | darwin
+ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+
+curl -L "https://github.com/kmcd/xray/releases/download/v${VERSION}/xray_${VERSION}_${OS}_${ARCH}.tar.gz" | tar -xz
+sudo mv xray /usr/local/bin/
+```
+
+Or, for Go developers:
+
+```bash
+go install github.com/kmcd/xray/cmd/xray@latest
+```
+
+For production deployments, verify the cosign signature on the archive
+before installing — see [Verifying the binary](#verifying-the-binary).
+
+## Usage
+
+The default flow: **configure → validate → run → export**.
+
+### 1. Configure
+
+```bash
+# Generate a starter config interactively.
+xray init
+
+# Or scaffold from a GitHub org's repos.
+xray init --org my-org --token "$GITHUB_TOKEN"
+```
+
+Hand-edit `xray.toml`: connector tokens, project mappings, team layout.
+The file stays on the operator's machine — never committed to git, never
+shared back to the consultant.
+
+### 2. Validate and check
+
+```bash
+# Syntactic + schema check, offline. Defaults to ./xray.toml; pass an
+# explicit path to point at a different config.
+xray validate
+
+# Live preflight against configured connectors (auth, rate limits, scope).
+xray check
+```
+
+### 3. Run
+
+```bash
+# Full extraction. Produces ./xray-export-<UTC-timestamp>.tar.gz with a
+# sibling .log file mirroring stderr (suppress with --no-run-log). See
+# the sample-run block below the code for live TTY output.
+xray run
+
+# Machine-readable output. One NDJSON event per progress tick, terminated
+# by a {"kind":"run_summary",...} object on stdout. See docs/spec.md.
+xray run --output json | jq .
+
+# Quiet success: only the artifact path is written to stdout.
+xray run --output quiet
+```
+
+<details>
+<summary>Sample run (live TTY output)</summary>
+
+On a TTY, the default (`--output auto`) renders a live (repo × connector) status grid:
+
+```
+xray run · elapsed 04:12 · ETA 14:47 ±2m · 3/4 workers
+
+repo                clone           github           gh_actions       sentry
+kmcd/foo            ✔ done          ✔ 4213 rows      ● gh_actions     ✔ 312 rows
+kmcd/bar            ✔ done          ● prs            ▢ pending        🔒 inaccessible
+kmcd/baz            ● clone         ▢ pending        ▢ pending        ▢ pending
+```
+
+Non-TTY (CI, pipe to file) falls back to a stderr log with one line per phase boundary; force the log explicitly with `--output log`.
+
+</details>
+
+Exit codes: `0` clean, `1` config / pre-flight error, `2` partial run
+(artifact produced, connector error recorded in manifest), `3` fatal.
+See [`docs/spec.md`](./docs/spec.md) → `xray run` → "Exit codes".
+
+### 4. Export
+
+The run produces two files in the working directory:
+
+- `xray-export-<UTC-timestamp>.tar.gz` — the artifact (SQLite + JSON manifest)
+- `xray-export-<UTC-timestamp>.log` — the run log (mirrors stderr)
+
+Inspect `manifest.json` inside the archive before sending — it lists every
+connector's status, row counts, and per-endpoint errors. No source content,
+no secrets. Sample: [`docs/sample-manifest.json`](docs/sample-manifest.json).
+
+The full configuration reference and behaviour spec live in [`docs/spec.md`](./docs/spec.md). The output schema is documented in [`docs/schema.md`](./docs/schema.md). Agent-facing constraints (invariants, non-goals, schema-versioning rules) live in [`CLAUDE.md`](./CLAUDE.md).
+
+## Compatibility
+
+Pre-1.0, the schema is unstable; minor version bumps may introduce breaking schema changes. The analyser refuses to load artifacts at an unknown `schema_version`. Per-release changes that affect downstream consumers are tracked in [`CHANGELOG.md`](./CHANGELOG.md).
+
+| xray version | schema_version |
+| ------------ | -------------- |
+| 0.1.0        | 1              |
+| 0.2.0        | 1              |
+| 0.2.1        | 1              |
+| 0.2.2        | 1              |
+| 0.3.0        | 2              |
+
+`0.3.0` is the first release at `schema_version = 2`. Analysers pinned to `schema_version = 1` will refuse to load `0.3.0+` artifacts — see the [CHANGELOG](./CHANGELOG.md#030--2026-06-08) for the author-handle semantics shift driving the bump.
+
+## Verifying the binary
+
+Verify the cosign signature on `checksums.txt`, then verify the archive
+against the checksum.
+
+```bash
+VERSION=0.3.0
 OS=linux           # or darwin, windows
 ARCH=amd64         # or arm64 (not available on windows)
 
@@ -100,75 +212,6 @@ slsa-verifier verify-artifact \
   --source-tag "v${VERSION}" \
   "xray_${VERSION}_${OS}_${ARCH}.tar.gz"
 ```
-
-## Usage
-
-```bash
-# Generate a starter config interactively.
-xray init
-
-# Or: scaffold from a GitHub org's repos.
-xray init --org my-org --token "$GITHUB_TOKEN"
-
-# Hand-edit xray.toml: connector tokens, project mappings, team layout.
-
-# Syntactic + schema check, offline. Defaults to ./xray.toml; pass an
-# explicit path to point at a different config.
-xray validate
-
-# Live preflight against configured connectors.
-xray check
-
-# Full extraction. Produces ./xray-export-<UTC-timestamp>.tar.gz with a
-# sibling .log file mirroring stderr (suppress with --no-run-log). See
-# the sample-run block below the code for live TTY output.
-xray run
-
-# Machine-readable output. One NDJSON event per progress tick, terminated
-# by a {"kind":"run_summary",...} object on stdout. See docs/spec.md.
-xray run --output json | jq .
-
-# Quiet success: only the artifact path is written to stdout.
-xray run --output quiet
-```
-
-<details>
-<summary>Sample run (live TTY output)</summary>
-
-On a TTY, the default (`--output auto`) renders a live (repo × connector) status grid:
-
-```
-xray run · elapsed 04:12 · ETA 14:47 ±2m · 3/4 workers
-
-repo                clone           github           gh_actions       sentry
-kmcd/foo            ✔ done          ✔ 4213 rows      ● gh_actions     ✔ 312 rows
-kmcd/bar            ✔ done          ● prs            ▢ pending        🔒 inaccessible
-kmcd/baz            ● clone         ▢ pending        ▢ pending        ▢ pending
-```
-
-Non-TTY (CI, pipe to file) falls back to a stderr log with one line per phase boundary; force the log explicitly with `--output log`.
-
-</details>
-
-Exit codes: `0` clean, `1` config / pre-flight error, `2` partial run
-(artifact produced, connector error recorded in manifest), `3` fatal.
-See [`docs/spec.md`](./docs/spec.md) → `xray run` → "Exit codes".
-
-The full configuration reference and behaviour spec live in [`docs/spec.md`](./docs/spec.md). The output schema is documented in [`docs/schema.md`](./docs/schema.md). Agent-facing constraints (invariants, non-goals, schema-versioning rules) live in [`CLAUDE.md`](./CLAUDE.md).
-
-## Compatibility
-
-Pre-1.0, the schema is unstable; minor version bumps may introduce breaking schema changes. The analyser refuses to load artifacts at an unknown `schema_version`. Per-release changes that affect downstream consumers are tracked in [`CHANGELOG.md`](./CHANGELOG.md).
-
-| xray version | schema_version |
-| ------------ | -------------- |
-| 0.1.0        | 1              |
-| 0.2.0        | 1              |
-| 0.2.1        | 1              |
-| 0.2.2        | 1              |
-| 0.3.0        | 2              |
-
-`0.3.0` is the first release at `schema_version = 2`. Analysers pinned to `schema_version = 1` will refuse to load `0.3.0+` artifacts — see the [CHANGELOG](./CHANGELOG.md#030--2026-06-08) for the author-handle semantics shift driving the bump.
 
 ## Security
 

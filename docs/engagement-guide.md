@@ -40,7 +40,7 @@ and, optionally, the sibling `.log` file. Before anything else:
    version` output of the binary they ran. Map the `tool_version` to a
    `schema_version` using the table in [README → Compatibility](../README.md#compatibility),
    then verify the binary download against `checksums.txt` and
-   `checksums.txt.sig` per [README → Install](../README.md#binary--cosign-verification).
+   `checksums.txt.sig` per [README → Verifying the binary](../README.md#verifying-the-binary).
    The supply-chain detail lives in [docs/threat-model.md → Supply chain](./threat-model.md#supply-chain).
 
 3. **Store the artifact encrypted at rest.** A leaked artifact exposes
