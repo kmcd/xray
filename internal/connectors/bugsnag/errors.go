@@ -72,13 +72,16 @@ func (c *Connector) listErrors(
 			)
 		}
 
-		var page []bugsnagError
-		if decErr := json.NewDecoder(resp.Body).Decode(&page); decErr != nil {
-			_ = resp.Body.Close()
-			return rows, false, fmt.Errorf("bugsnag: decode project=%s: %w", projectID, decErr)
-		}
+		body, readErr := io.ReadAll(resp.Body)
 		linkHeader := resp.Header.Get("Link")
 		_ = resp.Body.Close()
+		if readErr != nil {
+			return rows, false, fmt.Errorf("bugsnag: read project=%s: %w", projectID, readErr)
+		}
+		var page []bugsnagError
+		if decErr := json.Unmarshal(body, &page); decErr != nil {
+			return rows, false, fmt.Errorf("bugsnag: decode project=%s: %w", projectID, decErr)
+		}
 
 		for _, e := range page {
 			if !window.Contains(e.FirstSeen) {

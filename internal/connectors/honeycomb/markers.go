@@ -32,7 +32,9 @@ type marker struct {
 }
 
 // listMarkers fetches all markers for the configured dataset. The endpoint
-// returns a flat array (no pagination), so a single GET suffices.
+// returns a flat array with no server-side date filter, so all markers are
+// fetched and filtered client-side in extractDeploys. Volume grows with
+// deployment frequency; no pagination to manage.
 func (c *Connector) listMarkers(ctx context.Context) ([]marker, error) {
 	u := c.baseURL + "/markers/" + url.PathEscape(c.dataset)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
