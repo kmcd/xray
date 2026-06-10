@@ -8,7 +8,9 @@ before it runs against the customer's repos, CI logs, and error tracker.
 For vulnerability reporting, see [SECURITY.md](../SECURITY.md). For the
 threat model, see [docs/threat-model.md](./threat-model.md). For example
 artifacts a real run produces, see [docs/sample-manifest.json](./sample-manifest.json)
-and [docs/sample-run.log](./sample-run.log).
+and [docs/sample-run.log](./sample-run.log). For the consultant-side
+counterpart — what happens to the artifact after the customer sends it —
+see [docs/engagement-guide.md](./engagement-guide.md).
 
 ## 1. Read-only
 

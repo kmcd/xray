@@ -25,6 +25,12 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 [#103]: https://github.com/kmcd/xray/issues/103
 
+### Docs
+
+- **engagement guide.** New `docs/engagement-guide.md` is the consultant-side playbook for using an `xray` artifact: receiving and verifying the `.tar.gz`, connecting any SQL client to `metrics.sqlite`, reading `extraction_provenance` (including the unknown-vs-zero rule for inaccessible endpoints), four per-table analysis recipes against `schema_version = 2` (lead time to change; defect-linked merged PRs — explicitly flagged as a proxy and **not** the DORA change-failure rate; deploy frequency; review latency) with their SQL verified against the `goreleaser/chglog` smoke artifact, a recommendations framework that enforces team-level-only discipline at the report layer, the sending-findings-back boundary, and end-of-engagement cleanup including token-rotation guidance as defence-in-depth against operator-machine exposure (not a statement about `xray`'s read-only guarantee). Cross-linked from `README.md` Trust, `docs/security.md` intro, and `docs/threat-model.md` "Consultant workflow" out-of-scope bullet + See also. The Makefile `prose` target now lints it under Vale. ([#121])
+
+[#121]: https://github.com/kmcd/xray/issues/121
+
 ## [0.3.0] — 2026-06-08
 
 Breaking: `schema_version` bumps `1 → 2`. Author-identity columns now hold opaque `h_<15 digits>` tokens, not raw logins or git idents. Analysers built for `schema_version = 1` must be updated (assay v1.1.0 already reads the new form). Smoke-verified against `goreleaser/chglog` (~12-month window): 36 commits + 36 PRs + 68 file_complexity_history rows; `mailmap_applied=false`, `squash_rate=1.0`, all author handles match `^h_\d{15}$`.

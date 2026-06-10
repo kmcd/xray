@@ -33,7 +33,7 @@ coverage:
 prose:
 	vale README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md CLAUDE.md \
 	    docs/spec.md docs/schema.md docs/security.md docs/threat-model.md \
-	    docs/style-guide.md docs/adr/ \
+	    docs/style-guide.md docs/engagement-guide.md docs/adr/ \
 	    .claude/agent_prompt_template.md .claude/diff_review.md .claude/commands/
 
 # Run every gate the CI pipeline runs. Use before pushing to main.

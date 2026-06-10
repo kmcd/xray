@@ -151,7 +151,9 @@ out of scope:
 - **Consultant workflow.** How the artifact is transmitted, stored,
   and eventually destroyed depends on the engagement contract. The
   customer should treat the artifact as confidential by default and
-  agree the retention policy with the consultant up front.
+  agree the retention policy with the consultant up front. The
+  consultant-side playbook lives in
+  [docs/engagement-guide.md](./engagement-guide.md).
 - **Customer's own infrastructure.** Provider security posture,
   network egress controls, secrets management, and the customer's
   endpoint security are the customer's responsibility. `xray`
@@ -168,4 +170,6 @@ out of scope:
 - [docs/sample-manifest.json](./sample-manifest.json) — what a real
   artifact looks like
 - [docs/sample-run.log](./sample-run.log) — what a real run logs
+- [docs/engagement-guide.md](./engagement-guide.md) — the
+  consultant-side playbook for using an artifact
 - [SECURITY.md](../SECURITY.md) — vulnerability reporting policy
