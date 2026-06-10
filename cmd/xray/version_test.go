@@ -24,6 +24,24 @@ func TestVersionFlag(t *testing.T) {
 	}
 }
 
+func TestVersionShortFlag(t *testing.T) {
+	root, out, errBuf := newTestRoot(t)
+	root.SetArgs([]string{"-v"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("-v returned err: %v", err)
+	}
+
+	got := out.String()
+	want := "xray dev (commit none, built unknown)\n"
+	if got != want {
+		t.Errorf("-v stdout = %q, want %q", got, want)
+	}
+
+	if s := errBuf.String(); strings.TrimSpace(s) != "" {
+		t.Errorf("-v stderr = %q, want empty", s)
+	}
+}
+
 func TestVersionCmd(t *testing.T) {
 	root, out, errBuf := newTestRoot(t)
 	root.SetArgs([]string{"version"})
