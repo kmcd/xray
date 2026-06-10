@@ -226,6 +226,9 @@ never stores credentials or source content in the output artifact.
 
 ## FAQ
 
+<!-- vale Google.FirstPerson = NO -->
+<!-- vale Microsoft.FirstPerson = NO -->
+
 **Can I run this against repositories with sensitive history?**\
 Yes. `xray` reads git metadata — SHAs, timestamps, author handles, file paths, numstat. No diff text, no commit bodies, no file content is read or stored. See the full capture inventory in [`docs/security.md`](docs/security.md#2-no-source-content-stored).
 
@@ -249,6 +252,9 @@ Pass `--keep-clones` to skip cleanup; clone paths are logged to stderr and recor
 
 **Why a static binary instead of a script or container?**\
 A single static binary has one thing to verify: one file, one SHA256, one cosign signature. No runtime dependencies to audit — no pip, no npm, no base image. See [`docs/threat-model.md`](docs/threat-model.md).
+
+<!-- vale Microsoft.FirstPerson = YES -->
+<!-- vale Google.FirstPerson = YES -->
 
 ## Build from source
 

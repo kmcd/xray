@@ -50,3 +50,6 @@ exceptions:
   - CI/CD
   - Architecture Decision Records
   - IO
+  - FAQ
+  - PRs
+  - DORA
