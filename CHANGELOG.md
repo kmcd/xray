@@ -6,6 +6,12 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+### CLI
+
+- **`--version` flag.** `xray --version` (and `-v`) now print the same line as `xray version` and exit 0. The `version` subcommand is kept. ([#131])
+
+[#131]: https://github.com/kmcd/xray/issues/131
+
 ## [0.4.1] — 2026-06-10
 
 `schema_version` stays at 2. Release-tooling consolidation: `/release` collapses the four-step ritual (tag → push → CI wait → `/publish-tap` → smoke) into one invocation; `.goreleaser.yaml` `skip_upload: true` plus `scripts/publish-tap.sh` route tap content around `main` branch protection now that `github-actions[bot]` cannot be granted Ruleset bypass on a personal-account repo; the brew Cask carries a `postflight` xattr strip so cosign-signed-but-unnotarized binaries run without a Gatekeeper dialog.

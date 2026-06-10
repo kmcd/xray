@@ -6,6 +6,24 @@ import (
 	"testing"
 )
 
+func TestVersionFlag(t *testing.T) {
+	root, out, errBuf := newTestRoot(t)
+	root.SetArgs([]string{"--version"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("--version returned err: %v", err)
+	}
+
+	got := out.String()
+	want := "xray dev (commit none, built unknown)\n"
+	if got != want {
+		t.Errorf("--version stdout = %q, want %q", got, want)
+	}
+
+	if s := errBuf.String(); strings.TrimSpace(s) != "" {
+		t.Errorf("--version stderr = %q, want empty", s)
+	}
+}
+
 func TestVersionCmd(t *testing.T) {
 	root, out, errBuf := newTestRoot(t)
 	root.SetArgs([]string{"version"})

@@ -62,6 +62,9 @@ contains no source code and no secrets.`,
 		return nil
 	}
 
+	root.Version = fmt.Sprintf("%s (commit %s, built %s)", version, commit, date)
+	root.SetVersionTemplate("xray {{.Version}}\n")
+
 	root.AddCommand(
 		newVersionCmd(),
 		newValidateCmd(),
