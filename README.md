@@ -14,9 +14,40 @@
 - **Touches**: GitHub, GitHub Actions, CircleCI, Sentry, Bugsnag, Honeycomb — read-only, even when tokens hold write scope.
 - **Doesn't do**: source-content capture, per-individual rankings, daemon mode, scheduled runs.
 
-## Status
+> [!IMPORTANT]
+> `xray` runs inside a customer environment against the customer's own
+> credentials. The artifact contains no source code and no secrets.
+> Security review: [docs/security.md](docs/security.md) ·
+> [docs/threat-model.md](docs/threat-model.md). Vulnerability
+> disclosure: [SECURITY.md](SECURITY.md).
 
-Pre-1.0. The schema is unstable; minor version bumps may introduce breaking schema changes. See the compatibility table below.
+## Trust
+
+`xray` is intended to be run inside the customer's environment by the
+customer's own operator, against the customer's own credentials, and the
+artifact it produces is meant to survive a security review. The four
+documents below describe what the binary does, what it cannot do, and
+what a representative run actually looks like.
+
+- [`docs/security.md`](docs/security.md) — what is captured, what is
+  not, and the guarantees the binary makes (read-only, no source
+  content, no secrets in the artifact, team-level only, logs).
+- [`docs/threat-model.md`](docs/threat-model.md) — one-page trust
+  boundaries, attack surface, malicious-binary and leaked-artifact
+  analysis.
+- [`docs/sample-manifest.json`](docs/sample-manifest.json) — a real
+  `manifest.json` from a clean single-repo run against
+  `goreleaser/chglog`, the same target `/ready` uses for smoke. Real
+  row counts, real `extraction_provenance` block. Failure-mode
+  endpoint states are documented in
+  [`docs/security.md`](docs/security.md#7-failure-modes-for-security-review)
+  rather than reproduced here.
+- [`docs/sample-run.log`](docs/sample-run.log) — the matching `.log`
+  file demonstrating no tokens, per-phase logs, and the post-run
+  artifact summary.
+- [`docs/engagement-guide.md`](docs/engagement-guide.md) — the
+  consultant-side counterpart: what happens to the artifact after
+  you send it. Public so the methodology stays auditable.
 
 ## Install
 
@@ -73,8 +104,11 @@ slsa-verifier verify-artifact \
 ## Usage
 
 ```bash
-# Generate a starter config from a GitHub org.
-xray init --org my-org --out xray.toml --token "$GITHUB_TOKEN"
+# Generate a starter config interactively.
+xray init
+
+# Or: scaffold from a GitHub org's repos.
+xray init --org my-org --token "$GITHUB_TOKEN"
 
 # Hand-edit xray.toml: connector tokens, project mappings, team layout.
 
@@ -124,7 +158,7 @@ The full configuration reference and behaviour spec live in [`docs/spec.md`](./d
 
 ## Compatibility
 
-The analyser refuses to load artifacts at an unknown `schema_version`. Pre-1.0, expect schema bumps as the model settles. Per-release changes that affect downstream consumers are tracked in [`CHANGELOG.md`](./CHANGELOG.md).
+Pre-1.0, the schema is unstable; minor version bumps may introduce breaking schema changes. The analyser refuses to load artifacts at an unknown `schema_version`. Per-release changes that affect downstream consumers are tracked in [`CHANGELOG.md`](./CHANGELOG.md).
 
 | xray version | schema_version |
 | ------------ | -------------- |
@@ -135,44 +169,6 @@ The analyser refuses to load artifacts at an unknown `schema_version`. Pre-1.0, 
 | 0.3.0        | 2              |
 
 `0.3.0` is the first release at `schema_version = 2`. Analysers pinned to `schema_version = 1` will refuse to load `0.3.0+` artifacts — see the [CHANGELOG](./CHANGELOG.md#030--2026-06-08) for the author-handle semantics shift driving the bump.
-
-## Build from source
-
-```bash
-make build       # produces ./xray
-make test
-make lint
-```
-
-Requires Go 1.23 or later. CGO is not used and is disabled in release builds.
-
-## Trust
-
-`xray` is intended to be run inside the customer's environment by the
-customer's own operator, against the customer's own credentials, and the
-artifact it produces is meant to survive a security review. The four
-documents below describe what the binary does, what it cannot do, and
-what a representative run actually looks like.
-
-- [`docs/security.md`](docs/security.md) — what is captured, what is
-  not, and the guarantees the binary makes (read-only, no source
-  content, no secrets in the artifact, team-level only, logs).
-- [`docs/threat-model.md`](docs/threat-model.md) — one-page trust
-  boundaries, attack surface, malicious-binary and leaked-artifact
-  analysis.
-- [`docs/sample-manifest.json`](docs/sample-manifest.json) — a real
-  `manifest.json` from a clean single-repo run against
-  `goreleaser/chglog`, the same target `/ready` uses for smoke. Real
-  row counts, real `extraction_provenance` block. Failure-mode
-  endpoint states are documented in
-  [`docs/security.md`](docs/security.md#7-failure-modes-for-security-review)
-  rather than reproduced here.
-- [`docs/sample-run.log`](docs/sample-run.log) — the matching `.log`
-  file demonstrating no tokens, per-phase logs, and the post-run
-  artifact summary.
-- [`docs/engagement-guide.md`](docs/engagement-guide.md) — the
-  consultant-side counterpart: what happens to the artifact after
-  you send it. Public so the methodology stays auditable.
 
 ## Security
 
@@ -187,26 +183,30 @@ never stores credentials or source content in the output artifact.
 
 ## FAQ
 
-**Why a static binary instead of a script or container?**\
-A single static binary has one thing to verify: one file, one SHA256, one cosign signature. No runtime dependencies to audit — no pip, no npm, no base image. See [`docs/threat-model.md`](docs/threat-model.md).
-
-**What happens if I revoke the token mid-run?**\
-The next API call returns `401`. The connector records `accessible: false` on that endpoint and continues; subsequent calls are recorded identically. The run completes with exit code `2` (partial — artifact produced, errors in manifest). See [`docs/security.md`](docs/security.md#7-failure-modes-for-security-review).
-
 **Can I run this against repositories with sensitive history?**\
 Yes. `xray` reads git metadata — SHAs, timestamps, author handles, file paths, numstat. No diff text, no commit bodies, no file content is read or stored. See the full capture inventory in [`docs/security.md`](docs/security.md#2-no-source-content-stored).
-
-**Does the tool need network access from inside my VPC?**\
-Outbound HTTPS to configured providers (GitHub, Sentry, etc.) and to `github.com` for repo cloning. No inbound ports, no callbacks. Egress-only. See [`docs/spec.md`](docs/spec.md) for the full connector list.
 
 **What if a provider returns 403 on a required endpoint?**\
 The endpoint records `accessible: false` with the reason and emits no rows. The analyser treats absence as *unknown*, not *no signal* — a critical distinction for analyses that depend on data presence. The run continues. See [`docs/security.md`](docs/security.md#7-failure-modes-for-security-review).
 
-**Can I keep the temp clones for inspection?**\
-Pass `--keep-clones` to skip cleanup; clone paths are logged to stderr and recorded in the `.log` file. By default, clones are deleted after each repo finishes. See [`docs/spec.md`](docs/spec.md) → `xray run` → flags.
+**What happens if I revoke the token mid-run?**\
+The next API call returns `401`. The connector records `accessible: false` on that endpoint and continues; subsequent calls are recorded identically. The run completes with exit code `2` (partial — artifact produced, errors in manifest). See [`docs/security.md`](docs/security.md#7-failure-modes-for-security-review).
 
 **How do I verify the artifact has no secrets in it before sending?**\
 Unpack the `.tar.gz`. `manifest.json` contains row counts, endpoint status, and provenance metadata — no credentials. A real example is at [`docs/sample-manifest.json`](docs/sample-manifest.json).
 
 **What is in `manifest.json` vs. the SQLite database?**\
 `manifest.json` is the run summary: schema version, extraction window, connector versions, per-endpoint access status, row counts, and errors. The SQLite DB is the metrics: commits, PRs, reviews, CI builds, error rates, observability signals. Full schema: [`docs/schema.md`](docs/schema.md).
+
+**Does the tool need network access from inside my VPC?**\
+Outbound HTTPS to configured providers (GitHub, Sentry, etc.) and to `github.com` for repo cloning. No inbound ports, no callbacks. Egress-only. See [`docs/spec.md`](docs/spec.md) for the full connector list.
+
+**Can I keep the temp clones for inspection?**\
+Pass `--keep-clones` to skip cleanup; clone paths are logged to stderr and recorded in the `.log` file. By default, clones are deleted after each repo finishes. See [`docs/spec.md`](docs/spec.md) → `xray run` → flags.
+
+**Why a static binary instead of a script or container?**\
+A single static binary has one thing to verify: one file, one SHA256, one cosign signature. No runtime dependencies to audit — no pip, no npm, no base image. See [`docs/threat-model.md`](docs/threat-model.md).
+
+## Build from source
+
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md#build-from-source).

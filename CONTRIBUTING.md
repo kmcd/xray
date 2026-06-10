@@ -55,3 +55,13 @@ collaborator, or when investigating an unexpected merge.
 ## Code of Conduct
 
 This project follows the [Contributor Covenant v2.1](CODE_OF_CONDUCT.md).
+
+## Build from source
+
+```bash
+make build       # produces ./xray
+make test
+make lint
+```
+
+Requires Go 1.23 or later. CGO is not used and is disabled in release builds.
