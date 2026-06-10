@@ -87,21 +87,20 @@ release:
 # blocked, switch `branch:` to a dedicated `dist-homebrew` /
 # `dist-scoop` branch and update README install commands to add
 # `--branch <name>` to the `brew tap` line.
-brews:
+homebrew_casks:
   - name: xray
+    binaries:
+      - xray
     repository:
       owner: kmcd
       name: xray
       token: "{{ .Env.GITHUB_TOKEN }}"
-    directory: Formula
+    directory: Casks
     commit_author:
       name: goreleaser-bot
       email: goreleaser-bot@users.noreply.github.com
     homepage: https://github.com/kmcd/xray
     description: Read-only extractor for engineering metrics — git, GitHub, CI, observability — into a portable .tar.gz
-    license: Apache-2.0
-    test: |
-      system "#{bin}/xray", "version"
 
 scoops:
   - repository:
