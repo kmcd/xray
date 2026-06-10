@@ -6,6 +6,13 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+### Release
+
+- **`/release` one-step skill.** Collapses tag → push → CI wait → `/publish-tap` → smoke into a single invocation, with pre-flight checks, intro-paragraph confirmation, CHANGELOG rollover, README compatibility-table bump, and brew install verification. `/ready` Step 6.5 surfaces a "Casks/xray.rb is at vX but latest tag is vY" advisory so a forgotten tap publish doesn't ship silently. ([#129])
+- **Out-of-band tap publish.** `.goreleaser.yaml` `homebrew_casks:` and `scoops:` ship with `skip_upload: true`; the Cask + manifest are rendered into CI's `dist/` but pushed to `main` out-of-band by `scripts/publish-tap.sh` (driven by the `/publish-tap` skill) under the maintainer's admin identity. Works around `github-actions[bot]` not being able to bypass `main` branch protection on a personal-account repo (Ruleset Integration-actor bypass is org-only). The Cask template includes a `postflight` block stripping `com.apple.quarantine` so the cosign-signed-but-not-Apple-notarized binary runs without a Gatekeeper dialog. v0.4.0 retroactively published this way after its release workflow failed on the bot push step.
+
+[#129]: https://github.com/kmcd/xray/issues/129
+
 ## [0.4.0] — 2026-06-10
 
 `schema_version` stays at 2. First-customer-polish release: default config path on the CLI, three-layer code-quality sensors, SLSA L3 provenance + branch-protection audit, consultant-side engagement guide, Trust-first README re-order, and replacement install paths (brew Cask tap / `install.sh` / Scoop bucket) for the previous `curl … | tar -xz` snippet.
