@@ -36,7 +36,8 @@ type rawGitHubActions struct {
 }
 
 type rawCircleCI struct {
-	Token string `toml:"token"`
+	Token    string            `toml:"token"`
+	Projects map[string]string `toml:"projects"`
 }
 
 type rawSentry struct {
@@ -92,7 +93,7 @@ func Load(path string) (*Config, *toml.MetaData, error) {
 		cfg.Connectors.GitHubActions = &GitHubActionsConn{Token: tok}
 	}
 	if rc := raw.Connectors.CircleCI; rc != nil {
-		cfg.Connectors.CircleCI = &CircleCIConn{Token: rc.Token}
+		cfg.Connectors.CircleCI = &CircleCIConn{Token: rc.Token, Projects: rc.Projects}
 	}
 	if rc := raw.Connectors.Sentry; rc != nil {
 		cfg.Connectors.Sentry = &SentryConn{

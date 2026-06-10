@@ -102,6 +102,7 @@ func TestInitCmd_RoundTripsThroughValidate(t *testing.T) {
 	wantPaths := []string{
 		`connectors.bugsnag: missing required key "projects"`,
 		`connectors.bugsnag: missing required key "token"`,
+		`connectors.circleci: missing required key "projects"`,
 		`connectors.circleci: missing required key "token"`,
 		`connectors.github: missing required key "token"`,
 		`connectors.github_actions: missing token (and no token to inherit from [connectors.github])`,

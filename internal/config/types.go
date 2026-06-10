@@ -37,7 +37,8 @@ type GitHubActionsConn struct {
 }
 
 type CircleCIConn struct {
-	Token string
+	Token    string
+	Projects map[string]string // circleci project slug -> repo slug
 }
 
 type SentryConn struct {

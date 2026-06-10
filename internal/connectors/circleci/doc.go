@@ -1,7 +1,10 @@
 // Package circleci implements the CircleCI v2 API connector. It populates
-// `builds` and `build_jobs` for repos configured in xray.toml whose
-// CircleCI project slug ("gh/<owner>/<name>") is accessible to the
-// configured token.
+// `builds` and `build_jobs` for repos configured in xray.toml.
+//
+// Project mapping: the connector reads [connectors.circleci.projects] — a map
+// of CircleCI project slug ("gh/<owner>/<name>") to GitHub repo slug, the same
+// pattern as the sentry and bugsnag connectors. The map is required; omitting
+// it is a validation error.
 //
 // Simplifications versus the spec:
 //

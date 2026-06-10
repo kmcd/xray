@@ -138,6 +138,9 @@ func Validate(cfg *Config, meta *toml.MetaData, file string) []Diagnostic {
 		if c.CircleCI.Token == "" {
 			emit("connectors.circleci", `missing required key "token"`)
 		}
+		if len(c.CircleCI.Projects) == 0 {
+			emit("connectors.circleci", `missing required key "projects"`)
+		}
 	}
 
 	if c.Sentry != nil {

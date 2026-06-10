@@ -86,7 +86,9 @@ func (c *Connector) listPipelines(ctx context.Context, projSlug, branch string, 
 		for _, p := range page.Items {
 			if !stopBefore.IsZero() && p.CreatedAt.Before(stopBefore) {
 				// Newest-first stream: once an out-of-window pipeline
-				// appears, the rest of the stream is older. Stop early.
+				// appears, the rest of the stream is older. continue (not
+				// break) so remaining items on this page are still checked
+				// — the page boundary may split at the window edge.
 				stop = true
 				continue
 			}

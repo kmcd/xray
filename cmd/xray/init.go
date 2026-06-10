@@ -163,6 +163,8 @@ token = ""
 
 [connectors.circleci]
 token = ""
+[connectors.circleci.projects]
+# "gh/owner/repo" = "owner/repo"
 
 [connectors.sentry]
 token = ""

@@ -215,6 +215,9 @@ token = "ghp_..."
 
 [connectors.circleci]
 token = "..."
+# map circleci project slugs to repo slugs so builds tag to the right repo/team
+[connectors.circleci.projects]
+"gh/owner/repo" = "owner/repo"
 
 [connectors.sentry]
 token = "..."
@@ -510,8 +513,9 @@ Absence is recorded in `extraction_provenance`; the analyser interprets
 - **github_actions** — populates `builds`, `build_jobs`, and `deploys`
   (workflows that use the Deployments API). Shares the github connector's
   token by default; same API host, no extra credential to provision.
-- **circleci** — populates `builds` and `build_jobs`. Project discovery via
-  the configured token's accessible projects, filtered to repos in config.
+- **circleci** — populates `builds` and `build_jobs`. Uses
+  `[connectors.circleci.projects]` to map CircleCI project slugs
+  (`gh/<owner>/<name>`) to repos, same pattern as sentry and bugsnag.
 - **sentry** — populates `incidents`. Uses `[connectors.sentry.projects]`
   to map sentry projects to repos. Largest install base of any error
   tracker; the connector most prospects will already have in place.

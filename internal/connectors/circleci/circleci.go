@@ -18,6 +18,7 @@ type Connector struct {
 	log        *slog.Logger
 	token      string
 	baseURL    string
+	projects   map[string]string // circleci project slug -> repo slug
 }
 
 // Config is the connector's input. BaseURL is exposed only for tests.
@@ -45,6 +46,7 @@ func New(cfg config.CircleCIConn, log *slog.Logger) (*Connector, error) {
 		log:        log,
 		token:      cfg.Token,
 		baseURL:    DefaultBaseURL,
+		projects:   cfg.Projects,
 	}, nil
 }
 

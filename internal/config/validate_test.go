@@ -155,13 +155,16 @@ token = "x"
 			want: []string{`missing required key "dataset"`},
 		},
 		{
-			name: "circleci missing token",
+			name: "circleci missing token and projects",
 			toml: `window = "2025-01-01..2025-06-30"
 [teams]
 t = ["a/b"]
 [connectors.circleci]
 `,
-			want: []string{`connectors.circleci: missing required key "token"`},
+			want: []string{
+				`connectors.circleci: missing required key "projects"`,
+				`connectors.circleci: missing required key "token"`,
+			},
 		},
 	}
 

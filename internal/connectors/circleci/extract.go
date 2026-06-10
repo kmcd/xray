@@ -15,34 +15,36 @@ import (
 func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window connector.Window, sink connector.Sink) connector.Provenance {
 	prov := connector.NewProvenance(c.Name(), repo.Slug, window)
 
-	projSlug := projectSlug(repo.Slug)
-	if projSlug == "" {
-		prov.Endpoints["pipelines"] = connector.EndpointStatus{
-			Accessible: false,
-			Reason:     "repo slug is not owner/name",
+	for ps, rs := range c.projects {
+		if rs == repo.Slug {
+			c.extractProject(ctx, ps, repo.Slug, window, sink, &prov)
 		}
-		prov.PaginationComplete = false
-		return prov
 	}
+
+	return prov
+}
+
+func (c *Connector) extractProject(ctx context.Context, projSlug, repoSlug string, window connector.Window, sink connector.Sink, prov *connector.Provenance) {
+	endpointKey := "pipelines:" + projSlug
 
 	// CircleCI returns pipelines newest-first; use window.Start as the
 	// short-circuit point so we don't paginate forever into history.
 	pipelines, complete, err := c.listPipelines(ctx, projSlug, "", window.Start)
 	if err != nil {
-		prov.Errors["pipelines"] = err.Error()
+		prov.Errors[endpointKey] = err.Error()
 		prov.PaginationComplete = false
 		// 404 / 401-style failures most often mean the token can't see
 		// this project; surface that distinctly in the manifest.
-		prov.Endpoints["pipelines"] = connector.EndpointStatus{
+		prov.Endpoints[endpointKey] = connector.EndpointStatus{
 			Accessible: false,
 			Reason:     err.Error(),
 		}
-		return prov
+		return
 	}
 	if !complete {
 		prov.PaginationComplete = false
 	}
-	prov.Endpoints["pipelines"] = connector.EndpointStatus{Accessible: true}
+	prov.Endpoints[endpointKey] = connector.EndpointStatus{Accessible: true}
 
 	for _, p := range pipelines {
 		// Skip pipelines whose created_at falls outside the window. The
@@ -72,7 +74,7 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 				continue
 			}
 
-			build := buildFromWorkflow(repo.Slug, p, w)
+			build := buildFromWorkflow(repoSlug, p, w)
 			if err := sink.InsertBuild(build); err != nil {
 				prov.Errors["build:"+w.ID] = err.Error()
 				continue
@@ -94,7 +96,7 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 			}
 
 			for _, j := range jobs {
-				bj := buildJobFromJob(repo.Slug, w.ID, j)
+				bj := buildJobFromJob(repoSlug, w.ID, j)
 				if err := sink.InsertBuildJob(bj); err != nil {
 					prov.Errors["build_job:"+w.ID+":"+j.Name] = err.Error()
 					continue
@@ -105,16 +107,14 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 			if err := ctx.Err(); err != nil {
 				prov.PaginationComplete = false
 				prov.Errors["ctx"] = err.Error()
-				return prov
+				return
 			}
 		}
 
 		if err := ctx.Err(); err != nil {
 			prov.PaginationComplete = false
 			prov.Errors["ctx"] = err.Error()
-			return prov
+			return
 		}
 	}
-
-	return prov
 }
