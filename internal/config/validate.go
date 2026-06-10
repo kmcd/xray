@@ -116,11 +116,16 @@ func Validate(cfg *Config, meta *toml.MetaData, file string) []Diagnostic {
 	// connectors
 	c := cfg.Connectors
 
-	if c.GitHub != nil {
-		if c.GitHub.Token == "" {
-			emit("connectors.github", `missing required key "token"`)
+	// Build the set of repos declared across all teams for project-map cross-checks.
+	teamRepos := map[string]bool{}
+	for _, repos := range cfg.Teams {
+		for _, r := range repos {
+			teamRepos[r] = true
 		}
 	}
+
+	// github: token is the sole required field. An empty token means the block
+	// is pre-staged (all-empty); no diagnostic is emitted in that case.
 
 	if c.GitHubActions != nil {
 		if c.GitHub == nil {
@@ -128,58 +133,108 @@ func Validate(cfg *Config, meta *toml.MetaData, file string) []Diagnostic {
 				`requires [connectors.github] to be configured`)
 		} else if c.GitHubActions.Token == "" && c.GitHub.Token == "" {
 			// Token would be inherited from [connectors.github], but that
-			// table is also missing a token (already reported above).
+			// table is also missing a token.
 			emit("connectors.github_actions",
 				`missing token (and no token to inherit from [connectors.github])`)
 		}
 	}
 
 	if c.CircleCI != nil {
-		if c.CircleCI.Token == "" {
-			emit("connectors.circleci", `missing required key "token"`)
-		}
-		if len(c.CircleCI.Projects) == 0 {
-			emit("connectors.circleci", `missing required key "projects"`)
-		}
+		validateCircleCI(emit, c.CircleCI, teamRepos)
 	}
-
 	if c.Sentry != nil {
-		if c.Sentry.Token == "" {
-			emit("connectors.sentry", `missing required key "token"`)
-		}
-		if c.Sentry.Organization == "" {
-			emit("connectors.sentry", `missing required key "organization"`)
-		}
-		if len(c.Sentry.Projects) == 0 {
-			emit("connectors.sentry", `missing required key "projects"`)
-		}
+		validateSentry(emit, c.Sentry, teamRepos)
 	}
-
 	if c.Bugsnag != nil {
-		if c.Bugsnag.Token == "" {
-			emit("connectors.bugsnag", `missing required key "token"`)
-		}
-		if len(c.Bugsnag.Projects) == 0 {
-			emit("connectors.bugsnag", `missing required key "projects"`)
-		}
+		validateBugsnag(emit, c.Bugsnag, teamRepos)
 	}
-
 	if c.Honeycomb != nil {
-		if c.Honeycomb.Token == "" {
-			emit("connectors.honeycomb", `missing required key "token"`)
-		}
-		if c.Honeycomb.Dataset == "" {
-			emit("connectors.honeycomb", `missing required key "dataset"`)
-		}
+		validateHoneycomb(emit, c.Honeycomb)
 	}
 
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Line != out[j].Line {
 			return out[i].Line < out[j].Line
 		}
-		return out[i].Path < out[j].Path
+		if out[i].Path != out[j].Path {
+			return out[i].Path < out[j].Path
+		}
+		return out[i].Msg < out[j].Msg
 	})
 	return out
+}
+
+func validateCircleCI(emit func(string, string), c *CircleCIConn, teamRepos map[string]bool) {
+	if c.Token == "" && len(c.Projects) == 0 {
+		return
+	}
+	if c.Token == "" {
+		emit("connectors.circleci.token", `required when [connectors.circleci] is present`)
+	}
+	if len(c.Projects) == 0 {
+		emit("connectors.circleci.projects", `required when [connectors.circleci] is present`)
+		return
+	}
+	validateProjectMap(emit, "connectors.circleci.projects", c.Projects, teamRepos)
+}
+
+func validateSentry(emit func(string, string), s *SentryConn, teamRepos map[string]bool) {
+	if s.Token == "" && s.Organization == "" && len(s.Projects) == 0 {
+		return
+	}
+	if s.Token == "" {
+		emit("connectors.sentry.token", `required when [connectors.sentry] is present`)
+	}
+	if s.Organization == "" {
+		emit("connectors.sentry.organization", `required when [connectors.sentry] is present`)
+	}
+	if len(s.Projects) == 0 {
+		emit("connectors.sentry.projects", `required when [connectors.sentry] is present`)
+		return
+	}
+	validateProjectMap(emit, "connectors.sentry.projects", s.Projects, teamRepos)
+}
+
+func validateBugsnag(emit func(string, string), b *BugsnagConn, teamRepos map[string]bool) {
+	if b.Token == "" && len(b.Projects) == 0 {
+		return
+	}
+	if b.Token == "" {
+		emit("connectors.bugsnag.token", `required when [connectors.bugsnag] is present`)
+	}
+	if len(b.Projects) == 0 {
+		emit("connectors.bugsnag.projects", `required when [connectors.bugsnag] is present`)
+		return
+	}
+	validateProjectMap(emit, "connectors.bugsnag.projects", b.Projects, teamRepos)
+}
+
+func validateHoneycomb(emit func(string, string), h *HoneycombConn) {
+	if h.Token == "" && h.Dataset == "" {
+		return
+	}
+	if h.Token == "" {
+		emit("connectors.honeycomb.token", `required when [connectors.honeycomb] is present`)
+	}
+	if h.Dataset == "" {
+		emit("connectors.honeycomb.dataset", `required when [connectors.honeycomb] is present`)
+	}
+}
+
+func validateProjectMap(emit func(string, string), path string, projects map[string]string, teamRepos map[string]bool) {
+	keys := make([]string, 0, len(projects))
+	for k := range projects {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := projects[k]
+		if !repoSlugRe.MatchString(v) {
+			emit(path, fmt.Sprintf("value %q for key %q is not a valid owner/repo slug", v, k))
+		} else if len(teamRepos) > 0 && !teamRepos[v] {
+			emit(path, fmt.Sprintf("value %q for key %q does not match any repo in [teams]", v, k))
+		}
+	}
 }
 
 func hasWhitespace(s string) bool {

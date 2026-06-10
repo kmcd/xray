@@ -268,7 +268,7 @@ dataset = "production"
 ```
 xray.toml:7: window: end date precedes start date
 xray.toml:12: teams.platform: repo "kmcd/foo" already appears in team "payments"
-xray.toml:18: connectors.bugsnag: missing required key "projects"
+xray.toml:18: connectors.bugsnag.projects: required when [connectors.bugsnag] is present
 ```
 
 ---

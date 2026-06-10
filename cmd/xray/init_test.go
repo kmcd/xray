@@ -84,10 +84,11 @@ func TestInitCmd_RoundTripsThroughValidate(t *testing.T) {
 
 	// Round-trip: feed the scaffold to config.Load + config.Validate
 	// directly (skipping the cobra layer so we are not double-testing it).
-	// The scaffold is intentionally a starting point — it has an empty
-	// window and empty connector tokens. We assert the *exact* set of
-	// diagnostics it yields, so any future drift between scaffold and
-	// validator surfaces here.
+	// The scaffold is a starting point: window is empty and connector tokens
+	// are all empty. Connectors with all required fields empty are treated as
+	// pre-staged (disabled) — no diagnostics emitted for them. We assert the
+	// *exact* set of diagnostics the scaffold yields so any future drift
+	// between scaffold and validator surfaces here.
 	cfg, meta, loadErr := config.Load(outPath)
 	if loadErr != nil {
 		t.Fatalf("scaffold failed config.Load: %v", loadErr)
@@ -100,17 +101,9 @@ func TestInitCmd_RoundTripsThroughValidate(t *testing.T) {
 	sort.Strings(gotPaths)
 
 	wantPaths := []string{
-		`connectors.bugsnag: missing required key "projects"`,
-		`connectors.bugsnag: missing required key "token"`,
-		`connectors.circleci: missing required key "projects"`,
-		`connectors.circleci: missing required key "token"`,
-		`connectors.github: missing required key "token"`,
+		// github token is empty → pre-staged; github_actions inherits that
+		// empty token, so it still fires.
 		`connectors.github_actions: missing token (and no token to inherit from [connectors.github])`,
-		`connectors.honeycomb: missing required key "dataset"`,
-		`connectors.honeycomb: missing required key "token"`,
-		`connectors.sentry: missing required key "organization"`,
-		`connectors.sentry: missing required key "projects"`,
-		`connectors.sentry: missing required key "token"`,
 		`window: missing required key "window"`,
 	}
 	sort.Strings(wantPaths)

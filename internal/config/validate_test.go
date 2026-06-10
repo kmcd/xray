@@ -93,13 +93,14 @@ platform = ["kmcd/foo"]
 			want: []string{`repo "kmcd/foo" already appears in team "payments"`},
 		},
 		{
-			name: "github without token",
+			// empty token = all-empty = pre-staged, not an error
+			name: "github pre-staged",
 			toml: `window = "2025-01-01..2025-06-30"
 [teams]
 t = ["a/b"]
 [connectors.github]
 `,
-			want: []string{`connectors.github: missing required key "token"`},
+			wantOK: true,
 		},
 		{
 			name: "github_actions without github",
@@ -122,6 +123,75 @@ token = "shared"
 			wantOK: true,
 		},
 		{
+			// all required fields empty → pre-staged, no error
+			name: "circleci pre-staged",
+			toml: `window = "2025-01-01..2025-06-30"
+[teams]
+t = ["a/b"]
+[connectors.circleci]
+`,
+			wantOK: true,
+		},
+		{
+			// token set but no projects → partially configured → error
+			name: "circleci token set but no projects",
+			toml: `window = "2025-01-01..2025-06-30"
+[teams]
+t = ["a/b"]
+[connectors.circleci]
+token = "x"
+`,
+			want: []string{
+				`connectors.circleci.projects: required when [connectors.circleci] is present`,
+			},
+		},
+		{
+			name: "circleci project map value not in teams",
+			toml: `window = "2025-01-01..2025-06-30"
+[teams]
+t = ["a/b"]
+[connectors.circleci]
+token = "x"
+[connectors.circleci.projects]
+"gh/org/proj" = "owner/missing"
+`,
+			want: []string{`value "owner/missing" for key "gh/org/proj" does not match any repo in [teams]`},
+		},
+		{
+			name: "circleci project map value is invalid slug",
+			toml: `window = "2025-01-01..2025-06-30"
+[teams]
+t = ["a/b"]
+[connectors.circleci]
+token = "x"
+[connectors.circleci.projects]
+"gh/org/proj" = "not-a-slug"
+`,
+			want: []string{`value "not-a-slug" for key "gh/org/proj" is not a valid owner/repo slug`},
+		},
+		{
+			// when teams is absent teamRepos is empty; project map values with valid slugs
+			// should not get a spurious "does not match any repo in [teams]" error
+			name: "project map no teams-cross-check when teams missing",
+			toml: `window = "2025-01-01..2025-06-30"
+[connectors.bugsnag]
+token = "x"
+[connectors.bugsnag.projects]
+"proj-id" = "owner/repo"
+`,
+			// only the missing teams section error, not a spurious project-map cross-check
+			want: []string{`missing required section "[teams]"`},
+		},
+		{
+			name: "sentry pre-staged",
+			toml: `window = "2025-01-01..2025-06-30"
+[teams]
+t = ["a/b"]
+[connectors.sentry]
+`,
+			wantOK: true,
+		},
+		{
 			name: "sentry missing organization and projects",
 			toml: `window = "2025-01-01..2025-06-30"
 [teams]
@@ -130,9 +200,57 @@ t = ["a/b"]
 token = "x"
 `,
 			want: []string{
-				`connectors.sentry: missing required key "organization"`,
-				`connectors.sentry: missing required key "projects"`,
+				`connectors.sentry.organization: required when [connectors.sentry] is present`,
+				`connectors.sentry.projects: required when [connectors.sentry] is present`,
 			},
+		},
+		{
+			name: "sentry project map value is invalid slug",
+			toml: `window = "2025-01-01..2025-06-30"
+[teams]
+t = ["a/b"]
+[connectors.sentry]
+token = "x"
+organization = "myorg"
+[connectors.sentry.projects]
+"my-sentry-proj" = "not-a-slug"
+`,
+			want: []string{`value "not-a-slug" for key "my-sentry-proj" is not a valid owner/repo slug`},
+		},
+		{
+			name: "sentry project map value not in teams",
+			toml: `window = "2025-01-01..2025-06-30"
+[teams]
+t = ["a/b"]
+[connectors.sentry]
+token = "x"
+organization = "myorg"
+[connectors.sentry.projects]
+"my-sentry-proj" = "owner/other-repo"
+`,
+			want: []string{`value "owner/other-repo" for key "my-sentry-proj" does not match any repo in [teams]`},
+		},
+		{
+			name: "sentry project map value matches teams",
+			toml: `window = "2025-01-01..2025-06-30"
+[teams]
+t = ["a/b"]
+[connectors.sentry]
+token = "x"
+organization = "myorg"
+[connectors.sentry.projects]
+"my-sentry-proj" = "a/b"
+`,
+			wantOK: true,
+		},
+		{
+			name: "bugsnag pre-staged",
+			toml: `window = "2025-01-01..2025-06-30"
+[teams]
+t = ["a/b"]
+[connectors.bugsnag]
+`,
+			wantOK: true,
 		},
 		{
 			name: "bugsnag missing projects",
@@ -142,7 +260,28 @@ t = ["a/b"]
 [connectors.bugsnag]
 token = "x"
 `,
-			want: []string{`connectors.bugsnag: missing required key "projects"`},
+			want: []string{`connectors.bugsnag.projects: required when [connectors.bugsnag] is present`},
+		},
+		{
+			name: "bugsnag project map value not in teams",
+			toml: `window = "2025-01-01..2025-06-30"
+[teams]
+t = ["a/b"]
+[connectors.bugsnag]
+token = "x"
+[connectors.bugsnag.projects]
+"proj-id" = "owner/missing"
+`,
+			want: []string{`value "owner/missing" for key "proj-id" does not match any repo in [teams]`},
+		},
+		{
+			name: "honeycomb pre-staged",
+			toml: `window = "2025-01-01..2025-06-30"
+[teams]
+t = ["a/b"]
+[connectors.honeycomb]
+`,
+			wantOK: true,
 		},
 		{
 			name: "honeycomb missing dataset",
@@ -152,19 +291,7 @@ t = ["a/b"]
 [connectors.honeycomb]
 token = "x"
 `,
-			want: []string{`missing required key "dataset"`},
-		},
-		{
-			name: "circleci missing token and projects",
-			toml: `window = "2025-01-01..2025-06-30"
-[teams]
-t = ["a/b"]
-[connectors.circleci]
-`,
-			want: []string{
-				`connectors.circleci: missing required key "projects"`,
-				`connectors.circleci: missing required key "token"`,
-			},
+			want: []string{`connectors.honeycomb.dataset: required when [connectors.honeycomb] is present`},
 		},
 	}
 
