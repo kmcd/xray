@@ -6,6 +6,12 @@
 # off) is reported but does not fail — trunk-based work on this repo is
 # admin-only and that bypass is intentional, per CONTRIBUTING.md.
 
+# chruby's auto.sh (sourced via $BASH_ENV → ~/.bashrc) installs a DEBUG
+# trap that references unset vars; defang it before `set -u`.
+trap - DEBUG
+unset BASH_ENV
+: "${PROMPT_COMMAND:=}"
+
 set -euo pipefail
 
 REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)

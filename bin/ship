@@ -3,6 +3,12 @@
 # coverage) so failures surface locally before they cost a CI cycle.
 # Mirrors gauge_intelligence/bin/ship.
 
+# chruby's auto.sh (sourced via $BASH_ENV → ~/.bashrc) installs a DEBUG
+# trap that references unset vars; defang it before `set -u`.
+trap - DEBUG
+unset BASH_ENV
+: "${PROMPT_COMMAND:=}"
+
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
