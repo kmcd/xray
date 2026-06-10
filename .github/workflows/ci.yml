@@ -48,7 +48,7 @@ jobs:
           cache: true
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
           govulncheck ./...
 
   coverage:
