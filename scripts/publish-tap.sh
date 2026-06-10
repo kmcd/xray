@@ -133,7 +133,7 @@ cat > bucket/xray.json <<EOF
 }
 EOF
 
-if git diff --quiet -- Casks/xray.rb bucket/xray.json; then
+if [ -z "$(git status --porcelain -- Casks/xray.rb bucket/xray.json)" ]; then
     printf 'publish-tap: Cask + manifest already match %s; nothing to commit\n' "$TAG" >&2
     exit 0
 fi
