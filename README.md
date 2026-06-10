@@ -5,7 +5,7 @@
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/kmcd/xray/badge)](https://securityscorecards.dev/viewer/?uri=github.com/kmcd/xray)
 [![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev)
 [![govulncheck](https://img.shields.io/badge/govulncheck-clean-success)](#)
-[![License](https://img.shields.io/github/license/kmcd/xray)](./LICENSE)
+[![License](https://img.shields.io/github/license/kmcd/xray?v=2)](./LICENSE)
 
 **xray** is a read-only extractor that produces a portable engineering-metrics artifact from a client's git, GitHub, CI, and error-tracker systems.
 
