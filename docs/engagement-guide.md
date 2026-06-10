@@ -154,6 +154,13 @@ which endpoints were reachable and what came back.
   collapsing aliases (truck factor, main-author share, Conway's-law
   signals) is inflated. Surface the caveat in the report.
 
+- **Honeycomb is dataset-scoped.** Honeycomb has no per-repo concept; all
+  deploys and SLO-alert incidents are emitted under one repo slug — whichever
+  repo was processed first (the order is not guaranteed). For every other repo
+  the `markers` endpoint records `accessible: false` with reason `"honeycomb
+  has no per-repo concept; emitted under <slug>"`: this is expected behaviour,
+  not a permission error.
+
 ## 4. Per-table analysis recipes
 
 Four DORA-adjacent recipes against `schema_version = 2`. Each lists
