@@ -6,6 +6,8 @@ This project runs trunk-based on shared `main` with multiple concurrent sessions
 
 **Mechanical guard:** `.claude/hooks/guard-commit.sh` rejects any commit that lacks an explicit `-- <paths…>`, plus `-a` / `--all` / `--amend`.
 
+**Critical:** `git commit -- <paths>` commits the **working-tree** content of those paths, ignoring whatever is staged in `.git/index`. Pre-staging with `git add` is irrelevant; `git add -p` to isolate hunks **does not work**. Mixed-content files need `/stage` Step 4 (temporary-revert-stage-restore) before reaching this skill.
+
 ## Step 1: identify *your* files
 
 ```
