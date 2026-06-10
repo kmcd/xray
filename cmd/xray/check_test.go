@@ -1,12 +1,35 @@
 package main
 
 import (
+	"crypto/x509"
+	"errors"
+	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestIsTLSCertError(t *testing.T) {
+	uae := x509.UnknownAuthorityError{}
+	// Wrapping chain: url.Error → fmt.Errorf %w → x509.UnknownAuthorityError
+	wrapped := &url.Error{Op: "Get", URL: "https://api.github.com", Err: fmt.Errorf("TLS: %w", uae)}
+
+	if !isTLSCertError(uae) {
+		t.Error("isTLSCertError(UnknownAuthorityError) = false, want true")
+	}
+	if !isTLSCertError(wrapped) {
+		t.Error("isTLSCertError(url.Error wrapping UnknownAuthorityError) = false, want true")
+	}
+	if isTLSCertError(errors.New("connection refused")) {
+		t.Error("isTLSCertError(connection refused) = true, want false")
+	}
+	if isTLSCertError(errors.New("x509: certificate has expired")) {
+		t.Error("isTLSCertError(unrelated x509 string) = true, want false")
+	}
+}
 
 func TestCheckCmd(t *testing.T) {
 	// `check` does a real `git ls-remote` for every repo. We can not safely

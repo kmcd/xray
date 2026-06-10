@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -119,6 +120,9 @@ func runCheck(cmd *cobra.Command, path string, opts checkOpts) error {
 		if err := c.Ping(ctx); err != nil {
 			anyFail = true
 			fmt.Fprintf(errOut, "FAIL %-16s %v\n", c.Name(), err)
+			if isTLSCertError(err) {
+				fmt.Fprintf(errOut, "     hint: corporate TLS interception — set SSL_CERT_FILE (Linux) or add CA to system keychain (macOS)\n")
+			}
 			continue
 		}
 		entry := checkConnector{Name: c.Name()}
@@ -147,6 +151,9 @@ func runCheck(cmd *cobra.Command, path string, opts checkOpts) error {
 		if err := gitClient.LsRemote(ctx, r); err != nil {
 			anyFail = true
 			fmt.Fprintf(errOut, "FAIL %-16s %v\n", r, err)
+			if isTLSCertError(err) {
+				fmt.Fprintf(errOut, "     hint: corporate TLS interception — set SSL_CERT_FILE (Linux) or add CA to system keychain (macOS)\n")
+			}
 		} else {
 			textf(mode, out, "ok  %-16s clone access ok\n", r)
 		}
@@ -313,6 +320,13 @@ func joinComma(ss []string) string {
 	return out
 }
 
+
+// isTLSCertError reports whether err is or wraps an x509.UnknownAuthorityError,
+// the signature of a corporate TLS interception CA not being trusted.
+func isTLSCertError(err error) bool {
+	var uae x509.UnknownAuthorityError
+	return errors.As(err, &uae)
+}
 
 func humanCount(n int) string {
 	switch {
