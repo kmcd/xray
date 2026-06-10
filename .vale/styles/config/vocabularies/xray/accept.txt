@@ -369,3 +369,8 @@ Goodhart
 (?i)idempotency
 (?i)xattr
 (?i)unnotarized
+CAs
+CA
+PEM
+SSL
+SSH

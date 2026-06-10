@@ -94,7 +94,9 @@ Pick the archive for your platform from
 [the releases page](https://github.com/kmcd/xray/releases/latest) and
 extract `xray` onto your `PATH`. For air-gapped or security-team
 installs, verify the cosign signature first — see
-[Verifying the binary](#verifying-the-binary).
+[Verifying the binary](#verifying-the-binary). For corporate proxy,
+custom CA, and firewall configuration, see
+[docs/enterprise.md](docs/enterprise.md).
 
 ### Go developers
 

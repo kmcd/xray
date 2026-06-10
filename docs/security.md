@@ -152,6 +152,9 @@ can be `grep`-verified for the absence of credential material.
 
 ## 6. Network surface
 
+For proxy, custom CA, and firewall allowlist details, see
+[docs/enterprise.md](./enterprise.md).
+
 `xray` connects only to provider APIs the customer configures. Each
 connector reaches a fixed set of endpoints; the per-run
 `extraction_provenance.endpoints` map records which were accessible.

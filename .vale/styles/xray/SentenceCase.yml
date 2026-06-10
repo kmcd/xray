@@ -36,6 +36,11 @@ exceptions:
   - OAuth
   - POSIX
   - CGO
+  - CA
+  - PEM
+  - TLS
+  - SSL
+  - SSH
   - Go
   - Ctrl-C
   - Makefile

@@ -460,6 +460,8 @@ has had a window for follow-up questions. Close it cleanly.
 
 - [docs/security.md](./security.md) — what the artifact contains and
   what the binary guarantees (customer-facing).
+- [docs/enterprise.md](./enterprise.md) — running xray behind a
+  corporate proxy, custom CA, or allowlist firewall (customer-facing).
 - [docs/threat-model.md](./threat-model.md) — trust boundaries and
   attack surface (customer-facing).
 - [docs/schema.md](./schema.md) — canonical table definitions, the
