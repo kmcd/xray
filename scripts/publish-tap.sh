@@ -138,6 +138,9 @@ if [ -z "$(git status --porcelain -- Casks/xray.rb bucket/xray.json)" ]; then
     exit 0
 fi
 
+# `git commit -- <paths>` requires the paths to be tracked; new files must
+# be staged first so git knows about them.
+git add -- Casks/xray.rb bucket/xray.json
 git commit -m "release: ${TAG} brew Cask + Scoop manifest" \
     -- Casks/xray.rb bucket/xray.json
 
