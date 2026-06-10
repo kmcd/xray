@@ -75,6 +75,29 @@ Skip when:
 
 If the smoke reveals a regression, **do not close the issue**. Fix forward in the same session.
 
+## Step 6.5: Distribution status (advisory)
+
+Check whether the latest tag's brew Cask + Scoop manifest are published. This is **advisory, not blocking** — `/ready` gates the current commit; release-state drift is a different category but worth a heads-up so a forgotten `/publish-tap` doesn't surface only when a customer tries `brew install`.
+
+```sh
+latest_tag=$(git describe --tags --abbrev=0 2>/dev/null)
+if [ -n "$latest_tag" ] && [ -f Casks/xray.rb ]; then
+    cask_version=$(sed -nE 's/^  version "([^"]+)".*$/\1/p' Casks/xray.rb | head -1)
+    if [ -n "$cask_version" ] && [ "v${cask_version}" != "$latest_tag" ]; then
+        printf 'WARN: Casks/xray.rb is at v%s but latest tag is %s.\n' "$cask_version" "$latest_tag"
+        printf '      Run /publish-tap %s to land the brew Cask + Scoop manifest.\n' "$latest_tag"
+    fi
+fi
+if [ -n "$latest_tag" ] && [ -f bucket/xray.json ]; then
+    scoop_version=$(awk -F'"' '/"version":/ {print $4; exit}' bucket/xray.json)
+    if [ -n "$scoop_version" ] && [ "v${scoop_version}" != "$latest_tag" ]; then
+        printf 'WARN: bucket/xray.json is at v%s but latest tag is %s.\n' "$scoop_version" "$latest_tag"
+    fi
+fi
+```
+
+Surface any WARN line in the handoff (under "Deferred", with the recovery command). Do not block on these — closing the issue still proceeds.
+
 ## Step 7: handoff
 
 Summarise to the user in two parts:

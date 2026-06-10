@@ -365,3 +365,5 @@ Goodhart
 (?i)maintainer
 (?i)maintainers
 (?i)inlined
+(?i)postflight
+(?i)idempotency
