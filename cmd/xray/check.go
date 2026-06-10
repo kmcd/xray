@@ -10,6 +10,7 @@ import (
 	"io"
 	"os/exec"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -73,6 +74,8 @@ type checkInaccessibleEnd struct {
 	Reason   string `json:"reason"`
 }
 
+const tlsHint = "     hint: corporate TLS interception — set SSL_CERT_FILE (Linux) or add CA to system keychain (macOS)"
+
 func runCheck(cmd *cobra.Command, path string, opts checkOpts) error {
 	out := cmd.OutOrStdout()
 	errOut := cmd.ErrOrStderr()
@@ -121,7 +124,7 @@ func runCheck(cmd *cobra.Command, path string, opts checkOpts) error {
 			anyFail = true
 			fmt.Fprintf(errOut, "FAIL %-16s %v\n", c.Name(), err)
 			if isTLSCertError(err) {
-				fmt.Fprintf(errOut, "     hint: corporate TLS interception — set SSL_CERT_FILE (Linux) or add CA to system keychain (macOS)\n")
+				fmt.Fprintln(errOut, tlsHint)
 			}
 			continue
 		}
@@ -152,7 +155,7 @@ func runCheck(cmd *cobra.Command, path string, opts checkOpts) error {
 			anyFail = true
 			fmt.Fprintf(errOut, "FAIL %-16s %v\n", r, err)
 			if isTLSCertError(err) {
-				fmt.Fprintf(errOut, "     hint: corporate TLS interception — set SSL_CERT_FILE (Linux) or add CA to system keychain (macOS)\n")
+				fmt.Fprintln(errOut, tlsHint)
 			}
 		} else {
 			textf(mode, out, "ok  %-16s clone access ok\n", r)
@@ -321,11 +324,20 @@ func joinComma(ss []string) string {
 }
 
 
-// isTLSCertError reports whether err is or wraps an x509.UnknownAuthorityError,
-// the signature of a corporate TLS interception CA not being trusted.
+// isTLSCertError reports whether err indicates a corporate TLS interception CA
+// not being trusted. It covers two cases:
+//   - HTTP connectors: errors.As finds x509.UnknownAuthorityError in the chain
+//     (url.Error → tls.CertificateVerificationError → x509.UnknownAuthorityError)
+//   - Git subprocess: the x509 type never reaches Go's error chain; instead the
+//     error string carries git/OpenSSL's TLS failure markers
 func isTLSCertError(err error) bool {
 	var uae x509.UnknownAuthorityError
-	return errors.As(err, &uae)
+	if errors.As(err, &uae) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "SSL certificate problem") ||
+		strings.Contains(msg, "certificate verify failed")
 }
 
 func humanCount(n int) string {

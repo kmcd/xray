@@ -14,7 +14,7 @@ import (
 
 func TestIsTLSCertError(t *testing.T) {
 	uae := x509.UnknownAuthorityError{}
-	// Wrapping chain: url.Error → fmt.Errorf %w → x509.UnknownAuthorityError
+	// HTTP connector path: url.Error → tls.CertificateVerificationError (via %w) → x509.UnknownAuthorityError
 	wrapped := &url.Error{Op: "Get", URL: "https://api.github.com", Err: fmt.Errorf("TLS: %w", uae)}
 
 	if !isTLSCertError(uae) {
@@ -23,11 +23,26 @@ func TestIsTLSCertError(t *testing.T) {
 	if !isTLSCertError(wrapped) {
 		t.Error("isTLSCertError(url.Error wrapping UnknownAuthorityError) = false, want true")
 	}
+
+	// Git subprocess path: x509 type never reaches Go error chain; TLS failure in string
+	gitSSLErr := errors.New("git ls-remote --exit-code https://github.com/org/repo.git HEAD: exit status 128: fatal: unable to access 'https://github.com/org/repo.git/': SSL certificate problem: unable to get local issuer certificate")
+	if !isTLSCertError(gitSSLErr) {
+		t.Error("isTLSCertError(git SSL certificate problem) = false, want true")
+	}
+	gitVerifyErr := errors.New("git ls-remote: exit status 128: OpenSSL: error:1416F086:SSL routines:tls_process_server_certificate:certificate verify failed")
+	if !isTLSCertError(gitVerifyErr) {
+		t.Error("isTLSCertError(git certificate verify failed) = false, want true")
+	}
+
+	// Negative cases
 	if isTLSCertError(errors.New("connection refused")) {
 		t.Error("isTLSCertError(connection refused) = true, want false")
 	}
 	if isTLSCertError(errors.New("x509: certificate has expired")) {
 		t.Error("isTLSCertError(unrelated x509 string) = true, want false")
+	}
+	if isTLSCertError(errors.New("401 Unauthorized")) {
+		t.Error("isTLSCertError(401) = true, want false")
 	}
 }
 

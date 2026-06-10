@@ -78,6 +78,16 @@ ok  kmcd/foo         clone access ok
 ok  kmcd/bar         clone access ok
 ```
 
+When a connector ping or clone access check fails with a certificate
+verification error, `xray check` appends a one-line hint:
+
+```
+FAIL github           x509: certificate signed by unknown authority
+     hint: corporate TLS interception — set SSL_CERT_FILE (Linux) or add CA to system keychain (macOS)
+```
+
+See [docs/enterprise.md](./enterprise.md) for the full CA bundle setup.
+
 ### `xray run`
 
 Full extraction. Runs `check` first; on success, clones repos, extracts data
