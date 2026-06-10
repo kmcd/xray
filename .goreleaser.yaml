@@ -79,18 +79,21 @@ release:
   draft: false
   prerelease: auto
 
-# Formula and manifest are committed to this same repo (no separate
-# kmcd/homebrew-xray / kmcd/scoop-xray repos). GoReleaser pushes both
-# files on tag-release using the release workflow's GITHUB_TOKEN; the
-# push target is `main`, so `main` branch-protection must allow the
-# github-actions[bot] actor to bypass required reviews. If the push is
-# blocked, switch `branch:` to a dedicated `dist-homebrew` /
-# `dist-scoop` branch and update README install commands to add
-# `--branch <name>` to the `brew tap` line.
+# homebrew_casks and scoops use `skip_upload: true`: GoReleaser renders the
+# Cask + manifest into the workflow's local dist/ but does NOT try to push
+# them to this repo. The push is handled out-of-band by scripts/publish-tap.sh
+# (driven by the `/publish-tap` skill) running under the maintainer's admin
+# identity, which bypasses `main` branch protection. The `github-actions[bot]`
+# actor on a personal repo cannot be added as a Ruleset bypass actor
+# (org-only feature), so this two-step flow replaces the conventional
+# bot-push pattern. The `repository:` block is retained so a future
+# org-migration can flip `skip_upload` back to false without recomputing
+# tap content.
 homebrew_casks:
   - name: xray
     binaries:
       - xray
+    skip_upload: true
     repository:
       owner: kmcd
       name: xray
@@ -103,7 +106,8 @@ homebrew_casks:
     description: Read-only extractor for engineering metrics — git, GitHub, CI, observability — into a portable .tar.gz
 
 scoops:
-  - repository:
+  - skip_upload: true
+    repository:
       owner: kmcd
       name: xray
       token: "{{ .Env.GITHUB_TOKEN }}"

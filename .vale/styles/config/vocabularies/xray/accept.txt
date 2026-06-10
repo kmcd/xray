@@ -360,3 +360,8 @@ in_progress
 (?i)revive
 (?i)untracked
 Goodhart
+(?i)ruleset
+(?i)rulesets
+(?i)maintainer
+(?i)maintainers
+(?i)inlined
