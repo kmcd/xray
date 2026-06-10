@@ -6,6 +6,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-06-10
+
+`schema_version` stays at 2. First-customer-polish release: default config path on the CLI, three-layer code-quality sensors, SLSA L3 provenance + branch-protection audit, consultant-side engagement guide, Trust-first README re-order, and replacement install paths (brew Cask tap / `install.sh` / Scoop bucket) for the previous `curl … | tar -xz` snippet.
+
 ### CLI
 
 - **default config arg.** `xray validate`, `xray check`, and `xray run` now default the positional config argument to `./xray.toml` when omitted, matching the convention of `cargo`, `terraform`, and `npm`. Explicit paths still work. When the default is used and the file is absent, the error is specific: ``xray.toml not found in current directory; pass a path or run `xray init` ``. ([#96])
