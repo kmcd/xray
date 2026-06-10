@@ -67,8 +67,11 @@ gives the binary the same access the operator could exercise via the
 - repositories the token does not cover (the GitHub API enforces this)
 - write methods (per provider's API: the methods require write scope;
   per the customer's review: the token can be scoped read-only)
-- the customer's other secrets on disk (the binary reads only the
-  config file path passed on the command line)
+- the customer's other secrets on disk (the binary reads the
+  config file passed on the command line and, within each cloned
+  repo, declared configuration and tooling manifests — workflow
+  YAML, dependency manifests, harness config files; never
+  application logic)
 
 This is why we recommend a fine-grained, read-only token. With a
 read-only token, a compromised binary cannot mutate anything on the

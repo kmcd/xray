@@ -13,7 +13,8 @@ artifact once it arrives.
 
 Tone is procedural. Numbered steps where order matters, bullets where
 it does not. The privacy posture — team-level only, no individual
-rankings, no source content — applies end-to-end through every section.
+rankings, no application logic read or stored — applies end-to-end
+through every section.
 
 ## 1. Receiving the artifact
 

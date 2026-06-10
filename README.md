@@ -9,10 +9,10 @@
 
 **xray** is a read-only extractor that produces a portable engineering-metrics artifact from a client's git, GitHub, CI, and error-tracker systems.
 
-- **Captures**: commits, PRs, reviews, CI runs, deploys, incidents — structural data, no source content.
+- **Captures**: commits, PRs, reviews, CI runs, deploys, incidents — structural data and declared configuration / tooling manifests, never application logic.
 - **Produces**: a single `.tar.gz` (SQLite + JSON manifest) — verifiable SHA256, no secrets.
 - **Touches**: GitHub, GitHub Actions, CircleCI, Sentry, Bugsnag, Honeycomb — read-only, even when tokens hold write scope.
-- **Doesn't do**: source-content capture, per-individual rankings, daemon mode, scheduled runs.
+- **Doesn't do**: application-logic capture, per-individual rankings, daemon mode, scheduled runs.
 
 > [!IMPORTANT]
 > `xray` runs inside a customer environment against the customer's own
@@ -20,6 +20,16 @@
 > Security review: [docs/security.md](docs/security.md) ·
 > [docs/threat-model.md](docs/threat-model.md). Vulnerability
 > disclosure: [SECURITY.md](SECURITY.md).
+
+## Design
+
+xray is engineered against five non-negotiable constraints. The Trust documents below show how the implementation upholds each.
+
+- **Independent.** Runs buyer-side under the customer's operator and credentials. No vendor telemetry, no sales channel, no daemon mode.
+- **System-level over time.** Team-level and system-level granularity, enforced in the schema. No per-individual rollups anywhere.
+- **Hypothesis-anchored.** The window and connector set are chosen against a stated question; `extraction_provenance` records what was asked of every endpoint.
+- **Brackets the AI-adoption inflection.** `harness_artifacts.first_seen_at` records when each AI-tool config file (`CLAUDE.md`, `.cursor/rules`, `.github/copilot-instructions.md`) first appeared in repo history. Flow metrics join against the inflection inside one extract.
+- **Source-free.** Reads declared configuration and tooling manifests; never application logic.
 
 ## Trust
 
@@ -30,8 +40,8 @@ documents below describe what the binary does, what it cannot do, and
 what a representative run actually looks like.
 
 - [`docs/security.md`](docs/security.md) — what is captured, what is
-  not, and the guarantees the binary makes (read-only, no source
-  content, no secrets in the artifact, team-level only, logs).
+  not, and the guarantees the binary makes (read-only, no application
+  logic, no secrets in the artifact, team-level only, logs).
 - [`docs/threat-model.md`](docs/threat-model.md) — one-page trust
   boundaries, attack surface, malicious-binary and leaked-artifact
   analysis.
@@ -253,7 +263,7 @@ never stores credentials or source content in the output artifact.
 <!-- vale Microsoft.FirstPerson = NO -->
 
 **Can I run this against repositories with sensitive history?**\
-Yes. `xray` reads git metadata — SHAs, timestamps, author handles, file paths, numstat. No diff text, no commit bodies, no file content is read or stored. See the full capture inventory in [`docs/security.md`](docs/security.md#2-no-source-content-stored).
+Yes. `xray` reads git metadata — SHAs, timestamps, author handles, file paths, numstat — plus declared configuration and tooling manifests (workflow YAML, dependency manifests, AI-harness config files). It never reads application logic. No diff text, no commit bodies, no application source is read or stored. See the full capture inventory in [`docs/security.md`](docs/security.md#2-no-source-content-stored).
 
 **What if a provider returns 403 on a required endpoint?**\
 The endpoint records `accessible: false` with the reason and emits no rows. The analyser treats absence as *unknown*, not *no signal* — a critical distinction for analyses that depend on data presence. The run continues. See [`docs/security.md`](docs/security.md#7-failure-modes-for-security-review).
