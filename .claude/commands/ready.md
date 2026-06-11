@@ -47,6 +47,8 @@ Then run the same-class scan — don't just make this instance go away, apply th
 - Grep for other instances of that shape. Use actual identifiers (sibling connector names, sibling model fields) rather than relying on memory.
 - For every peer that has the same shape: fix it in this commit when small, file a tracking issue when not, name it in the handoff when out of scope.
 
+See [`class-scan`](.claude/commands/class-scan.md) for the standalone version — run at plan time before writing the fix; this Step 4 pass catches drift between planned scope and what the diff actually covers.
+
 ## Step 5: docs
 
 Skip for pure bug fixes or refactors with no user-visible behaviour change. Otherwise:
@@ -60,7 +62,14 @@ Fix any gaps. Do not just report them.
 
 ## Step 6: smoke (for empirically-measurable changes)
 
-If the issue's value is empirically measurable — behaviour changes, anything where "did this actually work?" cannot be answered by unit tests alone — run a smoke against `goreleaser/chglog` (`/private/tmp/xray-smoke-chglog/chglog.toml`, 12-month window) before declaring done. Gates green + push are necessary but not sufficient; closing without smoke has shipped premature claims.
+**Skip mechanically when the diff is docs-only.** Run `git diff --name-only HEAD` (or `origin/main...HEAD` for the issue's full commit range). If every path matches a docs-class predicate below, skip this step and proceed to Step 7. The predicate is mechanical — no judgment about whether tests cover the behaviour.
+
+Docs-class paths:
+- `docs/`, `tmp/`, `.claude/`
+- Top-level `*.md` (`README.md`, `CHANGELOG.md`, `CLAUDE.md`, `AGENTS.md`)
+- Repo metadata (`LICENSE`, `CONTRIBUTING*`, `SECURITY*`, `CODE_OF_CONDUCT*`, `.gitignore`)
+
+Otherwise — if the issue's value is empirically measurable, behaviour changes, anything where "did this actually work?" cannot be answered by unit tests alone — run a smoke against `goreleaser/chglog` (`/private/tmp/xray-smoke-chglog/chglog.toml`, 12-month window) before declaring done. Gates green + push are necessary but not sufficient; closing without smoke has shipped premature claims.
 
 **Smoke target.** `/ready` always uses `goreleaser/chglog` — small, fast (~10 s), and exercises every connector code path. Do **not** use `posthog/posthog` in `/ready` (that is reserved for performance benchmarking on `type:perf` issues, run separately). Do **not** use the `xray` repo itself as a smoke target.
 
@@ -69,8 +78,9 @@ Build a fresh `/tmp/xray` from `HEAD`, run the smoke, and compare:
 - The verbose log for new `WARN` or `ERROR` lines.
 - Wall-clock if relevant to the issue's claim (for code paths only; performance comparisons against larger targets are out of `/ready` scope).
 
-Skip when:
-- The change is pure refactor / docs / test-only and unit tests cover the behaviour completely.
+Also skip when:
+- The Go diff is comments-only — verify with `git diff HEAD -- '*.go'`; if the only hunks are inside `//` or `/* */` blocks, treat as docs-class.
+- The change is pure refactor or test-only and unit tests cover the behaviour completely.
 - The change is type-system / surface (e.g. renaming a public identifier) with no runtime path touched.
 
 If the smoke reveals a regression, **do not close the issue**. Fix forward in the same session.
