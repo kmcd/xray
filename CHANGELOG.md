@@ -10,6 +10,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 - **`xray check` and `xray extract` use the configured GitHub token for clone access.** Previously the token in `[connectors.github]` authenticated the API but not the `git ls-remote` / `git clone` calls, so an SSH-default operator (the recommended `gh auth login` choice) saw `ok github` on the API check and `FAIL <repo>     fatal: could not read Username for 'https://github.com'` on the very next clone-access line. xray now installs an inline git credential helper, scoped to `https://github.com` via the per-URL `credential.<url>.helper` config namespace so it never answers prompts for any other host (submodule, redirect, future code path). The token is passed in the subprocess env (`XRAY_GIT_TOKEN`), with leak vectors scrubbed before launch: any inherited `XRAY_GIT_TOKEN`, `GIT_TRACE*` / `GIT_CURL_VERBOSE` (which would echo the Basic-auth header to stderr), and `GIT_ASKPASS` / `SSH_ASKPASS` (which would otherwise provide a GUI / TTY fallback) are removed. The token value never enters argv or the gitcli debug log; no global git configuration change required on the host. ([#137])
 
+### Install
+
+- **Homebrew tap migrated from Cask to Formula.** A CLI binary belongs in a Formula (`Formula/xray.rb`, installed via `bin.install`), not a Cask (which targets macOS GUI apps and `.pkg` / `.dmg` installers). The Formula drops the Gatekeeper-xattr postflight the Cask carried; binaries brew downloads via curl don't receive the `com.apple.quarantine` attribute, and CLI binaries living under `$HOMEBREW_PREFIX/bin/` aren't gated by Gatekeeper at launch. The user-visible install command stays `brew install kmcd/xray/xray`. `.goreleaser.yaml` swaps the `homebrew_casks:` stanza for `brews:`; `scripts/publish-tap.sh` renders `Formula/xray.rb` instead of `Casks/xray.rb`.
+
 [#137]: https://github.com/kmcd/xray/issues/137
 
 ## [0.4.2] — 2026-06-11

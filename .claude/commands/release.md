@@ -2,7 +2,7 @@
 
 Cut a release end-to-end: roll the CHANGELOG, bump the README compatibility
 table, commit, tag, push, wait for CI to ship binaries + SLSA + cosign, run
-`/publish-tap` to land the brew Cask + Scoop manifest, smoke `brew install`
+`/publish-tap` to land the brew Formula + Scoop manifest, smoke `brew install`
 on this Mac, and report.
 
 ## Usage
@@ -16,10 +16,9 @@ optionally `-rcN` / `-betaN` suffix).
 
 The four-step ritual (`tag → push → wait → /publish-tap`) is correct but
 forgets gracefully. After cutting v0.4.0 we hit two gaps: SLSA L3 regressed
-silently when goreleaser exited non-zero on the bot-push step, and the Cask
-template missed the macOS Gatekeeper postflight on the first attempt. Both
-were caught in real time only because someone was watching. This skill bakes
-in the watching.
+silently when goreleaser exited non-zero on the bot-push step, and a tap
+template gap shipped without smoke catching it. Both were caught in real
+time only because someone was watching. This skill bakes in the watching.
 
 ## Step 1: Pre-flight
 
@@ -135,7 +134,7 @@ On success: proceed.
 scripts/publish-tap.sh vX.Y.Z
 ```
 
-The script renders `Casks/xray.rb` + `bucket/xray.json` with the real
+The script renders `Formula/xray.rb` + `bucket/xray.json` with the real
 CI-built sha256s, pathspec-commits, and pushes. It's idempotent — re-running
 when nothing changed exits 0 with a "no-op" message.
 
@@ -145,21 +144,21 @@ is fixed.
 
 ## Step 9: Smoke
 
-Verify the published Cask actually installs and runs end-to-end:
+Verify the published Formula actually installs and runs end-to-end:
 
 ```
 brew untap kmcd/xray 2>/dev/null
-brew uninstall --cask xray 2>/dev/null
+brew uninstall xray 2>/dev/null
 brew tap kmcd/xray https://github.com/kmcd/xray
 brew install kmcd/xray/xray
 xray version
 ```
 
 Assert the `xray version` output's version string matches `X.Y.Z`. On
-mismatch (wrong version, Gatekeeper kill, install error): surface the full
-brew output + the `xray version` exit code and stop. The release tag and
-binaries are published — recovery is via `/publish-tap` after fixing the
-Cask template, then re-running the smoke manually.
+mismatch (wrong version, install error): surface the full brew output +
+the `xray version` exit code and stop. The release tag and binaries are
+published — recovery is via `/publish-tap` after fixing the Formula
+template, then re-running the smoke manually.
 
 Scoop smoke is out of scope (no Windows VM wired up locally). The manifest
 is byte-checkable against goreleaser's snapshot output if needed.
@@ -169,7 +168,7 @@ is byte-checkable against goreleaser's snapshot output if needed.
 Surface to the user:
 
 - **Release page**: `https://github.com/kmcd/xray/releases/tag/vX.Y.Z`
-- **Cask file**: `https://github.com/kmcd/xray/blob/main/Casks/xray.rb`
+- **Formula file**: `https://github.com/kmcd/xray/blob/main/Formula/xray.rb`
 - **Scoop manifest**: `https://github.com/kmcd/xray/blob/main/bucket/xray.json`
 - **Smoke output**: the `xray version` line, verbatim.
 - **Wall-clock**: total time from `/release` invocation to here.
@@ -185,7 +184,7 @@ stopped:
   edit if it's already there.
 - Tag: `git tag -l vX.Y.Z` non-empty → skip tag creation.
 - Tag push: `git ls-remote origin refs/tags/vX.Y.Z` non-empty → skip push.
-- publish-tap: idempotent already (no-op when Cask matches).
+- publish-tap: idempotent already (no-op when Formula matches).
 
 The smoke step always re-runs. It's the only end-to-end check; it should
 catch anything the upstream steps missed.

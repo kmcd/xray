@@ -79,9 +79,9 @@ release:
   draft: false
   prerelease: auto
 
-# homebrew_casks and scoops use `skip_upload: true`: GoReleaser renders the
-# Cask + manifest into the workflow's local dist/ but does NOT try to push
-# them to this repo. The push is handled out-of-band by scripts/publish-tap.sh
+# brews and scoops use `skip_upload: true`: GoReleaser renders the Formula +
+# manifest into the workflow's local dist/ but does NOT try to push them to
+# this repo. The push is handled out-of-band by scripts/publish-tap.sh
 # (driven by the `/publish-tap` skill) running under the maintainer's admin
 # identity, which bypasses `main` branch protection. The `github-actions[bot]`
 # actor on a personal repo cannot be added as a Ruleset bypass actor
@@ -89,21 +89,24 @@ release:
 # bot-push pattern. The `repository:` block is retained so a future
 # org-migration can flip `skip_upload` back to false without recomputing
 # tap content.
-homebrew_casks:
+brews:
   - name: xray
-    binaries:
-      - xray
     skip_upload: true
     repository:
       owner: kmcd
       name: xray
       token: "{{ .Env.GITHUB_TOKEN }}"
-    directory: Casks
+    directory: Formula
     commit_author:
       name: goreleaser-bot
       email: goreleaser-bot@users.noreply.github.com
     homepage: https://github.com/kmcd/xray
     description: Read-only extractor for engineering metrics — git, GitHub, CI, observability — into a portable .tar.gz
+    license: Apache-2.0
+    install: |
+      bin.install "xray"
+    test: |
+      assert_match version.to_s, shell_output("#{bin}/xray version")
 
 scoops:
   - skip_upload: true
