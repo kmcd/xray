@@ -33,6 +33,7 @@ type Connector struct {
 	rest       *gh.Client
 	gql        *githubv4.Client
 	git        *gitcli.Client
+	rl         *ratelimit.Transport
 
 	// graphqlURL is the endpoint enrichCommits POSTs to. Held separately
 	// because the batched-alias query is built as a raw string rather than
@@ -135,6 +136,14 @@ func (c *Connector) SetCaptureHarnessContent(v bool) {
 // Name returns the connector name as recorded in extraction provenance.
 func (c *Connector) Name() string { return "github" }
 
+// BudgetSnapshot returns the current rate-limit budget for this connector.
+func (c *Connector) BudgetSnapshot() map[string]ratelimit.BudgetState {
+	if c.rl == nil {
+		return nil
+	}
+	return c.rl.Snapshot()
+}
+
 // New constructs a Connector with the supplied config and logger.
 //
 // The logger may be nil; a discarding logger is substituted. The returned
@@ -153,18 +162,13 @@ func New(cfg config.GitHubConn, log *slog.Logger) (*Connector, error) {
 	// oauth2.NewClient sets an oauth2.Transport whose Base is the default
 	// transport. Wrap that base with our retry transport so retries happen
 	// after the token has been attached.
+	rl := &ratelimit.Transport{Policy: ratelimit.DefaultPolicy(), Log: log}
 	if tr, ok := httpClient.Transport.(*oauth2.Transport); ok {
-		tr.Base = &ratelimit.Transport{
-			Base:   tr.Base,
-			Policy: ratelimit.DefaultPolicy(),
-			Log:    log,
-		}
+		rl.Base = tr.Base
+		tr.Base = rl
 	} else {
-		httpClient.Transport = &ratelimit.Transport{
-			Base:   httpClient.Transport,
-			Policy: ratelimit.DefaultPolicy(),
-			Log:    log,
-		}
+		rl.Base = httpClient.Transport
+		httpClient.Transport = rl
 	}
 
 	c := &Connector{
@@ -175,6 +179,7 @@ func New(cfg config.GitHubConn, log *slog.Logger) (*Connector, error) {
 		git:           &gitcli.Client{Log: log},
 		templateCache: map[string]*template{},
 		prefetchData:  map[string]*prPrefetchResult{},
+		rl:            rl,
 	}
 
 	// Wrap the outermost transport with the costInterceptor so every GraphQL

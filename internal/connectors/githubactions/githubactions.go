@@ -18,6 +18,7 @@ type Connector struct {
 	cfg    config.GitHubActionsConn
 	log    *slog.Logger
 	client *github.Client
+	rl     *ratelimit.Transport
 }
 
 // Config is an alias exported for symmetry with other connectors.
@@ -36,22 +37,17 @@ func New(cfg config.GitHubActionsConn, log *slog.Logger) (*Connector, error) {
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: cfg.Token})
 	base := oauth2.NewClient(context.Background(), ts)
 	// Wrap the underlying transport with the shared rate-limit/retry helper.
-	var underlying = http.DefaultTransport
+	rl := &ratelimit.Transport{Policy: ratelimit.DefaultPolicy(), Log: log}
 	if t, ok := base.Transport.(*oauth2.Transport); ok {
 		if t.Base != nil {
-			underlying = t.Base
+			rl.Base = t.Base
+		} else {
+			rl.Base = http.DefaultTransport
 		}
-		t.Base = &ratelimit.Transport{
-			Base:   underlying,
-			Policy: ratelimit.DefaultPolicy(),
-			Log:    log,
-		}
+		t.Base = rl
 	} else {
-		base.Transport = &ratelimit.Transport{
-			Base:   base.Transport,
-			Policy: ratelimit.DefaultPolicy(),
-			Log:    log,
-		}
+		rl.Base = base.Transport
+		base.Transport = rl
 	}
 
 	gh := github.NewClient(base)
@@ -60,8 +56,17 @@ func New(cfg config.GitHubActionsConn, log *slog.Logger) (*Connector, error) {
 		cfg:    cfg,
 		log:    log,
 		client: gh,
+		rl:     rl,
 	}, nil
 }
 
 // Name implements connector.Connector.
 func (c *Connector) Name() string { return "github_actions" }
+
+// BudgetSnapshot returns the current rate-limit budget for this connector.
+func (c *Connector) BudgetSnapshot() map[string]ratelimit.BudgetState {
+	if c.rl == nil {
+		return nil
+	}
+	return c.rl.Snapshot()
+}

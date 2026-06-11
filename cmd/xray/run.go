@@ -16,6 +16,7 @@ import (
 	"github.com/kmcd/xray/internal/config"
 	"github.com/kmcd/xray/internal/connector"
 	"github.com/kmcd/xray/internal/progress"
+	"github.com/kmcd/xray/internal/ratelimit"
 	"github.com/kmcd/xray/internal/run"
 )
 
@@ -202,8 +203,44 @@ func buildProgressSink(
 		f := stdout.(*os.File)
 		tty := progress.NewTTYSink(f)
 		tty.Plan(cfg.AllRepos(), connectorNames(connectors), workers)
+		tty.SetBudgetSource(buildBudgetSource(connectors))
 		tty.Start(ctx)
 		return tty, tty.Stop
+	}
+}
+
+// budgetSnapshotter is the optional interface a connector may implement to
+// expose its underlying ratelimit.Transport snapshot. TTYSink polls this
+// on each tick to render a live per-connector budget readout.
+type budgetSnapshotter interface {
+	BudgetSnapshot() map[string]ratelimit.BudgetState
+}
+
+// buildBudgetSource builds a progress.BudgetSource that aggregates snapshots
+// from all connectors that implement budgetSnapshotter.
+func buildBudgetSource(connectors []connector.Connector) progress.BudgetSource {
+	var sources []budgetSnapshotter
+	for _, c := range connectors {
+		if bs, ok := c.(budgetSnapshotter); ok {
+			sources = append(sources, bs)
+		}
+	}
+	if len(sources) == 0 {
+		return nil
+	}
+	return func() map[string]progress.BudgetEntry {
+		out := make(map[string]progress.BudgetEntry)
+		for _, s := range sources {
+			for k, v := range s.BudgetSnapshot() {
+				out[k] = progress.BudgetEntry{
+					Remaining:    v.Remaining,
+					HasRemaining: v.HasRemaining,
+					Limit:        v.Limit,
+					ResetAt:      v.ResetAt,
+				}
+			}
+		}
+		return out
 	}
 }
 

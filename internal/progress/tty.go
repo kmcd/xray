@@ -33,9 +33,10 @@ type TTYSink struct {
 	stop chan struct{}
 	done chan struct{}
 
-	tick   time.Duration
-	nowFn  func() time.Time
-	closed bool
+	tick         time.Duration
+	nowFn        func() time.Time
+	closed       bool
+	budgetSource BudgetSource
 }
 
 type cellKey struct{ repo, conn string }
@@ -68,6 +69,15 @@ func NewTTYSink(w io.Writer) *TTYSink {
 		tick:  200 * time.Millisecond,
 		nowFn: time.Now,
 	}
+}
+
+// SetBudgetSource wires a rate-limit snapshot function. The function is
+// called on each redraw tick while holding s.mu; it must not block or
+// acquire s.mu itself. Nil disables budget display (default).
+func (s *TTYSink) SetBudgetSource(fn BudgetSource) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.budgetSource = fn
 }
 
 // Plan pre-registers the full (repo × connector) grid so every cell
@@ -270,7 +280,76 @@ func (s *TTYSink) render(now time.Time) string {
 		}
 		b.WriteString("\n")
 	}
+	s.renderBudgets(&b, now)
 	return b.String()
+}
+
+// renderBudgets appends per-connector budget lines below the grid when a
+// BudgetSource has been set and returns data. Called under s.mu.
+func (s *TTYSink) renderBudgets(b *strings.Builder, now time.Time) {
+	if s.budgetSource == nil {
+		return
+	}
+	m := s.budgetSource()
+	if len(m) == 0 {
+		return
+	}
+
+	names := make([]string, 0, len(m))
+	for k, st := range m {
+		if !st.HasRemaining && st.Limit == 0 && st.ResetAt.IsZero() {
+			continue
+		}
+		names = append(names, k)
+	}
+	if len(names) == 0 {
+		return
+	}
+	sort.Strings(names)
+
+	nameW := 0
+	for _, n := range names {
+		if v := visualLen(n); v > nameW {
+			nameW = v
+		}
+	}
+
+	b.WriteString("\n")
+	for _, name := range names {
+		st := m[name]
+		var ratio string
+		switch {
+		case st.HasRemaining && st.Limit > 0:
+			ratio = fmt.Sprintf("%d/%d", st.Remaining, st.Limit)
+		case st.HasRemaining:
+			ratio = fmt.Sprintf("%d/?", st.Remaining)
+		case st.Limit > 0:
+			ratio = fmt.Sprintf("?/%d", st.Limit)
+		default:
+			ratio = "?"
+		}
+		fmt.Fprintf(b, "%-*s  %-11s  %s\n", nameW, name, ratio, humanResetTTL(st.ResetAt, now))
+	}
+}
+
+// humanResetTTL formats the time remaining until a rate-limit reset.
+func humanResetTTL(t time.Time, now time.Time) string {
+	if t.IsZero() {
+		return "resets —"
+	}
+	d := t.Sub(now)
+	if d <= 0 {
+		return "resets now"
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("resets %ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("resets %dm", int(d.Minutes()))
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	return fmt.Sprintf("resets %dh%02dm", h, m)
 }
 
 func (s *TTYSink) headerLine(now time.Time) string {

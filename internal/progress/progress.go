@@ -54,3 +54,17 @@ type Event struct {
 func (e Event) IsTransition() bool {
 	return e.Kind != PhaseProgress
 }
+
+// BudgetEntry is a per-connector rate-limit budget snapshot. It mirrors
+// ratelimit.BudgetState to avoid a circular import (ratelimit imports progress).
+type BudgetEntry struct {
+	Remaining    int
+	HasRemaining bool
+	Limit        int
+	ResetAt      time.Time
+}
+
+// BudgetSource is a function that returns the current rate-limit budget
+// per connector name. TTYSink calls it on each redraw tick. Nil when no
+// transport reference is available (non-TTY modes never set it).
+type BudgetSource func() map[string]BudgetEntry

@@ -19,6 +19,7 @@ type Connector struct {
 	token      string
 	baseURL    string
 	projects   map[string]string // circleci project slug -> repo slug
+	rl         *ratelimit.Transport
 }
 
 // Config is the connector's input. BaseURL is exposed only for tests.
@@ -34,20 +35,28 @@ func New(cfg config.CircleCIConn, log *slog.Logger) (*Connector, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	client := &http.Client{
-		Transport: &ratelimit.Transport{
-			Base:   http.DefaultTransport,
-			Policy: ratelimit.DefaultPolicy(),
-			Log:    log,
-		},
+	rl := &ratelimit.Transport{
+		Base:   http.DefaultTransport,
+		Policy: ratelimit.DefaultPolicy(),
+		Log:    log,
 	}
+	client := &http.Client{Transport: rl}
 	return &Connector{
 		httpClient: client,
 		log:        log,
 		token:      cfg.Token,
 		baseURL:    DefaultBaseURL,
 		projects:   cfg.Projects,
+		rl:         rl,
 	}, nil
+}
+
+// BudgetSnapshot returns the current rate-limit budget for this connector.
+func (c *Connector) BudgetSnapshot() map[string]ratelimit.BudgetState {
+	if c.rl == nil {
+		return nil
+	}
+	return c.rl.Snapshot()
 }
 
 // Name returns the stable connector name used in `source` columns and the

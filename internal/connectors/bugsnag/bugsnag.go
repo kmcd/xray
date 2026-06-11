@@ -27,6 +27,7 @@ type Connector struct {
 	// projects by ID; the value the operator pastes in the map key is the
 	// project ID from Bugsnag's URL or API.
 	projects map[string]string
+	rl       *ratelimit.Transport
 }
 
 // Config is the connector's input. BaseURL is exposed only for tests.
@@ -41,25 +42,33 @@ func New(cfg config.BugsnagConn, log *slog.Logger) (*Connector, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	client := &http.Client{
-		Transport: &ratelimit.Transport{
-			Base:   http.DefaultTransport,
-			Policy: ratelimit.DefaultPolicy(),
-			Log:    log,
-		},
+	rl := &ratelimit.Transport{
+		Base:   http.DefaultTransport,
+		Policy: ratelimit.DefaultPolicy(),
+		Log:    log,
 	}
+	client := &http.Client{Transport: rl}
 	return &Connector{
 		httpClient: client,
 		log:        log,
 		token:      cfg.Token,
 		baseURL:    DefaultBaseURL,
 		projects:   cfg.Projects,
+		rl:         rl,
 	}, nil
 }
 
 // Name returns the stable connector name used in `source` columns and the
 // manifest's `extraction_provenance` entries.
 func (c *Connector) Name() string { return "bugsnag" }
+
+// BudgetSnapshot returns the current rate-limit budget for this connector.
+func (c *Connector) BudgetSnapshot() map[string]ratelimit.BudgetState {
+	if c.rl == nil {
+		return nil
+	}
+	return c.rl.Snapshot()
+}
 
 // authHeader attaches Bugsnag's auth headers to a request. All Data Access
 // API requests use these headers, including /user used for Ping.

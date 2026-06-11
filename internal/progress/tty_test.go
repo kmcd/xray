@@ -181,3 +181,135 @@ func TestTruncate(t *testing.T) {
 		t.Errorf("truncate long got %q", got)
 	}
 }
+
+func TestHumanResetTTL(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		reset time.Time
+		want  string
+	}{
+		{time.Time{}, "resets —"},
+		{now.Add(-time.Second), "resets now"},
+		{now, "resets now"},
+		{now.Add(45 * time.Second), "resets 45s"},
+		{now.Add(28 * time.Minute), "resets 28m"},
+		{now.Add(4 * time.Minute), "resets 4m"},
+		{now.Add(90 * time.Minute), "resets 1h30m"},
+		{now.Add(65 * time.Minute), "resets 1h05m"},
+	}
+	for _, c := range cases {
+		got := humanResetTTL(c.reset, now)
+		if got != c.want {
+			t.Errorf("humanResetTTL(%v) = %q, want %q", c.reset, got, c.want)
+		}
+	}
+}
+
+func TestTTYSink_RenderBudgets_Basic(t *testing.T) {
+	s, _ := newTestTTY()
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	s.nowFn = func() time.Time { return now }
+	s.Plan([]string{"a/b"}, []string{"github", "sentry"}, 1)
+	s.started = now
+	s.SetBudgetSource(func() map[string]BudgetEntry {
+		return map[string]BudgetEntry{
+			"github": {Remaining: 4213, HasRemaining: true, Limit: 5000, ResetAt: now.Add(28 * time.Minute)},
+			"sentry": {Remaining: 870, HasRemaining: true, Limit: 1000, ResetAt: now.Add(4 * time.Minute)},
+		}
+	})
+
+	out := s.render(now)
+	for _, want := range []string{
+		"github", "4213/5000", "resets 28m",
+		"sentry", "870/1000", "resets 4m",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in:\n%s", want, out)
+		}
+	}
+	// github must appear before sentry (sorted)
+	if gi, si := strings.Index(out, "4213/5000"), strings.Index(out, "870/1000"); gi > si {
+		t.Errorf("expected github before sentry in budget section")
+	}
+}
+
+func TestTTYSink_RenderBudgets_Empty(t *testing.T) {
+	s, _ := newTestTTY()
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	s.nowFn = func() time.Time { return now }
+	s.Plan([]string{"a/b"}, []string{"github"}, 1)
+	s.started = now
+
+	// No budget source set — frame must be identical to baseline.
+	baseline := s.render(now)
+	s.SetBudgetSource(func() map[string]BudgetEntry { return nil })
+	withNil := s.render(now)
+	s.SetBudgetSource(func() map[string]BudgetEntry { return map[string]BudgetEntry{} })
+	withEmpty := s.render(now)
+
+	if baseline != withNil {
+		t.Errorf("nil source changed render output")
+	}
+	if baseline != withEmpty {
+		t.Errorf("empty source changed render output")
+	}
+}
+
+func TestTTYSink_RenderBudgets_PartialFields(t *testing.T) {
+	s, _ := newTestTTY()
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	s.nowFn = func() time.Time { return now }
+	s.Plan([]string{"a/b"}, []string{"github"}, 1)
+	s.started = now
+	s.SetBudgetSource(func() map[string]BudgetEntry {
+		return map[string]BudgetEntry{
+			"github": {HasRemaining: false, Limit: 5000, ResetAt: time.Time{}},
+		}
+	})
+
+	out := s.render(now)
+	if !strings.Contains(out, "?/5000") {
+		t.Errorf("expected ?/5000 for HasRemaining=false, got:\n%s", out)
+	}
+	if !strings.Contains(out, "resets —") {
+		t.Errorf("expected 'resets —' for zero ResetAt, got:\n%s", out)
+	}
+}
+
+func TestTTYSink_RenderBudgets_ResetInPast(t *testing.T) {
+	s, _ := newTestTTY()
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	s.nowFn = func() time.Time { return now }
+	s.Plan([]string{"a/b"}, []string{"github"}, 1)
+	s.started = now
+	s.SetBudgetSource(func() map[string]BudgetEntry {
+		return map[string]BudgetEntry{
+			"github": {Remaining: 100, HasRemaining: true, Limit: 5000, ResetAt: now.Add(-30 * time.Second)},
+		}
+	})
+
+	out := s.render(now)
+	if !strings.Contains(out, "resets now") {
+		t.Errorf("expected 'resets now' for past ResetAt, got:\n%s", out)
+	}
+}
+
+func TestTTYSink_RenderBudgets_SkipsNoInfo(t *testing.T) {
+	s, _ := newTestTTY()
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	s.nowFn = func() time.Time { return now }
+	s.Plan([]string{"a/b"}, []string{"github"}, 1)
+	s.started = now
+
+	baseline := s.render(now)
+	s.SetBudgetSource(func() map[string]BudgetEntry {
+		// Entry with no useful data — all zero.
+		return map[string]BudgetEntry{
+			"github": {HasRemaining: false, Limit: 0, ResetAt: time.Time{}},
+		}
+	})
+	out := s.render(now)
+	if baseline != out {
+		t.Errorf("all-zero budget entry changed render output:\n%s", out)
+	}
+}
