@@ -6,6 +6,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-06-11
+
+`schema_version` stays at 2. Operator-experience release: `xray check` now emits actionable hints for the two cryptic git errors first-customer environments hit (TLS interception, missing HTTPS credentials for `github.com`); `docs/enterprise.md` consolidates the proxy / custom CA / firewall-allowlist story for security-team reviews; and v0.4.x configuration foot-guns surfaced during engagements get corrected (CircleCI projects map required, Bugsnag project IDs not slugs, `xray init --org` documented as non-optional).
+
 ### CLI
 
 - **`--version` flag.** `xray --version` (and `-v`) now print the same line as `xray version` and exit 0. The `version` subcommand is kept. ([#131])
