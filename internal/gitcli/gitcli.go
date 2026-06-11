@@ -15,12 +15,18 @@ import (
 	"time"
 )
 
-// Client is a thin wrapper around the system git binary. The GitHub token
-// in xray's config is used for API access only; clone relies on the user's
-// ambient git authentication (SSH, credential helper, gh CLI, etc.).
+// Client is a thin wrapper around the system git binary. If GitHubToken is
+// set, Clone and LsRemote authenticate to github.com using that token via an
+// inline credential helper: the token value is passed in the subprocess env
+// as XRAY_GIT_TOKEN and read by the helper at credential-fill time, never
+// appearing in argv or in xray's debug log. Other methods operate on a local
+// clone and do not consult the token. When GitHubToken is empty the client
+// degrades to ambient git auth (SSH, credential helper, gh CLI, etc.) — the
+// historical behaviour.
 type Client struct {
-	Bin string
-	Log *slog.Logger
+	Bin         string
+	Log         *slog.Logger
+	GitHubToken string
 }
 
 func (c *Client) bin() string {
@@ -54,6 +60,111 @@ func (c *Client) run(ctx context.Context, dir string, args ...string) (string, e
 	return stdout.String(), nil
 }
 
+// gitHubCredHelperArgs returns the `-c` flags that install an inline
+// credential helper scoped to github.com URLs: any prompt for a non-
+// github.com host (submodule, redirect, future code path) bypasses the
+// helper and never receives the token. The leading `credential.<url>.helper=`
+// clears any inherited per-URL helper for the same scope. `core.askPass=`
+// neutralises the askpass fallback so a helper short-circuit cannot launch
+// a GUI dialog or hang on a headless runner. Empty return when no token.
+//
+// The shell snippet:
+//   - uses `case` so `f` exits 0 for store/erase/capability invocations
+//     (git's credential-helper protocol invokes the helper for those too;
+//     a non-zero exit is logged as a failing helper under GIT_TRACE)
+//   - double-quotes the env expansion so a token with whitespace, glob
+//     metachars, or other shell-special chars (defensive for non-PAT
+//     formats) is not word-split or pathname-expanded before echo
+//   - uses printf rather than echo for portable handling of backslashes
+//
+// The token value is read from the subprocess env (XRAY_GIT_TOKEN set by
+// runAuth), not interpolated into the helper string, so argv and the
+// gitcli debug log never carry the secret value.
+func (c *Client) gitHubCredHelperArgs() []string {
+	if c.GitHubToken == "" {
+		return nil
+	}
+	return []string{
+		"-c", "credential.https://github.com.helper=",
+		"-c", `credential.https://github.com.helper=!f() { case "$1" in get) printf 'username=x-access-token\npassword=%s\n' "$XRAY_GIT_TOKEN";; esac; }; f`,
+		"-c", "core.askPass=",
+	}
+}
+
+// gitTokenScrubbedEnv returns the parent process env with secret-leak vectors
+// removed before runAuth appends the canonical XRAY_GIT_TOKEN and forces
+// non-interactive auth:
+//
+//   - XRAY_GIT_TOKEN: drop any inherited value; POSIX leaves duplicate-key
+//     resolution unspecified, and a stale parent value should not authenticate
+//     this run.
+//   - GIT_TRACE / GIT_TRACE_CURL / GIT_CURL_VERBOSE: drop. With tracing on,
+//     libcurl writes `Authorization: Basic <base64>` lines to stderr which
+//     decode to `x-access-token:<token>`; stderr is forwarded into xray's
+//     `FAIL <repo> ...` line on the error path.
+//   - GIT_ASKPASS / SSH_ASKPASS: drop. With the credential helper installed
+//     these are unused on the happy path, but a helper short-circuit (or a
+//     prompt for an unrelated key) would otherwise fall through to the
+//     askpass binary, blocking on a GUI on macOS or hanging headless on CI.
+var gitTokenScrubbedEnvKeys = map[string]bool{
+	"XRAY_GIT_TOKEN":   true,
+	"GIT_ASKPASS":      true,
+	"SSH_ASKPASS":      true,
+	"GIT_TRACE":        true,
+	"GIT_TRACE_CURL":   true,
+	"GIT_CURL_VERBOSE": true,
+}
+
+func gitTokenScrubbedEnv(parent []string) []string {
+	out := make([]string, 0, len(parent))
+	for _, kv := range parent {
+		i := strings.IndexByte(kv, '=')
+		if i > 0 && gitTokenScrubbedEnvKeys[kv[:i]] {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
+// runAuth runs git with the inline GitHub credential helper installed (when
+// a token is configured) and XRAY_GIT_TOKEN set in the subprocess env.
+// Used by Clone and LsRemote so xray authenticates with the same token it
+// already validated for the GitHub API, regardless of the operator's
+// ambient git auth configuration. With no token, behaves like run.
+func (c *Client) runAuth(ctx context.Context, dir string, args ...string) (string, error) {
+	auth := c.gitHubCredHelperArgs()
+	if len(auth) == 0 {
+		return c.run(ctx, dir, args...)
+	}
+	full := make([]string, 0, len(auth)+len(args))
+	full = append(full, auth...)
+	full = append(full, args...)
+	// #nosec G204 -- c.bin() is the system `git` binary; full is argv.
+	cmd := exec.CommandContext(ctx, c.bin(), full...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	// Pass the token only through env, with leak vectors scrubbed.
+	// GIT_TERMINAL_PROMPT=0 makes a misconfigured helper fail fast
+	// with a clear error instead of blocking on a TTY (or hanging
+	// headless on CI).
+	env := gitTokenScrubbedEnv(os.Environ())
+	env = append(env,
+		"XRAY_GIT_TOKEN="+c.GitHubToken,
+		"GIT_TERMINAL_PROMPT=0",
+	)
+	cmd.Env = env
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	c.log().Debug("git", slog.String("dir", dir), slog.Any("args", full))
+	if err := cmd.Run(); err != nil {
+		return stdout.String(), fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.String(), nil
+}
+
 // Clone shallow-clones slug ("owner/repo") into dest. dest must not exist.
 // The shallow window starts at shallowSince - 30d to keep rename history
 // (commit_files prev_path tracking) coherent at the window boundary.
@@ -65,7 +176,7 @@ func (c *Client) Clone(ctx context.Context, slug, dest string, shallowSince time
 	}
 	url := fmt.Sprintf("https://github.com/%s.git", slug)
 	since := shallowSince.UTC().AddDate(0, 0, -30).Format("2006-01-02")
-	_, err := c.run(ctx, "",
+	_, err := c.runAuth(ctx, "",
 		"clone",
 		"--no-tags",
 		"--shallow-since="+since,
@@ -276,7 +387,7 @@ func (c *Client) CheckAncestors(ctx context.Context, clonePath string, candidate
 // LsRemote verifies clone access without cloning.
 func (c *Client) LsRemote(ctx context.Context, slug string) error {
 	url := fmt.Sprintf("https://github.com/%s.git", slug)
-	_, err := c.run(ctx, "", "ls-remote", "--exit-code", url, "HEAD")
+	_, err := c.runAuth(ctx, "", "ls-remote", "--exit-code", url, "HEAD")
 	return err
 }
 

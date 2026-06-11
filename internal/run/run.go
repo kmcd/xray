@@ -116,7 +116,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (Result, error) 
 		slog.Int("workers", opts.Workers),
 	)
 
-	git := &gitcli.Client{Log: log}
+	git := &gitcli.Client{Log: log, GitHubToken: cfg.GitHubToken()}
 	win := connector.Window{Start: cfg.Window.Start, End: cfg.Window.End}
 
 	// 1. Clone each repo in parallel. Failures are recorded as provenance

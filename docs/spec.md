@@ -544,15 +544,29 @@ no connector.
 
 ## Behaviour
 
-- **Cloning.** Shells out to the system `git` binary; relies on the user's
-  ambient git authentication (SSH keys, credential helper, gh CLI, etc.).
-  `xray` does not manage credentials for clone — if the user can `git clone`
-  a repo from their terminal, `xray` can. The GitHub token in the config is
-  used for API access only, not for clone. Clones land in a per-run temp
-  directory (e.g. `/tmp/xray-<run_id>/`), deleted on completion unless
-  `--keep-clones`. Full history within the configured window is required for
-  `commit_files` rename tracking; use `--shallow-since=<window.start - 30d>`
-  or a full clone as appropriate.
+- **Cloning.** Shells out to the system `git` binary. When
+  `[connectors.github].token` is set, `xray` installs an inline git
+  credential helper for the clone and `ls-remote` subprocess that answers
+  github.com prompts with `username=x-access-token` and the token as
+  password. The helper is registered under
+  `credential.https://github.com.helper`, so prompts for any other host (a
+  submodule, a redirect, a future code path) bypass it; the token is never
+  offered to a non-github.com host. The token value is passed in the
+  subprocess environment (`XRAY_GIT_TOKEN`), never in argv or in `xray`'s
+  debug log. The subprocess env is also scrubbed of `GIT_TRACE` /
+  `GIT_TRACE_CURL` / `GIT_CURL_VERBOSE` (which would otherwise echo the
+  Basic-auth header to stderr) and of `GIT_ASKPASS` / `SSH_ASKPASS` /
+  `core.askPass` (which would otherwise provide a GUI / TTY fallback on a
+  helper short-circuit). No global git configuration change is required on
+  the host; the operator does not need to run `gh auth setup-git`,
+  configure a credential helper, or have any HTTPS credentials for
+  github.com on the system. When no token is configured, `xray` degrades
+  to ambient git authentication (SSH keys, credential helper, gh CLI,
+  etc.). Clones land in a per-run temp directory (e.g.
+  `/tmp/xray-<run_id>/`), deleted on completion unless `--keep-clones`.
+  Full history within the configured window is required for `commit_files`
+  rename tracking; use `--shallow-since=<window.start - 30d>` or a full
+  clone as appropriate.
 - **Concurrency.** `--workers N` bounds parallel clone + extract. Connector
   API rate limits are respected per connector regardless of worker count.
 - **Idempotence.** Each run is fully independent. No incremental state, no

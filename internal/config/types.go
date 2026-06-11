@@ -70,6 +70,16 @@ func (c *Config) RepoToTeam(slug string) string {
 	return ""
 }
 
+// GitHubToken returns the configured GitHub token, or "" when no GitHub
+// connector is configured. Used by gitcli to authenticate clone and
+// ls-remote against github.com without requiring ambient git auth.
+func (c *Config) GitHubToken() string {
+	if c.Connectors.GitHub == nil {
+		return ""
+	}
+	return c.Connectors.GitHub.Token
+}
+
 // AllRepos flattens Teams into a deduplicated slice of repo slugs.
 func (c *Config) AllRepos() []string {
 	seen := map[string]bool{}

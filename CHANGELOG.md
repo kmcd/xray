@@ -6,6 +6,12 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+### Check
+
+- **`xray check` and `xray extract` use the configured GitHub token for clone access.** Previously the token in `[connectors.github]` authenticated the API but not the `git ls-remote` / `git clone` calls, so an SSH-default operator (the recommended `gh auth login` choice) saw `ok github` on the API check and `FAIL <repo>     fatal: could not read Username for 'https://github.com'` on the very next clone-access line. xray now installs an inline git credential helper, scoped to `https://github.com` via the per-URL `credential.<url>.helper` config namespace so it never answers prompts for any other host (submodule, redirect, future code path). The token is passed in the subprocess env (`XRAY_GIT_TOKEN`), with leak vectors scrubbed before launch: any inherited `XRAY_GIT_TOKEN`, `GIT_TRACE*` / `GIT_CURL_VERBOSE` (which would echo the Basic-auth header to stderr), and `GIT_ASKPASS` / `SSH_ASKPASS` (which would otherwise provide a GUI / TTY fallback) are removed. The token value never enters argv or the gitcli debug log; no global git configuration change required on the host. ([#137])
+
+[#137]: https://github.com/kmcd/xray/issues/137
+
 ## [0.4.2] — 2026-06-11
 
 `schema_version` stays at 2. Operator-experience release: `xray check` now emits actionable hints for the two cryptic git errors first-customer environments hit (TLS interception, missing HTTPS credentials for `github.com`); `docs/enterprise.md` consolidates the proxy / custom CA / firewall-allowlist story for security-team reviews; and v0.4.x configuration foot-guns surfaced during engagements get corrected (CircleCI projects map required, Bugsnag project IDs not slugs, `xray init --org` documented as non-optional).

@@ -1011,3 +1011,135 @@ func TestClient_CatFileBatch_Empty(t *testing.T) {
 func TestClient_LogNumstat_GPGVerified(t *testing.T) {
 	t.Skip("requires GPG key setup; gitcli.go does not currently parse signature_verified from log output")
 }
+
+func TestClient_GitHubCredHelperArgs_NoToken(t *testing.T) {
+	c := &Client{}
+	if args := c.gitHubCredHelperArgs(); args != nil {
+		t.Errorf("no-token client returned auth args: %v", args)
+	}
+}
+
+// The token value never appears in the helper-args slice — it lives in the
+// subprocess env (set by runAuth) and is interpolated by the shell helper at
+// credential-fill time. Argv-leak protection rests on this property.
+func TestClient_GitHubCredHelperArgs_TokenNotInArgs(t *testing.T) {
+	const tok = "ghp_VERY_SECRET_TOKEN_VALUE"
+	c := &Client{GitHubToken: tok}
+	args := c.gitHubCredHelperArgs()
+	if len(args) == 0 {
+		t.Fatal("token-set client returned no auth args")
+	}
+	for _, a := range args {
+		if strings.Contains(a, tok) {
+			t.Errorf("auth args contained literal token: %q", a)
+		}
+	}
+}
+
+// End-to-end verification of the inline credential helper: run `git
+// credential fill` with the helper installed, feed it a github.com prompt
+// on stdin, and assert the helper writes the expected username/password
+// pair drawn from the XRAY_GIT_TOKEN env var.
+func TestClient_GitHubCredHelper_CredentialFill(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH")
+	}
+	const tok = "test-token-xyz"
+	c := &Client{GitHubToken: tok}
+	args := append([]string{}, c.gitHubCredHelperArgs()...)
+	args = append(args, "credential", "fill")
+
+	// #nosec G204 -- fixed test args.
+	cmd := exec.CommandContext(t.Context(), "git", args...)
+	cmd.Env = append(os.Environ(),
+		"XRAY_GIT_TOKEN="+tok,
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_SYSTEM=/dev/null",
+	)
+	cmd.Stdin = strings.NewReader("protocol=https\nhost=github.com\n\n")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git credential fill: %v\n%s", err, string(out))
+	}
+	got := string(out)
+	if !strings.Contains(got, "username=x-access-token") {
+		t.Errorf("missing username=x-access-token in output:\n%s", got)
+	}
+	if !strings.Contains(got, "password="+tok) {
+		t.Errorf("missing password=%s in output:\n%s", tok, got)
+	}
+}
+
+// The helper is installed under credential.https://github.com.helper so git
+// must NOT consult it for prompts targeting any other host. This locks in
+// the host-scoping property: a redirect, a submodule, or a future caller
+// hitting gitlab.com / a GHE host / a self-hosted mirror never gets the
+// GitHub token offered as a credential.
+func TestClient_GitHubCredHelper_NonGitHubHostSkipped(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH")
+	}
+	const tok = "must-not-leak-xyz"
+	c := &Client{GitHubToken: tok}
+	args := append([]string{}, c.gitHubCredHelperArgs()...)
+	args = append(args, "credential", "fill")
+
+	// #nosec G204 -- fixed test args.
+	cmd := exec.CommandContext(t.Context(), "git", args...)
+	cmd.Env = append(os.Environ(),
+		"XRAY_GIT_TOKEN="+tok,
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_ASKPASS=/bin/false",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_SYSTEM=/dev/null",
+	)
+	cmd.Stdin = strings.NewReader("protocol=https\nhost=gitlab.com\n\n")
+	out, _ := cmd.CombinedOutput()
+	// We don't assert exit code (git will error out trying every fallback
+	// and eventually fail because GIT_ASKPASS=/bin/false also rejects).
+	// The invariant is: the token must never appear in stdout/stderr.
+	if strings.Contains(string(out), tok) {
+		t.Errorf("token leaked for non-github.com host:\n%s", string(out))
+	}
+}
+
+func TestGitTokenScrubbedEnv(t *testing.T) {
+	parent := []string{
+		"PATH=/usr/bin",
+		"XRAY_GIT_TOKEN=stale-inherited",
+		"GIT_ASKPASS=/opt/askpass",
+		"SSH_ASKPASS=/opt/ssh-askpass",
+		"GIT_TRACE=1",
+		"GIT_TRACE_CURL=1",
+		"GIT_CURL_VERBOSE=1",
+		"HOME=/root",
+		"=oddly-formed-no-key",
+	}
+	got := gitTokenScrubbedEnv(parent)
+	gotSet := map[string]string{}
+	for _, kv := range got {
+		i := strings.IndexByte(kv, '=')
+		if i <= 0 {
+			gotSet[kv] = ""
+			continue
+		}
+		gotSet[kv[:i]] = kv[i+1:]
+	}
+	for _, want := range []string{"PATH", "HOME"} {
+		if _, ok := gotSet[want]; !ok {
+			t.Errorf("expected %s preserved; got %v", want, gotSet)
+		}
+	}
+	for _, drop := range []string{"XRAY_GIT_TOKEN", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_TRACE", "GIT_TRACE_CURL", "GIT_CURL_VERBOSE"} {
+		if _, ok := gotSet[drop]; ok {
+			t.Errorf("expected %s scrubbed; remained as %q", drop, gotSet[drop])
+		}
+	}
+}

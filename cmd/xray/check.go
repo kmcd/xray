@@ -147,7 +147,7 @@ func runCheck(cmd *cobra.Command, path string, opts checkOpts) error {
 		res.Connectors = append(res.Connectors, entry)
 	}
 
-	gitClient := &gitcli.Client{Log: logger}
+	gitClient := &gitcli.Client{Log: logger, GitHubToken: cfg.GitHubToken()}
 	repos := cfg.AllRepos()
 	sort.Strings(repos)
 

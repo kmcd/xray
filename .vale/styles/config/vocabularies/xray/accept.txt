@@ -67,6 +67,7 @@ darwin
 (?i)windows
 amd64
 arm64
+argv
 (?i)dockerfile
 (?i)codeql
 (?i)dependabot
