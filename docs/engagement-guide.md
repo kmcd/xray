@@ -279,6 +279,18 @@ attribute to the alphabetically-first configured repo. Treat the
 attribution as approximate. Empty `environment` is the GitHub-release
 case, not a data bug.
 
+**Fan-out caveat.** Honeycomb-sourced `deploys` rows count *deploy
+events*, not *releases*. Customers whose deploy infrastructure fans out
+one release to multiple formations (per-region dynos, per-shard workers,
+blue/green pairs) emit one marker per formation — so `COUNT(*)` against
+`(source = 'honeycomb')` rows counts marker events, not release count.
+A single release going out to 20 formations produces 20 markers within
+a narrow time window. To recover release-level counts, cluster markers
+by `start_time` within a 60-second window and count clusters,
+or join against `(source = 'github_release')` rows for a release-level
+count when GitHub Releases is also configured. Single-formation
+customers see `1 deploy = 1 marker = 1 release` and won't hit this.
+
 ### Review latency
 
 ```sql

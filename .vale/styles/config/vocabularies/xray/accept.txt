@@ -360,6 +360,8 @@ in_progress
 (?i)arg
 
 (?i)npm
+(?i)dynos
+(?i)dyno
 (?i)dedupes
 (?i)revive
 (?i)untracked
