@@ -196,6 +196,33 @@ recognise. Pre-1.0, expect several bumps as the schema settles.
   Peers found in scope get fixed in the same PR; peers out of scope become
   a single class-level issue, never N instance-level ones. Done at plan
   time (informs the fix) and again at `/ready` Step 4 (catches drift).
+  See [`.claude/commands/class-scan.md`](.claude/commands/class-scan.md) for
+  the standalone version.
+
+---
+
+## Planning escalation
+
+Default model: Sonnet. Before implementing any fix that meets ANY of these
+triggers, invoke `Agent({subagent_type: "Plan", model: "opus", ...})` and
+consume the returned plan before writing code:
+
+- Same-class scan returns >2 instances spanning >1 file.
+- Fix touches both `internal/connectors/X` and either `internal/model/` or
+  a `store/` DDL.
+- Issue lists ≥2 viable approaches with real trade-offs.
+- Spec/code drift fix where either direction is plausible.
+- New connector skeleton, new schema column, or new manifest field.
+
+Everything else — single-file edits, doc tweaks, mechanical fixes, gates,
+`/commit`, `/release`, `/publish-tap` — stays on the Sonnet main loop.
+
+Subagents inherit the main-loop model. `model: "opus"` is mandatory in
+the trigger, not optional. Same applies to `agent()` opts in `Workflow`
+scripts.
+
+`/ready` Step 3 invokes `/code-review`; at `high` / `max` / `ultra`
+effort that runs on Opus already — leave it.
 
 ---
 

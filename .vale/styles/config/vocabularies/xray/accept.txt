@@ -324,6 +324,8 @@ CVE
 (?i)errcheck
 (?i)dirs
 (?i)agentic
+(?i)subagent
+(?i)subagents
 (?i)rollouts
 (?i)dedups
 (?i)paginator
