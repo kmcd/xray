@@ -17,7 +17,7 @@ import (
 // Connector ordering follows the declaration order in docs/spec.md so that
 // honeycomb's first-repo selection (the v1 fallback for its repo-agnostic
 // model) is deterministic.
-func buildConnectors(cfg *config.Config, log *slog.Logger) ([]connector.Connector, error) {
+func buildConnectors(cfg *config.Config, log *slog.Logger, noCache bool) ([]connector.Connector, error) {
 	var out []connector.Connector
 
 	if cfg.Connectors.GitHub != nil {
@@ -57,7 +57,7 @@ func buildConnectors(cfg *config.Config, log *slog.Logger) ([]connector.Connecto
 		out = append(out, c)
 	}
 	if cfg.Connectors.Honeycomb != nil {
-		c, err := honeycomb.New(*cfg.Connectors.Honeycomb, log)
+		c, err := honeycomb.New(*cfg.Connectors.Honeycomb, log, noCache)
 		if err != nil {
 			return nil, err
 		}

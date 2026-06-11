@@ -65,6 +65,7 @@ func testConnector(t *testing.T, baseURL string) *Connector {
 		token:      "test-token",
 		dataset:    "myds",
 		baseURL:    baseURL,
+		noCache:    true,
 	}
 }
 

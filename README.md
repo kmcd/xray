@@ -298,6 +298,9 @@ Outbound HTTPS to configured providers (GitHub, Sentry, etc.) and to `github.com
 **Can I keep the temp clones for inspection?**\
 Pass `--keep-clones` to skip cleanup; clone paths are logged to stderr and recorded in the `.log` file. By default, clones are deleted after each repo finishes. See [`docs/spec.md`](docs/spec.md) → `xray run` → flags.
 
+**Why does `xray run` finish in under a second for Honeycomb on repeat runs?**\
+The Honeycomb markers API returns the full marker history on every call with no server-side date filter. After the first run, `xray` caches the response under `$UserCacheDir/xray/honeycomb/` (macOS: `~/Library/Caches/xray/honeycomb/`; Linux: `~/.cache/xray/honeycomb/`) with a 24-hour TTL. Pass `--no-cache` to force a full re-fetch.
+
 **Why a static binary instead of a script or container?**\
 A single static binary has one thing to verify: one file, one SHA256, one cosign signature. No runtime dependencies to audit — no pip, no npm, no base image. See [`docs/threat-model.md`](docs/threat-model.md).
 

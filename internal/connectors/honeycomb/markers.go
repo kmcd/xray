@@ -35,7 +35,23 @@ type marker struct {
 // returns a flat array with no server-side date filter, so all markers are
 // fetched and filtered client-side in extractDeploys. Volume grows with
 // deployment frequency; no pagination to manage.
+//
+// When caching is enabled (the default), a hit on a cache file younger than
+// 24 hours skips the HTTP fetch entirely. On a miss the live response is
+// written back to disk before returning.
 func (c *Connector) listMarkers(ctx context.Context) ([]marker, error) {
+	var cacheFile string
+	if !c.noCache {
+		fp := cacheFingerprint(c.token, c.dataset, c.baseURL)
+		if path, err := cachePath(fp); err == nil {
+			cacheFile = path
+			if markers, fresh := readMarkerCache(path); fresh {
+				c.log.Debug("honeycomb: marker cache hit", "dataset", c.dataset)
+				return markers, nil
+			}
+		}
+	}
+
 	u := c.baseURL + "/markers/" + url.PathEscape(c.dataset)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -66,6 +82,10 @@ func (c *Connector) listMarkers(ctx context.Context) ([]marker, error) {
 	var out []marker
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, err
+	}
+
+	if cacheFile != "" {
+		writeMarkerCache(cacheFile, out, c.log)
 	}
 	return out, nil
 }

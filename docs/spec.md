@@ -97,7 +97,7 @@ timestamped `.tar.gz`.
 
 ```
 xray run [config] [--out <path>] [--workers N] [--keep-clones]
-                  [--output auto|quiet|json|log] [--quiet] [--verbose]
+                  [--no-cache] [--output auto|quiet|json|log] [--quiet] [--verbose]
 ```
 
 `[config]` defaults to `./xray.toml` (same fallback as `validate`).
@@ -105,6 +105,8 @@ xray run [config] [--out <path>] [--workers N] [--keep-clones]
 - `--out` default: `./xray-export-<UTC-timestamp>.tar.gz`
 - `--workers` default: 4. Bound for parallel clone/extract.
 - `--keep-clones`: skip cleanup of temp clones (debugging).
+- `--no-cache`: disable on-disk caches. Currently affects the Honeycomb
+  markers cache (see "Caching" below). Forces a full re-fetch.
 - `--output` selects the run-time output mode (see "Output modes" below).
   `--quiet` is a shorthand for `--output quiet`; combining the two with
   conflicting values is a flag-level error.
@@ -194,6 +196,27 @@ schema.
 ### `xray version`
 
 Prints version and exits.
+
+### Caching
+
+`xray run` maintains a local disk cache for connector data that cannot be
+filtered server-side and is idempotent across runs.
+
+**Honeycomb markers.** The Honeycomb Classic markers API (`GET
+/1/markers/<dataset>`) returns the full marker history on every call with
+no date-range parameter. For organisations with large deployment histories
+this dominates wall-clock. `xray run` caches the response under
+`$UserCacheDir/xray/honeycomb/<fingerprint>.json` with a 24-hour TTL.
+On a cache hit, the HTTP fetch is skipped entirely. On a miss (first run,
+expired TTL, or `--no-cache`), the live response is fetched and written
+back to disk using an atomic temp-file rename. Errors during cache read or
+write are logged at debug level and never abort the run.
+
+The cache key fingerprint is `sha256(token + NUL + dataset + NUL + baseURL)`
+truncated to 16 hex characters. The raw token is never stored or logged.
+
+To force a full re-fetch: pass `--no-cache` or delete the cache directory
+(`$HOME/Library/Caches/xray/` on macOS, `$HOME/.cache/xray/` on Linux).
 
 ---
 

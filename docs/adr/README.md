@@ -31,3 +31,4 @@
 | [0027](0027-go-vcr-v4-for-http-replay.md) | go-vcr/v4 for HTTP replay fixtures | accepted | VCR cassettes under `testdata/cassettes/`; `ModeReplayOnly` in CI |
 | [0028](0028-graceful-ctrl-c.md) | Graceful Ctrl-C | accepted | Two-state signal handler; first signal cancels, second force-exits; exit code 130 |
 | [0029](0029-three-layer-sensor-architecture.md) | Three-layer sensor architecture | accepted | `make gates` (linters) + `make sweep` (quarterly deadcode/nilaway/gocritic) + `make mutation-audit` (per-release gremlins) |
+| [0030](0030-honeycomb-marker-cache.md) | Honeycomb marker cache | accepted | 24-hour TTL disk cache under `$UserCacheDir/xray/honeycomb/`; cuts repeat-run wall-clock from ~22s to <1s; `--no-cache` opt-out |

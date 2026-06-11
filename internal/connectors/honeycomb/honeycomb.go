@@ -25,6 +25,7 @@ type Connector struct {
 	dataset    string
 	baseURL    string
 	rl         *ratelimit.Transport
+	noCache    bool
 
 	mu        sync.Mutex
 	firstRepo string
@@ -37,8 +38,9 @@ type Config struct {
 	BaseURL string
 }
 
-// New builds a Connector wired to the rate-limit transport.
-func New(cfg config.HoneycombConn, log *slog.Logger) (*Connector, error) {
+// New builds a Connector wired to the rate-limit transport. noCache disables
+// the on-disk marker cache for this connector instance.
+func New(cfg config.HoneycombConn, log *slog.Logger, noCache bool) (*Connector, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -55,6 +57,7 @@ func New(cfg config.HoneycombConn, log *slog.Logger) (*Connector, error) {
 		dataset:    cfg.Dataset,
 		baseURL:    DefaultBaseURL,
 		rl:         rl,
+		noCache:    noCache,
 	}, nil
 }
 

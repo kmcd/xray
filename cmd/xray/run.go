@@ -25,6 +25,7 @@ type runOpts struct {
 	workers    int
 	keepClones bool
 	noRunLog   bool
+	noCache    bool
 }
 
 func newRunCmd() *cobra.Command {
@@ -102,7 +103,7 @@ func newRunCmd() *cobra.Command {
 
 			ctx := withLogger(cmd.Context(), logger)
 
-			connectors, err := buildConnectors(cfg, logger)
+			connectors, err := buildConnectors(cfg, logger, opts.noCache)
 			if err != nil {
 				return fmt.Errorf("connector setup: %w", err)
 			}
@@ -170,6 +171,7 @@ func newRunCmd() *cobra.Command {
 	cmd.Flags().IntVar(&opts.workers, "workers", 4, "parallel clone/extract worker count")
 	cmd.Flags().BoolVar(&opts.keepClones, "keep-clones", false, "skip cleanup of temp clones (debugging)")
 	cmd.Flags().BoolVar(&opts.noRunLog, "no-run-log", false, "disable run log file (mirrors stderr output alongside the artifact by default)")
+	cmd.Flags().BoolVar(&opts.noCache, "no-cache", false, "disable on-disk caches (currently: Honeycomb markers)")
 	return cmd
 }
 

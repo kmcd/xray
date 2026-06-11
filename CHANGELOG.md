@@ -6,6 +6,12 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+### Performance
+
+- **Honeycomb marker cache.** The Honeycomb Classic markers API has no server-side date filter and returns the full marker history on every call. For organisations with 200k+ deploy markers this dominated wall-clock (22s observed). `xray run` now caches the response under `$UserCacheDir/xray/honeycomb/` with a 24-hour TTL; repeat runs drop from ~22s to <1s after the first. Pass `--no-cache` to bypass. ([#141])
+
+[#141]: https://github.com/kmcd/xray/issues/141
+
 ## [0.4.3] — 2026-06-11
 
 `schema_version` stays at 2. v0.4.2 hinted at the SSH-default clone failure; v0.4.3 fixes it: xray now uses the GitHub token it already validates for the API to authenticate `git clone` / `git ls-remote`, via a host-scoped inline credential helper with env-leak vectors scrubbed — no `gh auth setup-git` or global git change required. The Homebrew tap also moves from Cask to Formula (correct shape for a CLI binary).
