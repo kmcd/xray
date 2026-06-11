@@ -10,7 +10,37 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 - **`--version` flag.** `xray --version` (and `-v`) now print the same line as `xray version` and exit 0. The `version` subcommand is kept. ([#131])
 
+### Check
+
+- **Actionable hint when git lacks HTTPS credentials for `github.com`.** `xray check` clone-access step previously surfaced the raw `fatal: could not read Username for 'https://github.com'` from `git ls-remote`. It now detects that error class (and the `terminal prompts disabled` variant) and prints `hint: git lacks HTTPS credentials for github.com — run \`gh auth setup-git\` or configure a credential helper`. README install section and `docs/enterprise.md` document the prerequisite up front. ([#134])
+- **Actionable hint on TLS-certificate failure (corporate proxy interception).** `xray check` now detects `x509.UnknownAuthorityError` in HTTP connector errors and the `SSL certificate problem` / `certificate verify failed` strings in `git ls-remote` subprocess output, and prints `hint: corporate TLS interception — set SSL_CERT_FILE (Linux) or add CA to system keychain (macOS)`. Both the connector-`Ping` and clone-access paths emit the hint.
+
+### Config
+
+- **`circleci.projects` map is required and validated.** Previously CircleCI projects were inferred from repo slugs; now `[connectors.circleci.projects]` must explicitly map each repo to its CircleCI project slug. `xray validate` rejects missing or extra entries at validation time so configuration errors fail fast rather than silently producing empty CircleCI data.
+- **Field-level diagnostic paths and project-map cross-validation.** Validation errors now point at the exact TOML path (`connectors.bugsnag.projects."5d5a8b9c"`) rather than the file root, and cross-check that every `*.projects` map covers every configured repo. An all-empty config is pre-staged so `xray init` produces a file `xray validate` accepts as a starting point.
+
+### Connectors
+
+- **Bugsnag response bodies drained before close to enable HTTP connection reuse.** The bugsnag client now reads and discards any unread response body before `Close()`, so the underlying TCP connection returns to the pool instead of being torn down. Cuts handshake overhead on multi-project bugsnag runs.
+
+### Install
+
+- **`install.sh` passes `GITHUB_TOKEN` to the `releases/latest` API call.** Avoids the unauthenticated-rate-limit 403 that hit CI smoke runs of the installer when the test matrix exceeded the per-IP budget. Local installs continue to work without a token.
+
+### Docs
+
+- **Enterprise environments guide.** New `docs/enterprise.md` covers forward proxy (`HTTPS_PROXY` / `NO_PROXY`), custom CA bundles on Linux (`SSL_CERT_FILE`) and macOS (system keychain), git clone TLS (`GIT_SSL_CAINFO`), and the firewall allowlist of external hosts per connector. Cross-linked from README install section.
+- **Source-free precision in the README intro; Design constraints panel.** The Trust paragraph now states the source-free guarantee in the same language as `docs/security.md` (no diff text, no commit bodies, no application source); a new collapsed "Design constraints" panel surfaces the read-only / team-level-only / no-individual-rankings / single-static-binary invariants from `CLAUDE.md` for first-time readers.
+- **`bugsnag.projects` keys are project IDs, not slugs.** `docs/spec.md` corrected — the keys must be 24-character hex project IDs (visible in the Bugsnag project URL or via the Data Access API), not human-readable slugs. The previous example was misleading and would not have matched any real Bugsnag project. ([#135])
+- **`xray init` is non-interactive — `--org` required.** README "Configure" section now leads with `xray init --org my-org --token "$GITHUB_TOKEN"` and drops the no-arg "interactive starter config" example that did not match the current behaviour. ([#136])
+- **Honeycomb dataset/slug semantics: first-wins per slug.** `docs/engagement-guide.md` documents that when multiple datasets map to the same repo slug, the first one declared in `[connectors.honeycomb.datasets]` wins; later duplicates are silently skipped. Surfaces a corner case that previously confused multi-environment configs. ([#130])
+
+[#130]: https://github.com/kmcd/xray/issues/130
 [#131]: https://github.com/kmcd/xray/issues/131
+[#134]: https://github.com/kmcd/xray/issues/134
+[#135]: https://github.com/kmcd/xray/issues/135
+[#136]: https://github.com/kmcd/xray/issues/136
 
 ## [0.4.1] — 2026-06-10
 
