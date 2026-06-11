@@ -46,6 +46,34 @@ func TestIsTLSCertError(t *testing.T) {
 	}
 }
 
+func TestIsGitCredentialError(t *testing.T) {
+	// Real git error when no credential helper is configured for github.com.
+	noUser := errors.New("git ls-remote --exit-code https://github.com/org/repo.git HEAD: exit status 128: fatal: could not read Username for 'https://github.com': Device not configured")
+	if !isGitCredentialError(noUser) {
+		t.Error("isGitCredentialError(could not read Username) = false, want true")
+	}
+	noPass := errors.New("fatal: could not read Password for 'https://github.com': terminal prompts disabled")
+	if !isGitCredentialError(noPass) {
+		t.Error("isGitCredentialError(could not read Password) = false, want true")
+	}
+	// `GIT_TERMINAL_PROMPT=0` path: git emits "terminal prompts disabled" without the username phrase.
+	noPrompt := errors.New("fatal: could not read Username for 'https://github.com': terminal prompts disabled")
+	if !isGitCredentialError(noPrompt) {
+		t.Error("isGitCredentialError(terminal prompts disabled) = false, want true")
+	}
+
+	// Negative: TLS errors are a different shape; the TLS hint already covers them.
+	if isGitCredentialError(errors.New("SSL certificate problem: unable to get local issuer certificate")) {
+		t.Error("isGitCredentialError(TLS error) = true, want false")
+	}
+	if isGitCredentialError(errors.New("Repository not found")) {
+		t.Error("isGitCredentialError(404) = true, want false")
+	}
+	if isGitCredentialError(nil) {
+		t.Error("isGitCredentialError(nil) = true, want false")
+	}
+}
+
 func TestCheckCmd(t *testing.T) {
 	// `check` does a real `git ls-remote` for every repo. We can not safely
 	// assume network reachability of a real GitHub repo from CI, so we

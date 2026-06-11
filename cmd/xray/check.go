@@ -76,6 +76,9 @@ type checkInaccessibleEnd struct {
 
 const tlsHint = "     hint: corporate TLS interception — set SSL_CERT_FILE (Linux) or add CA to system keychain (macOS)"
 
+// #nosec G101 -- operator-facing help text; no credential value.
+const gitCredHint = "     hint: git lacks HTTPS credentials for github.com — run `gh auth setup-git` or configure a credential helper"
+
 func runCheck(cmd *cobra.Command, path string, opts checkOpts) error {
 	out := cmd.OutOrStdout()
 	errOut := cmd.ErrOrStderr()
@@ -156,6 +159,8 @@ func runCheck(cmd *cobra.Command, path string, opts checkOpts) error {
 			fmt.Fprintf(errOut, "FAIL %-16s %v\n", r, err)
 			if isTLSCertError(err) {
 				fmt.Fprintln(errOut, tlsHint)
+			} else if isGitCredentialError(err) {
+				fmt.Fprintln(errOut, gitCredHint)
 			}
 		} else {
 			textf(mode, out, "ok  %-16s clone access ok\n", r)
@@ -338,6 +343,20 @@ func isTLSCertError(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "SSL certificate problem") ||
 		strings.Contains(msg, "certificate verify failed")
+}
+
+// isGitCredentialError reports whether err is git refusing to prompt for HTTPS
+// credentials (no credential helper configured for github.com). git prints
+// `could not read Username for 'https://github.com'` in this case; the hint
+// points the operator at `gh auth setup-git`.
+func isGitCredentialError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "could not read Username for 'https://github.com'") ||
+		strings.Contains(msg, "could not read Password for 'https://github.com'") ||
+		strings.Contains(msg, "terminal prompts disabled")
 }
 
 func humanCount(n int) string {

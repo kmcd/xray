@@ -37,6 +37,13 @@ covers both the API calls and git clone.
 (`ProxyCommand`) is not required for SSH-based ambient credentials
 (`ssh-agent`, `~/.ssh/config`).
 
+The GitHub token in `[connectors.github]` authenticates API calls only;
+clones rely on the operator's ambient git authentication. Configure
+HTTPS credentials for `github.com` before running `xray check`:
+`gh auth setup-git` (if `gh` is installed) or a credential helper
+(`credential-osxkeychain`, `git-credential-manager`). Without one,
+`xray check` reports a clone-access failure with an actionable hint.
+
 ## Custom CA bundle
 
 Go's TLS stack loads trust anchors differently by platform.

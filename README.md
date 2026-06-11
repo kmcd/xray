@@ -104,6 +104,20 @@ custom CA, and firewall configuration, see
 go install github.com/kmcd/xray/cmd/xray@latest
 ```
 
+### Prerequisites
+
+`xray` shells out to the system `git` binary for repository clones over
+HTTPS. Make sure `git` has credentials for `github.com` before running
+`xray check` or `xray run`. If `gh` is installed, the one-liner is:
+
+```bash
+gh auth setup-git
+```
+
+Otherwise, configure a credential helper (`git credential-osxkeychain`,
+`git-credential-manager`, or an embedded PAT in `~/.git-credentials`).
+`xray check` reports a fix hint when this step is missing.
+
 ## Usage
 
 The default flow: **configure → validate → run → export**.
