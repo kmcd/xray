@@ -111,10 +111,7 @@ The default flow: **configure → validate → run → export**.
 ### 1. Configure
 
 ```bash
-# Generate a starter config interactively.
-xray init
-
-# Or scaffold from a GitHub org's repos.
+# Scaffold a starter config from a GitHub org's repos.
 xray init --org my-org --token "$GITHUB_TOKEN"
 ```
 
