@@ -6,6 +6,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-06-11
+
+`schema_version` stays at 2. v0.4.2 hinted at the SSH-default clone failure; v0.4.3 fixes it: xray now uses the GitHub token it already validates for the API to authenticate `git clone` / `git ls-remote`, via a host-scoped inline credential helper with env-leak vectors scrubbed — no `gh auth setup-git` or global git change required. The Homebrew tap also moves from Cask to Formula (correct shape for a CLI binary).
+
 ### Check
 
 - **`xray check` and `xray extract` use the configured GitHub token for clone access.** Previously the token in `[connectors.github]` authenticated the API but not the `git ls-remote` / `git clone` calls, so an SSH-default operator (the recommended `gh auth login` choice) saw `ok github` on the API check and `FAIL <repo>     fatal: could not read Username for 'https://github.com'` on the very next clone-access line. xray now installs an inline git credential helper, scoped to `https://github.com` via the per-URL `credential.<url>.helper` config namespace so it never answers prompts for any other host (submodule, redirect, future code path). The token is passed in the subprocess env (`XRAY_GIT_TOKEN`), with leak vectors scrubbed before launch: any inherited `XRAY_GIT_TOKEN`, `GIT_TRACE*` / `GIT_CURL_VERBOSE` (which would echo the Basic-auth header to stderr), and `GIT_ASKPASS` / `SSH_ASKPASS` (which would otherwise provide a GUI / TTY fallback) are removed. The token value never enters argv or the gitcli debug log; no global git configuration change required on the host. ([#137])
