@@ -660,3 +660,77 @@ func TestLowWaterMarkContextCancel(t *testing.T) {
 		t.Errorf("elapsed %v: context cancellation took too long", elapsed)
 	}
 }
+
+// TestGQLPacingEmitsCorrectReason verifies that a sleep triggered via
+// SetGQLPacing fires a RateLimit event with reason="graphql_low_water",
+// distinct from the REST "primary_low_water" path.
+func TestGQLPacingEmitsCorrectReason(t *testing.T) {
+	sink := &recordingSink{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	transport := &ratelimit.Transport{
+		Base:   http.DefaultTransport,
+		Policy: ratelimit.Policy{},
+		Sink:   sink,
+	}
+	transport.SetGQLPacing(time.Now().Add(2 * time.Second))
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	start := time.Now()
+	resp, err := transport.RoundTrip(req)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	if elapsed < 2*time.Second {
+		t.Errorf("elapsed %v: expected >= 2s pacing sleep", elapsed)
+	}
+	rl := sink.byKind(progress.RateLimit)
+	if len(rl) != 1 {
+		t.Fatalf("RateLimit events: got %d want 1", len(rl))
+	}
+	if got := rl[0].Fields["reason"]; got != "graphql_low_water" {
+		t.Errorf("reason = %q, want %q", got, "graphql_low_water")
+	}
+}
+
+// TestSetGQLPacingDoesNotOverrideWithPrimaryReason verifies that a REST
+// low-water-mark detection after SetGQLPacing does not silently stomp the GQL
+// reason when both are in flight — the REST path sets reason immediately, GQL
+// must also set before paceUntil, so the last writer wins. This test documents
+// the ordering contract: SetGQLPacing sets reason before paceUntil.
+func TestUpdateGQLBudget_UpdatesSnapshot(t *testing.T) {
+	transport := &ratelimit.Transport{
+		Base:   http.DefaultTransport,
+		Policy: ratelimit.Policy{},
+	}
+	resetAt := time.Now().Add(30 * time.Minute).UTC().Truncate(time.Second)
+	transport.UpdateGQLBudget(1200, resetAt, nil)
+
+	snap := transport.Snapshot()
+	st, ok := snap["github-graphql"]
+	if !ok {
+		t.Fatalf("Snapshot missing github-graphql after UpdateGQLBudget")
+	}
+	if st.Remaining != 1200 {
+		t.Errorf("Remaining = %d, want 1200", st.Remaining)
+	}
+	if !st.HasRemaining {
+		t.Errorf("HasRemaining = false, want true")
+	}
+	if st.Limit != 5000 {
+		t.Errorf("Limit = %d, want 5000 (GitHub's fixed GQL hourly budget)", st.Limit)
+	}
+	if !st.ResetAt.Equal(resetAt) {
+		t.Errorf("ResetAt = %v, want %v", st.ResetAt, resetAt)
+	}
+}

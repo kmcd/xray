@@ -9,8 +9,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	gh "github.com/google/go-github/v66/github"
 	"github.com/shurcooL/githubv4"
@@ -19,6 +21,7 @@ import (
 	"github.com/kmcd/xray/internal/config"
 	"github.com/kmcd/xray/internal/connector"
 	"github.com/kmcd/xray/internal/gitcli"
+	xrayprogress "github.com/kmcd/xray/internal/progress"
 	"github.com/kmcd/xray/internal/ratelimit"
 )
 
@@ -77,14 +80,25 @@ type prPrefetchResult struct {
 	done       chan struct{}
 }
 
+// gqlLowWaterMark is the throttleStatus.remaining threshold below which the
+// costInterceptor triggers proactive pacing on the ratelimit transport,
+// mirroring the REST low-water-mark path in ratelimit.Transport.RoundTrip.
+// GitHub's hourly GraphQL budget is 5000 points; 500 gives ~10% headroom.
+const gqlLowWaterMark = 500
+
 // costInterceptor wraps an http.RoundTripper and calls onCost after every
 // GitHub GraphQL response. It reads the response body to extract the
 // extensions.cost and extensions.throttleStatus.remaining fields, then
 // reassembles a fresh ReadCloser so the githubv4 decoder can still consume
 // the body. Non-GraphQL responses are passed through unmodified.
+//
+// When rl is non-nil, the interceptor also updates the GQL cost-unit budget
+// on the transport and triggers proactive pacing when remaining falls below
+// gqlLowWaterMark, matching the REST low-water-mark behaviour.
 type costInterceptor struct {
 	base   http.RoundTripper
 	onCost func(cost, remaining int)
+	rl     *ratelimit.Transport
 }
 
 func (ci *costInterceptor) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -120,9 +134,35 @@ func (ci *costInterceptor) RoundTrip(req *http.Request) (*http.Response, error) 
 		} `json:"extensions"`
 	}
 	if jsonErr := json.Unmarshal(body, &ext); jsonErr == nil && ext.Extensions.Cost.ActualQueryCost > 0 {
-		ci.onCost(ext.Extensions.Cost.ActualQueryCost, ext.Extensions.Cost.ThrottleStatus.Remaining)
+		remaining := ext.Extensions.Cost.ThrottleStatus.Remaining
+		ci.onCost(ext.Extensions.Cost.ActualQueryCost, remaining)
+		// Only act when remaining is present (> 0). A missing throttleStatus
+		// JSON field zero-initialises remaining; treating 0 as authoritative
+		// would trigger pacing on every response that omits the field.
+		if ci.rl != nil && remaining > 0 {
+			resetAt, hasReset := gqlResetAt(resp.Header.Get("X-RateLimit-Reset"))
+			ci.rl.UpdateGQLBudget(remaining, resetAt, xrayprogress.FromContext(req.Context()))
+			// Only pace when the reset header was present. Without it, the
+			// fallback is one hour — pacing on an absent header would stall
+			// the run for ~1h, mirroring the REST path which skips pacing
+			// when X-RateLimit-Reset is absent or unparseable.
+			if hasReset && remaining < gqlLowWaterMark {
+				ci.rl.SetGQLPacing(resetAt.Add(5 * time.Second))
+			}
+		}
 	}
 	return resp, nil
+}
+
+// gqlResetAt parses the X-RateLimit-Reset unix-timestamp header. Returns
+// (parsedTime, true) on success or (time.Now()+1h, false) when absent or
+// unparseable — the caller uses the bool to distinguish "header present"
+// from "synthesised fallback", matching the REST pacing guard.
+func gqlResetAt(v string) (time.Time, bool) {
+	if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+		return time.Unix(n, 0).UTC(), true
+	}
+	return time.Now().UTC().Add(time.Hour), false
 }
 
 // SetCaptureHarnessContent toggles the harness-artifact content-capture
@@ -185,9 +225,11 @@ func New(cfg config.GitHubConn, log *slog.Logger) (*Connector, error) {
 	// Wrap the outermost transport with the costInterceptor so every GraphQL
 	// response updates the connector's running point totals. The wrap goes
 	// outside oauth2.Transport so it sees the final response after token
-	// injection and retry handling.
+	// injection and retry handling. rl is threaded through so the interceptor
+	// can trigger GQL low-water-mark pacing and budget tracking.
 	httpClient.Transport = &costInterceptor{
 		base: httpClient.Transport,
+		rl:   rl,
 		onCost: func(cost, remaining int) {
 			c.gqlMu.Lock()
 			c.gqlPointsUsed += cost

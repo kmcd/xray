@@ -428,7 +428,8 @@ type Transport struct {
 	// indicates remaining quota is below LowWaterMark. The next RoundTrip
 	// call sleeps until this time, so the goroutine that received the
 	// triggering response is never blocked by the pacing sleep.
-	paceUntil atomic.Int64
+	paceUntil  atomic.Int64
+	paceReason atomic.Value // string: "primary_low_water" or "graphql_low_water"
 	budgets   budgetTracker
 	// warned tracks per-connector predictive-exhaustion warnings so we
 	// emit at most one PhaseError event per connector per Transport
@@ -444,6 +445,49 @@ type Transport struct {
 // map if no rate-limit headers have been observed.
 func (t *Transport) Snapshot() map[string]BudgetState {
 	return t.budgets.snapshot()
+}
+
+// gqlBudgetLimit is GitHub's fixed GraphQL cost-unit budget per hour.
+const gqlBudgetLimit = 5000
+
+// SetGQLPacing marks the transport to sleep before the next request until
+// the supplied time, attributing the wait to the GraphQL low-water-mark.
+// Called by costInterceptor when throttleStatus.remaining falls below the
+// GraphQL low-water mark. The pacing sleep fires at the start of the next
+// RoundTrip call, matching the REST low-water path.
+func (t *Transport) SetGQLPacing(until time.Time) {
+	t.paceReason.Store("graphql_low_water")
+	t.paceUntil.Store(until.UnixNano())
+}
+
+// UpdateGQLBudget records the current GraphQL cost-unit budget under the
+// "github-graphql" connector key in the budget tracker, enabling Snapshot
+// and maybeEmitPredictiveWarning to operate on GQL quota independently of
+// the REST X-RateLimit-Remaining budget.
+func (t *Transport) UpdateGQLBudget(remaining int, resetAt time.Time, sink progress.Sink) {
+	st := BudgetState{
+		Remaining:    remaining,
+		HasRemaining: true,
+		Limit:        gqlBudgetLimit,
+		ResetAt:      resetAt.UTC(),
+		UpdatedAt:    time.Now().UTC(),
+	}
+	t.budgets.mu.Lock()
+	if t.budgets.m == nil {
+		t.budgets.m = make(map[string]BudgetState)
+	}
+	t.budgets.m["github-graphql"] = st
+	t.budgets.mu.Unlock()
+	t.maybeEmitPredictiveWarning(sink, "github-graphql")
+}
+
+// loadPaceReason returns the stored pacing reason or "primary_low_water" if
+// none has been set yet.
+func (t *Transport) loadPaceReason() string {
+	if v, ok := t.paceReason.Load().(string); ok && v != "" {
+		return v
+	}
+	return "primary_low_water"
 }
 
 // effectiveSink returns t.Sink if set, otherwise the ambient Sink on
@@ -495,7 +539,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 					At:        time.Now(),
 					Fields: map[string]any{
 						"wait_duration_s": int(sleep / time.Second),
-						"reason":          "primary_low_water",
+						"reason":          t.loadPaceReason(),
 					},
 				})
 			}
@@ -533,6 +577,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	remaining, remErr := strconv.Atoi(remainingStr)
 	if remainingStr != "" && remErr == nil && remaining < lwm {
 		if d, ok := parseRateLimitReset(resp.Header.Get("X-RateLimit-Reset")); ok && d > 0 {
+			t.paceReason.Store("primary_low_water")
 			t.paceUntil.Store(time.Now().Add(d + 5*time.Second).UnixNano())
 		}
 	}

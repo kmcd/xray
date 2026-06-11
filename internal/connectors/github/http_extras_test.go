@@ -7,7 +7,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/kmcd/xray/internal/connector"
 	"github.com/kmcd/xray/internal/model"
@@ -503,5 +505,118 @@ func TestExtractPRs_InlineOverflow_Commits(t *testing.T) {
 	// at prs.go:566 is covered by TestExtractPRs_BulkEnrichment.
 	if got, want := prov.RowsReturned["pr_commits"], 2; got != want {
 		t.Errorf("RowsReturned[pr_commits] = %d, want %d", got, want)
+	}
+}
+
+// TestCostInterceptor_UpdatesGQLBudget verifies that a GraphQL response
+// carrying throttleStatus.remaining updates the ratelimit transport's
+// "github-graphql" budget snapshot. This exercises the costInterceptor →
+// Transport.UpdateGQLBudget wiring added in #139.
+func TestCostInterceptor_UpdatesGQLBudget(t *testing.T) {
+	resetAt := time.Now().Add(45 * time.Minute).UTC().Truncate(time.Second)
+	resetUnix := strconv.FormatInt(resetAt.Unix(), 10)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/graphql" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.Header().Set("X-RateLimit-Reset", resetUnix)
+		fmt.Fprintf(w, `{"data":{},"extensions":{"cost":{"requestedQueryCost":1,"actualQueryCost":1,"throttleStatus":{"remaining":1200}}}}`)
+	}))
+	defer srv.Close()
+
+	c := newTestConnector(t, srv)
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/graphql",
+		http.NoBody)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	resp.Body.Close()
+
+	snap := c.rl.Snapshot()
+	st, ok := snap["github-graphql"]
+	if !ok {
+		ks := make([]string, 0, len(snap))
+		for k := range snap {
+			ks = append(ks, k)
+		}
+		t.Fatalf("expected 'github-graphql' in Snapshot after GQL response with cost data; got keys: %v", ks)
+	}
+	if st.Remaining != 1200 {
+		t.Errorf("github-graphql Remaining = %d, want 1200", st.Remaining)
+	}
+	if !st.HasRemaining {
+		t.Errorf("github-graphql HasRemaining = false, want true")
+	}
+	if st.Limit != 5000 {
+		t.Errorf("github-graphql Limit = %d, want 5000", st.Limit)
+	}
+	if !st.ResetAt.Equal(resetAt) {
+		t.Errorf("github-graphql ResetAt = %v, want %v", st.ResetAt, resetAt)
+	}
+}
+
+// TestCostInterceptor_AbsentThrottleStatusNoSpuriousPacing verifies that a
+// GraphQL response where throttleStatus is absent (remaining zero-initialises
+// to 0) does NOT trigger SetGQLPacing. Before the fix, `0 < gqlLowWaterMark`
+// was true and combined with the absent X-RateLimit-Reset header would cause
+// a ~1h pacing sleep.
+func TestCostInterceptor_AbsentThrottleStatusNoSpuriousPacing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/graphql" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		// No X-RateLimit-Reset header; throttleStatus absent from body.
+		fmt.Fprintf(w, `{"data":{},"extensions":{"cost":{"requestedQueryCost":1,"actualQueryCost":1}}}`)
+	}))
+	defer srv.Close()
+
+	c := newTestConnector(t, srv)
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/graphql",
+		http.NoBody)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	resp.Body.Close()
+
+	// Second request must not stall — if SetGQLPacing fired spuriously, the
+	// sleep would be ~1h and this call would time out.
+	req2, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/graphql",
+		http.NoBody)
+	if err != nil {
+		t.Fatalf("NewRequest 2: %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		resp2, err2 := c.httpClient.Do(req2)
+		if err2 == nil {
+			resp2.Body.Close()
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+		// fast — no spurious pacing
+	case <-time.After(2 * time.Second):
+		t.Error("second request stalled: SetGQLPacing was triggered spuriously on absent throttleStatus")
+	}
+
+	// "github-graphql" must NOT appear in Snapshot — remaining was 0 (absent).
+	snap := c.rl.Snapshot()
+	if _, ok := snap["github-graphql"]; ok {
+		t.Error("Snapshot should not contain 'github-graphql' when throttleStatus was absent")
 	}
 }
