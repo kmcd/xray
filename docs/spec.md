@@ -239,10 +239,11 @@ organization = "my-org"
 
 [connectors.bugsnag]
 token = "..."
-# map bugsnag project slugs to repo slugs so incidents tag to the right repo/team
+# map bugsnag project IDs (24-char hex) to repo slugs so incidents tag to the right repo/team
+# find the ID in the project URL in the Bugsnag UI, or via the Data Access API
 [connectors.bugsnag.projects]
-"foo-api" = "kmcd/foo"
-"bar-web" = "kmcd/bar"
+"5d5a8b9c0e1f2a3b4c5d6e7f" = "kmcd/foo"
+"5e7e9c1d2e3f4a5b6c7d8e90" = "kmcd/bar"
 
 [connectors.honeycomb]
 token = "..."
@@ -260,7 +261,7 @@ dataset = "production"
 - `[connectors.X]` blocks are all optional. If absent, that source is skipped
   in extraction. If present, `token` is required.
 - `bugsnag.projects` is required when bugsnag is configured; maps bugsnag
-  project slug -> repo slug. Repos not in the map produce no bugsnag data.
+  project ID -> repo slug. Repos not in the map produce no bugsnag data.
 - `sentry.organization` and `sentry.projects` are required when sentry is
   configured. `sentry.projects` maps sentry project slug -> repo slug.
 - `github_actions` is optional. If present, inherits `token` from
