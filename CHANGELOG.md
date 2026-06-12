@@ -6,6 +6,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+### Init
+
+- **Default extraction window: `2021-01-01` to today.** `xray init` and `xray init --probe` now scaffold `window = "2021-01-01..<today>"` instead of a blank `window = ""`. The 2021 start captures ~18 months of pre-AI baseline before Copilot GA (June 2022); the full ~4.5-year window covers baseline, roll-out, and steady-state in a single extract. The scaffold comment advises narrowing the window for a first run on large repos to validate connectors. ([#145])
+
 ### Performance / check
 
 - **`xray check` cost-preview: window-adjusted PR count.** The planner was using the all-time PR count (e.g. 8,000 historical PRs on a 5-year-old repo) instead of PRs active in the extraction window. The actual extraction walks PRs ordered by `UPDATED_AT` descending and stops at the window boundary, so API cost is proportional to in-window PRs. The probe now fetches `createdAt` and scales: `allTimePRs × windowDays / repoAgeDays`, bringing a 215k-call estimate on a 13-repo 8-day config into the expected ~1k range. ([#144])
@@ -34,6 +38,8 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 [#139]: https://github.com/kmcd/xray/issues/139
 [#140]: https://github.com/kmcd/xray/issues/140
 [#141]: https://github.com/kmcd/xray/issues/141
+[#144]: https://github.com/kmcd/xray/issues/144
+[#145]: https://github.com/kmcd/xray/issues/145
 
 ## [0.4.3] — 2026-06-11
 
