@@ -1,12 +1,12 @@
 {
-    "version": "0.4.3",
+    "version": "0.4.4",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/kmcd/xray/releases/download/v0.4.3/xray_0.4.3_windows_amd64.zip",
+            "url": "https://github.com/kmcd/xray/releases/download/v0.4.4/xray_0.4.4_windows_amd64.zip",
             "bin": [
                 "xray.exe"
             ],
-            "hash": "6910d82a3a8f1ea6de9ffcfcdd176aec6c797c9970cd73b97c9e7d1427181af5"
+            "hash": "5edd158df36629fc9c120adf9d51890ea0e2f5a38006fce09f88c4e83fd1702d"
         }
     },
     "homepage": "https://github.com/kmcd/xray",
