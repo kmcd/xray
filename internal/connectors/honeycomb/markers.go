@@ -57,10 +57,20 @@ type marker struct {
 // fetched and filtered client-side in extractDeploys. Volume grows with
 // deployment frequency; no pagination to manage.
 //
-// When caching is enabled (the default), a hit on a cache file younger than
-// 24 hours skips the HTTP fetch entirely. On a miss the live response is
-// written back to disk before returning.
+// Results are memoised in-process via sync.Once so that concurrent Extract
+// calls for different repos share a single fetch rather than issuing one
+// HTTP request (or disk read) per repo. Within the once, the on-disk cache
+// is consulted first; a live HTTP fetch is made only on a cache miss.
 func (c *Connector) listMarkers(ctx context.Context) ([]marker, error) {
+	c.once.Do(func() {
+		c.memoMarkers, c.memoErr = c.fetchMarkers(ctx)
+	})
+	return c.memoMarkers, c.memoErr
+}
+
+// fetchMarkers is the single-fetch implementation backing listMarkers. It
+// checks the on-disk cache first and falls back to an HTTP request on a miss.
+func (c *Connector) fetchMarkers(ctx context.Context) ([]marker, error) {
 	var cacheFile string
 	if !c.noCache {
 		fp := cacheFingerprint(c.token, c.dataset, c.baseURL)
@@ -162,8 +172,12 @@ func (c *Connector) extractDeploys(ctx context.Context, repoSlug string, window 
 		// skipped and logged at debug level.
 		slug, sha := repoFromMarkerURL(m.URL)
 		if slug != repoSlug {
-			c.log.Debug("honeycomb: marker URL does not match repo; skipping",
-				"marker_id", m.ID, "url", m.URL, "repo", repoSlug)
+			if m.URL == "" {
+				c.log.Debug("honeycomb: marker has no URL; skipping", "marker_id", m.ID, "repo", repoSlug)
+			} else {
+				c.log.Debug("honeycomb: marker URL does not match repo; skipping",
+					"marker_id", m.ID, "url", m.URL, "repo", repoSlug)
+			}
 			continue
 		}
 

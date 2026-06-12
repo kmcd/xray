@@ -3,6 +3,7 @@ package honeycomb
 import (
 	"log/slog"
 	"net/http"
+	"sync"
 
 	"github.com/kmcd/xray/internal/config"
 	"github.com/kmcd/xray/internal/ratelimit"
@@ -24,6 +25,13 @@ type Connector struct {
 	baseURL    string
 	rl         *ratelimit.Transport
 	noCache    bool
+
+	// once guards the in-process marker memo so that concurrent Extract calls
+	// for different repos share a single HTTP fetch (or disk-cache read) per
+	// run rather than issuing one request per repo.
+	once        sync.Once
+	memoMarkers []marker
+	memoErr     error
 }
 
 // Config is the connector's input. BaseURL is exposed only for tests.
