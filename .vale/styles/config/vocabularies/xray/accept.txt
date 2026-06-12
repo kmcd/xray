@@ -266,6 +266,7 @@ indent_sd
 (?i)paginations
 (?i)paginators
 (?i)subprocess
+(?i)subprocesses
 (?i)subquery
 (?i)postprocess
 (?i)file_metrics
@@ -358,6 +359,7 @@ CI's
 (?i)routings
 in_progress
 (?i)arg
+(?i)vendored
 
 (?i)npm
 (?i)dynos
