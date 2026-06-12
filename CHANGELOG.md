@@ -6,6 +6,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+## [0.4.5] — 2026-06-12
+
+`schema_version` stays at 2. v0.4.5 tightens the operator experience on two fronts: `xray init` now scaffolds a sensible default window (`2021-01-01` to today) so first-run configs are ready to extract without manual editing; and `xray check`'s cost preview corrects a 100–500× over-estimate on mature repos by scaling the all-time PR count down to the extraction window.
+
 ### Init
 
 - **Default extraction window: `2021-01-01` to today.** `xray init` and `xray init --probe` now scaffold `window = "2021-01-01..<today>"` instead of a blank `window = ""`. The 2021 start captures ~18 months of pre-AI baseline before Copilot GA (June 2022); the full ~4.5-year window covers baseline, roll-out, and steady-state in a single extract. The scaffold comment advises narrowing the window for a first run on large repos to validate connectors. ([#145])

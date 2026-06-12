@@ -217,6 +217,7 @@ Pre-1.0, the schema is unstable; minor version bumps may introduce breaking sche
 | 0.4.2        | 2              |
 | 0.4.3        | 2              |
 | 0.4.4        | 2              |
+| 0.4.5        | 2              |
 
 `0.3.0` is the first release at `schema_version = 2`. Analysers pinned to `schema_version = 1` will refuse to load `0.3.0+` artifacts — see the [CHANGELOG](./CHANGELOG.md#030--2026-06-08) for the author-handle semantics shift driving the bump.
 
@@ -226,7 +227,7 @@ Verify the cosign signature on `checksums.txt`, then verify the archive
 against the checksum.
 
 ```bash
-VERSION=0.4.4
+VERSION=0.4.5
 OS=linux           # or darwin, windows
 ARCH=amd64         # or arm64 (not available on windows)
 
