@@ -73,6 +73,14 @@ const (
 	// local disk write. Assumes a 200 Mbit/s effective downstream.
 	SecondsPerGBClone = 40
 
+	// SecondsPerGBFileWalk covers the local filesystem walk performed by
+	// extractWorkingTree after cloning. The walk itself makes zero GitHub
+	// API calls but is significant wall-clock for large repos. Calibrated
+	// from a 13-repo 7-day run: ~780s of walk time for ~1 GiB total disk.
+	// 600 s/GiB is slightly below the empirical ~780 to leave headroom
+	// while still capturing the dominant cost that the old formula missed.
+	SecondsPerGBFileWalk = 600
+
 	// MinimumWallClockSeconds is the floor — a "trivial" plan (one tiny
 	// repo, one connector) still has fixed overhead.
 	MinimumWallClockSeconds = 30
@@ -130,9 +138,9 @@ func BuildPlan(cfg *config.Config, stats []RepoStat) Plan {
 		p.APICalls += missing * APICallsPerRepoBase
 	}
 
-	clones := float64(p.CloneBytes) / float64(1<<30)
+	diskGB := float64(p.CloneBytes) / float64(1<<30)
 	api := float64(p.APICalls) * SecondsPerAPICall
-	p.WallClockSecs = int(clones*SecondsPerGBClone + api)
+	p.WallClockSecs = int(diskGB*SecondsPerGBClone + api + diskGB*SecondsPerGBFileWalk)
 	if p.WallClockSecs < MinimumWallClockSeconds {
 		p.WallClockSecs = MinimumWallClockSeconds
 	}
