@@ -3,7 +3,6 @@ package honeycomb
 import (
 	"log/slog"
 	"net/http"
-	"sync"
 
 	"github.com/kmcd/xray/internal/config"
 	"github.com/kmcd/xray/internal/ratelimit"
@@ -14,10 +13,9 @@ const DefaultBaseURL = "https://api.honeycomb.io/1"
 
 // Connector implements connector.Connector against the Honeycomb v1 API.
 //
-// Honeycomb has no per-repo concept. To attribute deploys to a repo, the
-// connector lazily picks the first repo (alphabetical by slug) it sees
-// across Extract calls and emits all data tagged to that repo. Subsequent
-// Extract calls for other repos return an empty Provenance.
+// Honeycomb has no per-repo concept. Markers are attributed to repos via
+// the GitHub commit URL embedded in each marker; markers with no URL or a
+// URL that doesn't match the current repo are skipped.
 type Connector struct {
 	httpClient *http.Client
 	log        *slog.Logger
@@ -26,9 +24,6 @@ type Connector struct {
 	baseURL    string
 	rl         *ratelimit.Transport
 	noCache    bool
-
-	mu        sync.Mutex
-	firstRepo string
 }
 
 // Config is the connector's input. BaseURL is exposed only for tests.
@@ -79,26 +74,3 @@ func (c *Connector) authHeader(req *http.Request) {
 	req.Header.Set("Accept", "application/json")
 }
 
-// chooseRepo lazily fixes the chosen repo slug on the first Extract call
-// and returns true only for that repo. Subsequent Extract calls for other
-// repos return false and become no-ops to avoid duplicate emission.
-//
-// Honeycomb exposes no per-repo concept, so emitting the same dataset's
-// markers under every repo would inflate counts. The run scheduler iterates
-// repos in a stable order; whichever repo arrives first owns the data.
-func (c *Connector) chooseRepo(slug string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.firstRepo == "" {
-		c.firstRepo = slug
-	}
-	return c.firstRepo == slug
-}
-
-// chosenRepo returns the repo slug previously fixed by chooseRepo. Empty
-// before the first Extract call.
-func (c *Connector) chosenRepo() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.firstRepo
-}

@@ -6,6 +6,64 @@ import (
 	"time"
 )
 
+func TestRepoFromMarkerURL(t *testing.T) {
+	sha := "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	cases := []struct {
+		name     string
+		url      string
+		wantSlug string
+		wantSHA  string
+	}{
+		{
+			name:     "valid github commit URL",
+			url:      "https://github.com/acme/myapp/commits/" + sha,
+			wantSlug: "acme/myapp",
+			wantSHA:  sha,
+		},
+		{
+			name:     "valid URL with trailing slash",
+			url:      "https://github.com/acme/myapp/commits/" + sha + "/",
+			wantSlug: "acme/myapp",
+			wantSHA:  sha,
+		},
+		{
+			name:     "empty URL",
+			url:      "",
+			wantSlug: "",
+			wantSHA:  "",
+		},
+		{
+			name:     "non-github URL",
+			url:      "https://example.com/release/v1.2.3",
+			wantSlug: "",
+			wantSHA:  "",
+		},
+		{
+			name:     "github URL without SHA",
+			url:      "https://github.com/acme/myapp/commits/",
+			wantSlug: "",
+			wantSHA:  "",
+		},
+		{
+			name:     "github URL with short SHA",
+			url:      "https://github.com/acme/myapp/commits/abc123",
+			wantSlug: "",
+			wantSHA:  "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotSlug, gotSHA := repoFromMarkerURL(tc.url)
+			if gotSlug != tc.wantSlug {
+				t.Errorf("slug = %q, want %q", gotSlug, tc.wantSlug)
+			}
+			if gotSHA != tc.wantSHA {
+				t.Errorf("sha = %q, want %q", gotSHA, tc.wantSHA)
+			}
+		})
+	}
+}
+
 func TestMarkerToDeploy(t *testing.T) {
 	// Sample shape modelled on the Honeycomb /markers response.
 	raw := `[
@@ -33,7 +91,7 @@ func TestMarkerToDeploy(t *testing.T) {
 		t.Fatalf("want 2 markers, got %d", len(markers))
 	}
 
-	d := markerToDeploy(markers[0], "kmcd/foo")
+	d := markerToDeploy(markers[0], "kmcd/foo", "")
 	if d.ID != "abc-123" {
 		t.Errorf("ID = %q, want abc-123", d.ID)
 	}
@@ -53,7 +111,14 @@ func TestMarkerToDeploy(t *testing.T) {
 		t.Errorf("Status = %q, want success", d.Status)
 	}
 	if d.CommitSHA != "" {
-		t.Errorf("CommitSHA = %q, want empty", d.CommitSHA)
+		t.Errorf("CommitSHA = %q, want empty (no sha passed)", d.CommitSHA)
+	}
+
+	// SHA is propagated when provided.
+	sha := "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+	dWithSHA := markerToDeploy(markers[0], "kmcd/foo", sha)
+	if dWithSHA.CommitSHA != sha {
+		t.Errorf("CommitSHA = %q, want %q", dWithSHA.CommitSHA, sha)
 	}
 	if d.RolledBack {
 		t.Errorf("RolledBack = true, want false")
@@ -67,7 +132,7 @@ func TestMarkerToDeploy(t *testing.T) {
 	}
 
 	// Marker with no type/message still maps cleanly.
-	d2 := markerToDeploy(markers[1], "kmcd/bar")
+	d2 := markerToDeploy(markers[1], "kmcd/bar", "")
 	if d2.Environment != "" {
 		t.Errorf("Environment = %q, want empty", d2.Environment)
 	}

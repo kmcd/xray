@@ -7,11 +7,32 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"time"
 
 	"github.com/kmcd/xray/internal/connector"
 	"github.com/kmcd/xray/internal/model"
 )
+
+// markerURLRe matches GitHub commit URLs produced by honeymarker:
+//
+//	https://github.com/<owner>/<repo>/commits/<sha40>
+//
+// Capture group 1 is the "owner/repo" slug; group 2 is the 40-char hex SHA.
+var markerURLRe = regexp.MustCompile(
+	`github\.com/([\w.\-]+/[\w.\-]+)/commits/([0-9a-f]{40})(?:[/?#]|$)`,
+)
+
+// repoFromMarkerURL extracts "owner/repo" and the 40-char commit SHA from a
+// GitHub commit URL like https://github.com/owner/repo/commits/<sha40>.
+// Returns ("", "") if the URL doesn't match the expected pattern.
+func repoFromMarkerURL(rawURL string) (slug, sha string) {
+	m := markerURLRe.FindStringSubmatch(rawURL)
+	if m == nil {
+		return "", ""
+	}
+	return m[1], m[2]
+}
 
 // marker is the slice of Honeycomb's marker payload xray cares about.
 //
@@ -91,15 +112,16 @@ func (c *Connector) listMarkers(ctx context.Context) ([]marker, error) {
 }
 
 // markerToDeploy maps a Honeycomb marker to a canonical model.Deploy
-// attributed to the supplied repo slug. Pure function: kept separate from
-// HTTP plumbing so the mapping can be unit-tested without a fake server.
-func markerToDeploy(m marker, repoSlug string) model.Deploy {
+// attributed to the supplied repo slug and commit SHA. Pure function: kept
+// separate from HTTP plumbing so the mapping can be unit-tested without a
+// fake server.
+func markerToDeploy(m marker, repoSlug, commitSHA string) model.Deploy {
 	return model.Deploy{
 		ID:                 m.ID,
 		Repo:               repoSlug,
 		Environment:        m.Type,
 		DeployedAt:         time.Unix(m.StartTime, 0).UTC(),
-		CommitSHA:          "",
+		CommitSHA:          commitSHA,
 		Source:             "honeycomb",
 		Status:             "success",
 		SupersedesDeployID: "",
@@ -133,7 +155,19 @@ func (c *Connector) extractDeploys(ctx context.Context, repoSlug string, window 
 		if !window.Contains(t) {
 			continue
 		}
-		d := markerToDeploy(m, repoSlug)
+
+		// Attribute each marker to its repo via the URL. Skip markers whose
+		// URL resolves to a different repo so we don't double-emit under every
+		// repo that runs Extract. Markers with no URL or a non-GitHub URL are
+		// skipped and logged at debug level.
+		slug, sha := repoFromMarkerURL(m.URL)
+		if slug != repoSlug {
+			c.log.Debug("honeycomb: marker URL does not match repo; skipping",
+				"marker_id", m.ID, "url", m.URL, "repo", repoSlug)
+			continue
+		}
+
+		d := markerToDeploy(m, repoSlug, sha)
 		if err := sink.InsertDeploy(d); err != nil {
 			prov.Errors["deploys:"+m.ID] = err.Error()
 			continue

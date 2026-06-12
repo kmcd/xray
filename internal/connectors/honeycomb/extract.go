@@ -9,20 +9,12 @@ import (
 // Extract pulls deploy markers (and best-effort SLO burn alerts) for the
 // connector's configured dataset.
 //
-// Honeycomb has no per-repo concept: the first Extract call wins and owns
-// all emitted rows under its repo slug. Subsequent Extract calls return
-// an empty Provenance with the skip recorded under endpoints["markers"]
-// so the manifest reflects the reason no data was returned for that repo.
+// Each marker carries a GitHub commit URL; markers are attributed to the repo
+// whose slug matches the URL. Markers with no URL or a URL that doesn't match
+// the current repo are skipped (logged at debug level). This means every repo
+// runs extractDeploys and only receives its own markers.
 func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window connector.Window, sink connector.Sink) connector.Provenance {
 	prov := connector.NewProvenance(c.Name(), repo.Slug, window)
-
-	if !c.chooseRepo(repo.Slug) {
-		prov.Endpoints["markers"] = connector.EndpointStatus{
-			Accessible: false,
-			Reason:     "honeycomb has no per-repo concept; emitted under " + c.chosenRepo(),
-		}
-		return prov
-	}
 
 	deploys, complete, err := c.extractDeploys(ctx, repo.Slug, window, sink, &prov)
 	prov.RowsReturned["deploys"] = deploys

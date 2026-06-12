@@ -128,11 +128,14 @@ func TestExtractDeploys_InsertError_ContinuesWalk_PerIDKey(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/markers/myds", func(w http.ResponseWriter, _ *http.Request) {
 		t0 := time.Date(2026, 6, 9, 1, 0, 0, 0, time.UTC).Unix()
+		sha1 := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		sha2 := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		sha3 := "cccccccccccccccccccccccccccccccccccccccc"
 		fmt.Fprintf(w, `[
-			{"id": "m-1", "message": "v1.0.0", "type": "production", "start_time": %d},
-			{"id": "m-2", "message": "v1.1.0", "type": "production", "start_time": %d},
-			{"id": "m-3", "message": "v1.2.0", "type": "production", "start_time": %d}
-		]`, t0, t0+60, t0+120)
+			{"id": "m-1", "message": "v1.0.0", "type": "production", "start_time": %d, "url": "https://github.com/kmcd/foo/commits/%s"},
+			{"id": "m-2", "message": "v1.1.0", "type": "production", "start_time": %d, "url": "https://github.com/kmcd/foo/commits/%s"},
+			{"id": "m-3", "message": "v1.2.0", "type": "production", "start_time": %d, "url": "https://github.com/kmcd/foo/commits/%s"}
+		]`, t0, sha1, t0+60, sha2, t0+120, sha3)
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
