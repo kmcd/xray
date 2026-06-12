@@ -6,6 +6,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+## [0.4.6] — 2026-06-12
+
+v0.4.6 reduces single-big-repo extract wall-clock by parallelising the two dominant CPU-bound local phases — complexity-history blob decompression and working-tree file scanning — across concurrent git subprocesses, and pre-classifies vendor and binary-extension paths to skip redundant file reads; a new `--extract-shards` flag exposes the concurrency with a sensible auto-rule. A companion connector change caps the bugsnag window at plan retention to avoid wasted pagination on long engagement windows.
+
 ### Performance
 
 - **`--extract-shards N`: parallel git subprocesses per repo for complexity-history and working-tree phases.** On a posthog-scale repo (90-day window, 75k blob pairs, 24.6k working-tree files), the two CPU-bound local phases now run with multiple concurrent `git cat-file --batch` subprocesses and concurrent file workers, reducing per-repo wall-clock from ~34s to ~22s (~1.5×) on fast hardware — larger on production servers where the per-GiB calibration implies 5–10× slower storage. Default 0 = auto-rule: `workers==1` → `min(NumCPU,4)` shards (single-monolith case); `workers>1` → `max(1,NumCPU/workers)` shards; hard cap 4. `--extract-shards 1` restores serial behaviour. Lever 4 (slice `LogNumstat` by date range) is out of scope due to `--find-renames` window-boundary risk. ([#149])
