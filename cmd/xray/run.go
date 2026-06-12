@@ -270,28 +270,17 @@ func connectorNames(cs []connector.Connector) []string {
 	return out
 }
 
-// resolveExtractShards applies the auto-rule when shards==0 and returns the
-// number of concurrent git subprocesses to use per repo for the complexity
-// history and working-tree phases.
-//
-// Auto-rule (shards==0):
-//   - workers==1  → min(runtime.NumCPU(), 4)   (single-monolith case)
-//   - workers>1   → max(1, runtime.NumCPU()/workers)
-//   - hard cap: 4 (subprocess pipes, diminishing returns past 4×)
-func resolveExtractShards(shards, workers int) int {
+// resolveExtractShards returns the number of concurrent git subprocesses to
+// use per repo for the complexity-history and working-tree phases.
+// When shards==0 (the default), it picks min(NumCPU, 4): the shard phases
+// are CPU-bound on zlib decompression and scale near-linearly, while the
+// API phase (goroutine B) is I/O-bound and does not compete for cores.
+// Set --extract-shards 1 to force serial behaviour.
+func resolveExtractShards(shards, _ int) int {
 	if shards > 0 {
 		return shards
 	}
-	n := runtime.NumCPU()
-	var s int
-	if workers <= 1 {
-		s = n
-	} else {
-		s = n / workers
-	}
-	if s < 1 {
-		s = 1
-	}
+	s := runtime.NumCPU()
 	if s > 4 {
 		s = 4
 	}

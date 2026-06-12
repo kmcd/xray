@@ -622,9 +622,7 @@ no connector.
   API rate limits are respected per connector regardless of worker count.
   `--extract-shards N` (default 0 = auto) controls concurrent git subprocesses
   per repo for the complexity-history and working-tree phases. Default 0
-  resolves automatically: `workers==1` → `min(NumCPU, 4)`;
-  `workers>1` → `max(1, NumCPU/workers)`; hard cap 4.
-  Set `--extract-shards 1` for serial behaviour.
+  resolves to `min(NumCPU, 4)`. Set `--extract-shards 1` for serial behaviour.
 - **Idempotence.** Each run is fully independent. No incremental state, no
   caching across runs in v1.
 - **Read-only.** No connector ever writes. No PR comments, no labels, no
