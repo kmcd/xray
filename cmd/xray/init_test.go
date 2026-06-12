@@ -104,7 +104,6 @@ func TestInitCmd_RoundTripsThroughValidate(t *testing.T) {
 		// github token is empty → pre-staged; github_actions inherits that
 		// empty token, so it still fires.
 		`connectors.github_actions: missing token (and no token to inherit from [connectors.github])`,
-		`window: missing required key "window"`,
 	}
 	sort.Strings(wantPaths)
 

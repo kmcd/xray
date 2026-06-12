@@ -161,12 +161,13 @@ an empty token field. Set the token and re-run `xray init --probe` (with
 
 Open `xray.toml` in an editor. The minimum edits before running:
 
-1. **Set the window.** Change `window = ""` to a
-   `YYYY-MM-DD..YYYY-MM-DD` range. A 90-day window is a practical
-   starting point; consult the engagement brief for the agreed range.
+1. **Review the window.** The scaffold sets `window = "2021-01-01..<today>"`. The 2021
+   start captures the pre-AI baseline (~18 months before Copilot GA in June 2022).
+   On a large repo, narrow the window for a first run to validate connectors before
+   widening to the full range.
 
    ```toml
-   window = "2025-01-01..2025-03-31"
+   window = "2021-01-01..2026-06-12"
    ```
 
 2. **Paste tokens.** Each connector block has `token = ""`. Paste the

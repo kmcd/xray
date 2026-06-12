@@ -154,6 +154,15 @@ which endpoints were reachable and what came back.
   collapsing aliases (truck factor, main-author share, Conway's-law
   signals) is inflated. Surface the caveat in the report.
 
+- **Extraction window.** The manifest's `window.start` and `window.end`
+  define the covered period. The default start is `2021-01-01`, chosen to
+  capture roughly 18 months of pre-AI baseline before GitHub Copilot reached
+  general availability in June 2022. The full window (2021-01-01 to present)
+  runs ~4.5 years, enough to show pre-adoption baseline, roll-out, and
+  steady-state in a single artifact. A short window (e.g. 90 days) means the
+  customer ran a connector-validation pass before widening — confirm the
+  agreed range before drawing conclusions about trend coverage.
+
 - **Honeycomb is dataset-scoped.** Honeycomb has no per-repo concept; all
   deploys and SLO-alert incidents are emitted under one repo slug — whichever
   repo was processed first (the order is not guaranteed). For every other repo
