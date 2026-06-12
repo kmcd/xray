@@ -6,10 +6,29 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+## [0.4.4] — 2026-06-12
+
+`schema_version` stays at 2. v0.4.4 completes the operator-experience arc: `xray init --probe` eliminates first-run config guesswork by probing every connector live and generating a pre-populated draft; GraphQL throttle pacing closes the last budget-exhaustion gap on large monorepos; and a live rate-limit budget readout in the TTY run view gives operators real-time visibility into their API headroom.
+
+### Init
+
+- **`xray init --probe`: live connector discovery and config scaffolding.** `--probe` probes each configured connector before writing the config scaffold, replacing first-run trial-and-error with a pre-populated draft. GitHub reports active repos and token scopes; CircleCI lists followed projects and generates the `gh/<org>/<repo>` mappings; Bugsnag and Sentry fuzzy-match project names against the GitHub repo list with `[high]`/`[medium]`/`[needs operator input]` confidence annotations; Honeycomb lists all datasets, attributes deploy markers to repos, and surfaces repos whose CI pipeline posts no markers at all. Each connector is skipped gracefully if its token env var (`CIRCLECI_TOKEN`, `BUGSNAG_AUTH_TOKEN`, `HC_API_KEY`/`HONEYCOMB_API_KEY`, `SENTRY_AUTH_TOKEN`) is absent. ([#140])
+
+### CLI
+
+- **Live per-connector rate-limit budget below the run grid.** `xray run` in TTY mode now shows a `github N/5000 resets Xm` line beneath the connector/repo grid, updated on every response tick. The data was already tracked in `ratelimit.Transport.Snapshot()` but not wired to the display. `--quiet` and `--json` output are unchanged. ([#138])
+
+### GitHub connector
+
+- **GraphQL throttle pacing (parity with REST low-water-mark).** The GitHub GraphQL API budgets 5,000 points/hour separately from the REST rate limit. Deep PR walks on large repos can exhaust the GraphQL budget while REST stays healthy, causing a mid-run hard 403 or hour-long stall. `costInterceptor` now calls `Transport.PaceUntil` when `throttleStatus.remaining` drops below the low-water mark (500 points), matching the REST pacing behaviour. A `RateLimit` progress event fires with reason `graphql_low_water` when pacing engages. ([#139])
+
 ### Performance
 
 - **Honeycomb marker cache.** The Honeycomb Classic markers API has no server-side date filter and returns the full marker history on every call. For organisations with 200k+ deploy markers this dominated wall-clock (22s observed). `xray run` now caches the response under `$UserCacheDir/xray/honeycomb/` with a 24-hour TTL; repeat runs drop from ~22s to <1s after the first. Pass `--no-cache` to bypass. ([#141])
 
+[#138]: https://github.com/kmcd/xray/issues/138
+[#139]: https://github.com/kmcd/xray/issues/139
+[#140]: https://github.com/kmcd/xray/issues/140
 [#141]: https://github.com/kmcd/xray/issues/141
 
 ## [0.4.3] — 2026-06-11
