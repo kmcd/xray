@@ -127,9 +127,13 @@ The default flow: **configure → validate → run → export**.
 ```bash
 # Scaffold a starter config from a GitHub org's repos.
 xray init --org my-org --token "$GITHUB_TOKEN"
+
+# Or probe live connector data first and seed mappings automatically.
+# Set env vars for each connector you want to probe, then:
+xray init --org my-org --probe --out xray.toml.draft
 ```
 
-Hand-edit `xray.toml`: connector tokens, project mappings, team layout.
+Hand-edit the generated file: connector tokens, project mappings, team layout.
 The file stays on the operator's machine — never committed to git, never
 shared back to the consultant.
 

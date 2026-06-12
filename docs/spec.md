@@ -26,7 +26,7 @@ runnable TOML scaffold with all repos under a single `unassigned` team and
 connector blocks ready to be filled in.
 
 ```
-xray init --org <github-org> [--out xray.toml] [--token <token>]
+xray init --org <github-org> [--out xray.toml] [--token <token>] [--probe]
 ```
 
 Token sourcing for `init` only: `--token` flag, else `GITHUB_TOKEN` env var.
@@ -36,6 +36,27 @@ alongside the others.
 
 Output: writes TOML to `--out` (default `xray.toml`). Refuses to overwrite an
 existing file unless `--force`.
+
+**`--probe` flag** performs a live discovery pass across all configured
+connectors before writing the scaffold. Each connector reads its token from an
+env var (table below); connectors with no token are skipped and noted in the
+output. The draft config is seeded with discovered project mappings and the
+recommended Honeycomb dataset, reducing first-run trial-and-error.
+
+| Connector   | Token env var                          |
+|-------------|----------------------------------------|
+| GitHub      | `$GITHUB_TOKEN` or `--token`           |
+| CircleCI    | `$CIRCLECI_TOKEN`                      |
+| Bugsnag     | `$BUGSNAG_AUTH_TOKEN`                  |
+| Honeycomb   | `$HC_API_KEY` or `$HONEYCOMB_API_KEY`  |
+| Sentry      | `$SENTRY_AUTH_TOKEN`                   |
+
+Fuzzy repo matching (Bugsnag and Sentry): project names are normalised
+(lower-cased, separators converted to underscores, common language suffixes
+stripped) and matched against the GitHub repo name component. Exact normalised
+matches are tagged `[high]`; substring matches are tagged `[medium]`.
+Unmatched projects appear as commented-out stubs annotated
+`[needs operator input]`.
 
 ### `xray validate`
 

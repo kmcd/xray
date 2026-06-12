@@ -19,6 +19,7 @@ type initOpts struct {
 	out   string
 	token string
 	force bool
+	probe bool
 }
 
 // initResult is the JSON shape emitted by `xray init --output json`.
@@ -36,12 +37,15 @@ func newInitCmd() *cobra.Command {
 		Short: "Generate a starter TOML config from a GitHub org",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if opts.org == "" {
+				return errors.New("--org is required")
+			}
+			if opts.probe {
+				return runProbe(cmd, opts)
+			}
 			mode, err := ResolveMode(flagOutput, flagQuiet)
 			if err != nil {
 				return silentCode(err, 1)
-			}
-			if opts.org == "" {
-				return errors.New("--org is required")
 			}
 			tok := opts.token
 			if tok == "" {
@@ -95,6 +99,7 @@ func newInitCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.out, "out", "xray.toml", "output path for the generated config")
 	cmd.Flags().StringVar(&opts.token, "token", "", "GitHub token (else $GITHUB_TOKEN)")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "overwrite the output file if it already exists")
+	cmd.Flags().BoolVar(&opts.probe, "probe", false, "discover connector data live and scaffold config from real observations")
 	return cmd
 }
 
