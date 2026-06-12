@@ -380,3 +380,4 @@ CA
 PEM
 SSL
 SSH
+(?i)org's

@@ -55,6 +55,8 @@ what a representative run actually looks like.
 - [`docs/sample-run.log`](docs/sample-run.log) — the matching `.log`
   file demonstrating no tokens, per-phase logs, and the post-run
   artifact summary.
+- [`docs/operator-setup.md`](docs/operator-setup.md) — operator-side
+  setup walkthrough: install, probe, configure, validate, and run.
 - [`docs/engagement-guide.md`](docs/engagement-guide.md) — the
   consultant-side counterpart: what happens to the artifact after
   you send it. Public so the methodology stays auditable.

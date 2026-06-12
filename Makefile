@@ -33,7 +33,8 @@ coverage:
 prose:
 	vale README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md CLAUDE.md \
 	    docs/spec.md docs/schema.md docs/security.md docs/threat-model.md \
-	    docs/style-guide.md docs/engagement-guide.md docs/enterprise.md docs/adr/
+	    docs/style-guide.md docs/engagement-guide.md docs/enterprise.md \
+	    docs/operator-setup.md docs/adr/
 
 # Run every gate the CI pipeline runs. Use before pushing to main.
 gates: lint vuln coverage

@@ -180,7 +180,7 @@ organization = ""
 [connectors.bugsnag]
 token = ""
 [connectors.bugsnag.projects]
-# "bugsnag-project-slug" = "owner/repo"
+# "bugsnag-project-id" = "owner/repo"
 
 [connectors.honeycomb]
 token = ""

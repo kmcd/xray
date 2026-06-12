@@ -470,6 +470,8 @@ has had a window for follow-up questions. Close it cleanly.
 
 ## See also
 
+- [docs/operator-setup.md](./operator-setup.md) — the operator-side
+  counterpart: install, probe, configure, and run (customer-facing).
 - [docs/security.md](./security.md) — what the artifact contains and
   what the binary guarantees (customer-facing).
 - [docs/enterprise.md](./enterprise.md) — running xray behind a
