@@ -7,10 +7,16 @@ on this Mac, and report.
 
 ## Usage
 
-`/release vX.Y.Z` — e.g. `/release v0.4.1`.
+`/release [vX.Y.Z]` — e.g. `/release v0.4.1`.
 
-The version arg is required and must be a valid semver tag (`vMAJOR.MINOR.PATCH`,
-optionally `-rcN` / `-betaN` suffix).
+The version arg is optional. When omitted, derive the next patch bump from
+`git describe --tags --abbrev=0`: parse the latest `vMAJOR.MINOR.PATCH` tag
+and increment `PATCH` by one (e.g. last tag `v0.4.7` → `v0.4.8`). Pre-release
+suffixes (`-rcN`, `-betaN`) on the last tag are stripped before bumping.
+
+When supplied, the arg must be a valid semver tag (`vMAJOR.MINOR.PATCH`,
+optionally `-rcN` / `-betaN` suffix). For minor or major bumps, supply the
+arg explicitly — the implicit form always picks the patch bump.
 
 ## Why this exists
 
@@ -32,7 +38,9 @@ make gates                                            # green
 make prose                                            # green
 ```
 
-Then validate the version arg:
+Resolve the version: if the caller supplied an arg, use it as-is. If not,
+derive the next patch bump from `git describe --tags --abbrev=0` (strip any
+pre-release suffix, then `PATCH+1`). Then validate the resolved version:
 
 - Matches `^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9]+)?$`.
 - Strictly greater than `git describe --tags --abbrev=0` (semver compare).
