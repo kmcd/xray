@@ -2,6 +2,7 @@ package bugsnag
 
 import (
 	"context"
+	"time"
 
 	"github.com/kmcd/xray/internal/connector"
 )
@@ -16,14 +17,15 @@ func (c *Connector) Extract(
 	window connector.Window,
 	sink connector.Sink,
 ) connector.Provenance {
-	prov := connector.NewProvenance(c.Name(), repo.Slug, window)
+	ew := c.cappedWindow(window)
+	prov := connector.NewProvenance(c.Name(), repo.Slug, ew)
 	prov.RowsReturned["incidents"] = 0
 
 	for projectID, mappedSlug := range c.projects {
 		if mappedSlug != repo.Slug {
 			continue
 		}
-		rows, complete, err := c.listErrors(ctx, projectID, repo.Slug, window, sink, &prov)
+		rows, complete, err := c.listErrors(ctx, projectID, repo.Slug, ew, sink, &prov)
 		prov.RowsReturned["incidents"] += rows
 		if !complete {
 			prov.PaginationComplete = false
@@ -40,4 +42,19 @@ func (c *Connector) Extract(
 	}
 
 	return prov
+}
+
+// cappedWindow returns a connector.Window whose Start is no earlier than
+// maxWindowDays before w.End, capping the query at the plan's retention
+// horizon. If the configured global window is already shorter than the cap,
+// the original window is returned unchanged.
+func (c *Connector) cappedWindow(w connector.Window) connector.Window {
+	if c.maxWindowDays <= 0 {
+		return w
+	}
+	cutoff := w.End.Add(-time.Duration(c.maxWindowDays) * 24 * time.Hour)
+	if cutoff.After(w.Start) {
+		return connector.Window{Start: cutoff, End: w.End}
+	}
+	return w
 }

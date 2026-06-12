@@ -48,8 +48,9 @@ type SentryConn struct {
 }
 
 type BugsnagConn struct {
-	Token    string
-	Projects map[string]string // bugsnag project slug -> repo slug
+	Token         string
+	Projects      map[string]string // bugsnag project slug -> repo slug
+	MaxWindowDays int               // 0 → connector default (60d)
 }
 
 type HoneycombConn struct {

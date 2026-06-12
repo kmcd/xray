@@ -202,6 +202,9 @@ func validateBugsnag(emit func(string, string), b *BugsnagConn, teamRepos map[st
 	if b.Token == "" {
 		emit("connectors.bugsnag.token", `required when [connectors.bugsnag] is present`)
 	}
+	if b.MaxWindowDays < 0 {
+		emit("connectors.bugsnag.max_window_days", `must be a positive integer or 0 (use connector default)`)
+	}
 	if len(b.Projects) == 0 {
 		emit("connectors.bugsnag.projects", `required when [connectors.bugsnag] is present`)
 		return

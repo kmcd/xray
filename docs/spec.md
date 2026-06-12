@@ -283,6 +283,10 @@ organization = "my-org"
 
 [connectors.bugsnag]
 token = "..."
+# max_window_days caps the query window at Bugsnag's plan retention horizon.
+# Default: 60 (Select/Preferred tier). Set to 7 for Free tier, or to the
+# negotiated value for Enterprise. Queries beyond the cap return no data.
+max_window_days = 60   # optional; 0 or absent → connector default (60d)
 # map bugsnag project IDs (24-char hex) to repo slugs so incidents tag to the right repo/team
 # find the ID in the project URL in the Bugsnag UI, or via the Data Access API
 [connectors.bugsnag.projects]
@@ -306,6 +310,9 @@ dataset = "production"
   in extraction. If present, `token` is required.
 - `bugsnag.projects` is required when bugsnag is configured; maps bugsnag
   project ID -> repo slug. Repos not in the map produce no bugsnag data.
+- `bugsnag.max_window_days` is optional. Caps the extraction window at
+  Bugsnag's plan retention horizon. Default 60 (Select/Preferred tier). Set to
+  7 for Free, or to the negotiated value for Enterprise. Must be positive or 0.
 - `sentry.organization` and `sentry.projects` are required when sentry is
   configured. `sentry.projects` maps sentry project slug -> repo slug.
 - `github_actions` is optional. If present, inherits `token` from

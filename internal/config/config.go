@@ -47,8 +47,9 @@ type rawSentry struct {
 }
 
 type rawBugsnag struct {
-	Token    string            `toml:"token"`
-	Projects map[string]string `toml:"projects"`
+	Token         string            `toml:"token"`
+	Projects      map[string]string `toml:"projects"`
+	MaxWindowDays int               `toml:"max_window_days"`
 }
 
 type rawHoneycomb struct {
@@ -104,8 +105,9 @@ func Load(path string) (*Config, *toml.MetaData, error) {
 	}
 	if rc := raw.Connectors.Bugsnag; rc != nil {
 		cfg.Connectors.Bugsnag = &BugsnagConn{
-			Token:    rc.Token,
-			Projects: rc.Projects,
+			Token:         rc.Token,
+			Projects:      rc.Projects,
+			MaxWindowDays: rc.MaxWindowDays,
 		}
 	}
 	if rc := raw.Connectors.Honeycomb; rc != nil {

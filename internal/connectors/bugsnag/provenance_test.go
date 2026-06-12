@@ -171,3 +171,66 @@ func TestListErrors_InsertError_ContinuesWalk_PerIDKey(t *testing.T) {
 		t.Errorf("expected per-id prov.Errors[incidents:<id>] entry; got %v", prov.Errors)
 	}
 }
+
+// TestCappedWindow verifies that cappedWindow trims a window longer than
+// maxWindowDays and leaves a shorter window unchanged.
+func TestCappedWindow(t *testing.T) {
+	c := &Connector{maxWindowDays: 60}
+
+	end := time.Date(2026, 6, 12, 0, 0, 0, 0, time.UTC)
+
+	t.Run("long window is capped", func(t *testing.T) {
+		w := connector.Window{
+			Start: end.Add(-365 * 24 * time.Hour),
+			End:   end,
+		}
+		got := c.cappedWindow(w)
+		want := end.Add(-60 * 24 * time.Hour)
+		if !got.Start.Equal(want) {
+			t.Errorf("Start: want %v, got %v", want, got.Start)
+		}
+		if !got.End.Equal(end) {
+			t.Errorf("End: want %v, got %v", end, got.End)
+		}
+	})
+
+	t.Run("short window is unchanged", func(t *testing.T) {
+		w := connector.Window{
+			Start: end.Add(-7 * 24 * time.Hour),
+			End:   end,
+		}
+		got := c.cappedWindow(w)
+		if !got.Start.Equal(w.Start) {
+			t.Errorf("Start: want %v, got %v", w.Start, got.Start)
+		}
+	})
+}
+
+// TestExtract_WindowIsCapped verifies that listErrors is called with a
+// capped window start when the global window exceeds maxWindowDays.
+func TestExtract_WindowIsCapped(t *testing.T) {
+	var gotSince string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/projects/p1/errors", func(w http.ResponseWriter, r *http.Request) {
+		gotSince = r.URL.Query().Get("filters[event.since]")
+		fmt.Fprintln(w, `[]`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	end := time.Date(2026, 6, 12, 0, 0, 0, 0, time.UTC)
+	c := testConnector(t, srv.URL)
+	c.maxWindowDays = 60
+	c.projects = map[string]string{"p1": "kmcd/foo"}
+	sink := &stubSink{}
+
+	c.Extract(context.Background(), connector.Repo{Slug: "kmcd/foo"}, connector.Window{
+		Start: end.Add(-365 * 24 * time.Hour),
+		End:   end,
+	}, sink)
+
+	wantSince := end.Add(-60 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	if gotSince != wantSince {
+		t.Errorf("filters[event.since]: want %s, got %s", wantSince, gotSince)
+	}
+}

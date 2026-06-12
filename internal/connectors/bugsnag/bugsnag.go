@@ -15,6 +15,11 @@ const DefaultBaseURL = "https://api.bugsnag.com"
 // versioning scheme.
 const APIVersion = "2"
 
+// DefaultMaxWindowDays is the cap applied to the extraction window when
+// MaxWindowDays is not set in config. 60 matches the Select/Preferred plan
+// retention horizon — the most common paid Bugsnag tier.
+const DefaultMaxWindowDays = 60
+
 // Connector implements connector.Connector against the Bugsnag Data Access
 // API. It populates `incidents`.
 type Connector struct {
@@ -26,8 +31,9 @@ type Connector struct {
 	// label "projects" (per the spec sample) but the Bugsnag API addresses
 	// projects by ID; the value the operator pastes in the map key is the
 	// project ID from Bugsnag's URL or API.
-	projects map[string]string
-	rl       *ratelimit.Transport
+	projects      map[string]string
+	maxWindowDays int
+	rl            *ratelimit.Transport
 }
 
 // Config is the connector's input. BaseURL is exposed only for tests.
@@ -48,13 +54,18 @@ func New(cfg config.BugsnagConn, log *slog.Logger) (*Connector, error) {
 		Log:    log,
 	}
 	client := &http.Client{Transport: rl}
+	mwd := cfg.MaxWindowDays
+	if mwd <= 0 {
+		mwd = DefaultMaxWindowDays
+	}
 	return &Connector{
-		httpClient: client,
-		log:        log,
-		token:      cfg.Token,
-		baseURL:    DefaultBaseURL,
-		projects:   cfg.Projects,
-		rl:         rl,
+		httpClient:    client,
+		log:           log,
+		token:         cfg.Token,
+		baseURL:       DefaultBaseURL,
+		projects:      cfg.Projects,
+		maxWindowDays: mwd,
+		rl:            rl,
 	}, nil
 }
 

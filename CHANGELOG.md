@@ -6,6 +6,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+### Connectors
+
+- **bugsnag: `max_window_days` config field caps connector window at plan retention.** Bugsnag's Select and Preferred tiers retain data for 60 days; querying a longer global window wastes pagination on empty pages. The new `max_window_days` field (default 60) caps the bugsnag query window at `min(global_window, max_window_days)`, cutting API calls by ~95% on multi-year engagement windows. Set to 7 for Free-tier customers or to the negotiated value for Enterprise. ([#148])
+
 ## [0.4.5] — 2026-06-12
 
 `schema_version` stays at 2. v0.4.5 tightens the operator experience on two fronts: `xray init` now scaffolds a sensible default window (`2021-01-01` to today) so first-run configs are ready to extract without manual editing; and `xray check`'s cost preview corrects a 100–500× over-estimate on mature repos by scaling the all-time PR count down to the extraction window.
