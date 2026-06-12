@@ -160,5 +160,5 @@ func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, win
 	}
 	// Batch-fetch file content via one git cat-file --batch subprocess and
 	// emit file_complexity_history rows. Replaces O(N) git-show subprocesses.
-	extractComplexityHistoryBatch(ctx, c, repo, cxPairs, sink, prov)
+	c.extractComplexityHistoryBatch(ctx, repo, cxPairs, sink, prov)
 }

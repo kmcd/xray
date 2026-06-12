@@ -113,7 +113,7 @@ func runCheck(cmd *cobra.Command, path string, opts checkOpts) error {
 	}
 
 	logger := run.NewLogger(flagVerbose, flagQuiet || mode == ModeQuiet || mode == ModeJSON)
-	conns, err := buildConnectors(cfg, logger, false)
+	conns, err := buildConnectors(cfg, logger, false, 0)
 	if err != nil {
 		fmt.Fprintf(errOut, "connector setup: %v\n", err)
 		return silentCode(err, 1)

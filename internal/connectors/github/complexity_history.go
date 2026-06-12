@@ -2,26 +2,82 @@ package github
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"math"
 	"regexp"
+	"sync"
 
 	"github.com/kmcd/xray/internal/connector"
 	"github.com/kmcd/xray/internal/model"
 )
 
-// complexityPair is a (sha, path) tuple queued for indent-stats computation.
-type complexityPair struct {
-	sha  string
-	path string
+// minPairsPerShard is the minimum number of (sha, path) pairs a shard must
+// own before the parallel path is worth the subprocess startup cost. Below
+// this threshold the single-shard serial fast-path is used. Exported as a
+// var so tests in this package can override it temporarily.
+var minPairsPerShard = 64
+
+// extractComplexityHistoryBatch fetches content for all pairs via one or
+// more concurrent git cat-file --batch subprocesses and emits
+// file_complexity_history rows. When c.extractShards > 1 and the pair
+// count is large enough, the pairs are distributed across shards using
+// index-stride partitioning (shard s takes pairs[s], pairs[s+S], …).
+// Full row coverage is preserved: each pair appears in exactly one shard.
+//
+// Missing objects are silently skipped. Batch-level errors are recorded in
+// prov.Errors but do not abort the connector.
+func (c *Connector) extractComplexityHistoryBatch(ctx context.Context, repo connector.Repo, pairs []complexityPair, sink connector.Sink, prov *connector.Provenance) {
+	if len(pairs) == 0 || repo.Clone == "" || c.git == nil {
+		return
+	}
+
+	shards := c.extractShards
+	if shards <= 1 || len(pairs) < shards*minPairsPerShard {
+		c.catFileBatchOnPairs(ctx, repo, pairs, sink, prov)
+		return
+	}
+
+	// Parallel path: fan-out across shards with index-stride partition.
+	shardProvs := make([]connector.Provenance, shards)
+	for s := range shardProvs {
+		shardProvs[s] = connector.NewProvenance(c.Name(), repo.Slug, prov.WindowCovered)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(shards)
+	for s := 0; s < shards; s++ {
+		s := s
+		sp := &shardProvs[s]
+		go func() {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					if sp.Errors["file_complexity_history"] == "" {
+						sp.Errors["file_complexity_history"] = fmt.Sprintf("shard panic: %v", r)
+					}
+				}
+			}()
+			// Index-stride: shard s takes pairs[s], pairs[s+shards], …
+			slicePairs := make([]complexityPair, 0, (len(pairs)-s+shards-1)/shards)
+			for i := s; i < len(pairs); i += shards {
+				slicePairs = append(slicePairs, pairs[i])
+			}
+			c.catFileBatchOnPairs(ctx, repo, slicePairs, sink, sp)
+		}()
+	}
+	wg.Wait()
+
+	for s := range shardProvs {
+		prov.Merge(shardProvs[s])
+	}
 }
 
-// extractComplexityHistoryBatch fetches content for all pairs via a single
-// git cat-file --batch subprocess and emits file_complexity_history rows.
-// Missing objects are silently skipped. A batch-level error is recorded in
-// prov.Errors but does not abort the connector.
-func extractComplexityHistoryBatch(ctx context.Context, c *Connector, repo connector.Repo, pairs []complexityPair, sink connector.Sink, prov *connector.Provenance) {
-	if len(pairs) == 0 || repo.Clone == "" || c.git == nil {
+// catFileBatchOnPairs is the serial implementation: one git cat-file --batch
+// subprocess for the supplied pairs slice. Both the serial fast-path and each
+// parallel shard call this.
+func (c *Connector) catFileBatchOnPairs(ctx context.Context, repo connector.Repo, pairs []complexityPair, sink connector.Sink, prov *connector.Provenance) {
+	if len(pairs) == 0 {
 		return
 	}
 	refs := make([]string, len(pairs))
@@ -63,6 +119,12 @@ func extractComplexityHistoryBatch(ctx context.Context, c *Connector, repo conne
 			slog.String("error", batchErr.Error()),
 		)
 	}
+}
+
+// complexityPair is a (sha, path) tuple queued for indent-stats computation.
+type complexityPair struct {
+	sha  string
+	path string
 }
 
 // indentLevelStats holds the five fields written to file_complexity_history.

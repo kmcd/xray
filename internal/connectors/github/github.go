@@ -63,6 +63,8 @@ type Connector struct {
 	// channel.
 	prefetchMu   sync.Mutex
 	prefetchData map[string]*prPrefetchResult // slug -> result
+
+	extractShards int
 }
 
 // prPrefetchResult holds the eventually-available output of a single
@@ -171,6 +173,13 @@ func gqlResetAt(v string) (time.Time, bool) {
 // before the connector is invoked.
 func (c *Connector) SetCaptureHarnessContent(v bool) {
 	c.capture = v
+}
+
+// SetExtractShards sets the number of concurrent git subprocesses to use
+// for the complexity_history and working-tree phases. 0 or 1 means serial
+// (default). Resolved by the run wiring via resolveExtractShards.
+func (c *Connector) SetExtractShards(n int) {
+	c.extractShards = n
 }
 
 // Name returns the connector name as recorded in extraction provenance.

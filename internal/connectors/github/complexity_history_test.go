@@ -1,8 +1,21 @@
 package github
 
 import (
+	"context"
+	"fmt"
 	"math"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
 	"testing"
+
+	"github.com/kmcd/xray/internal/connector"
+	"github.com/kmcd/xray/internal/model"
 )
 
 func TestScanIndentLevels_Basic(t *testing.T) {
@@ -81,5 +94,188 @@ func TestComplexityHistoryExcluded(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("complexityHistoryExcluded(%q) = %v, want %v", tc.path, got, tc.want)
 		}
+	}
+}
+
+// complexityRecordingSink records every InsertFileComplexityHistory call.
+// Mutex-guarded because the parallel shard path calls it from multiple goroutines;
+// the production store.Store carries its own mutex — same contract applies here.
+type complexityRecordingSink struct {
+	memSink
+	mu   sync.Mutex
+	rows []model.FileComplexityHistory
+}
+
+func (s *complexityRecordingSink) InsertFileComplexityHistory(row model.FileComplexityHistory) error {
+	s.mu.Lock()
+	s.rows = append(s.rows, row)
+	s.mu.Unlock()
+	return nil
+}
+
+// sortedComplexityKey returns a stable string key for dedup/sort.
+func sortedComplexityKey(r model.FileComplexityHistory) string {
+	return r.CommitSHA + "\x00" + r.Path
+}
+
+// setupSmallGitRepo creates a temp git repo with nCommits commits, each
+// writing/overwriting one of nFiles source files with indented Go content.
+// Returns the repo directory and the (sha, path) pairs that should produce
+// complexity_history rows.
+func setupSmallGitRepo(t *testing.T, nFiles, nCommits int) (dir string, pairs []complexityPair) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	dir = t.TempDir()
+
+	gitEnv := append(os.Environ(),
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_SYSTEM=/dev/null",
+		"GIT_AUTHOR_NAME=Test",
+		"GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=Test",
+		"GIT_COMMITTER_EMAIL=test@example.com",
+	)
+	runG := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd.Dir = dir
+		cmd.Env = gitEnv
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	revParse := func(ref string) string {
+		cmd := exec.CommandContext(t.Context(), "git", "rev-parse", ref)
+		cmd.Dir = dir
+		cmd.Env = gitEnv
+		out, _ := cmd.Output()
+		return strings.TrimSpace(string(out))
+	}
+
+	runG("init", "-b", "main")
+	runG("config", "user.email", "test@example.com")
+	runG("config", "user.name", "Test")
+	runG("config", "commit.gpgsign", "false")
+
+	content := "package main\n\nfunc fn%d() {\n    x := 1\n    if x > 0 {\n        _ = x\n    }\n}\n"
+	for i := 0; i < nCommits; i++ {
+		fname := fmt.Sprintf("file%d.go", i%nFiles)
+		fpath := filepath.Join(dir, fname)
+		if err := os.WriteFile(fpath, []byte(fmt.Sprintf(content, i)), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		runG("add", fname)
+		runG("commit", "-m", fmt.Sprintf("commit %d", i))
+		sha := revParse("HEAD")
+		pairs = append(pairs, complexityPair{sha: sha, path: fname})
+	}
+	return dir, pairs
+}
+
+// TestExtractComplexityHistoryBatch_ShardsEquivalentToSerial verifies that
+// parallel sharding produces an identical file_complexity_history row multiset
+// to the serial path. Covers the index-stride partitioning correctness and
+// provenance merge under concurrency.
+func TestExtractComplexityHistoryBatch_ShardsEquivalentToSerial(t *testing.T) {
+	// Lower minPairsPerShard so we exercise the parallel path with a small repo.
+	orig := minPairsPerShard
+	minPairsPerShard = 1
+	t.Cleanup(func() { minPairsPerShard = orig })
+
+	clone, pairs := setupSmallGitRepo(t, 3, 20)
+
+	c := newTestConnector(t, httptest.NewServer(http.NewServeMux()))
+
+	// Serial run (shards=1).
+	sink1 := &complexityRecordingSink{}
+	prov1 := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
+	c.extractShards = 1
+	c.extractComplexityHistoryBatch(context.Background(), connector.Repo{Slug: "kmcd/foo", Clone: clone}, pairs, sink1, &prov1)
+
+	// Parallel run (shards=4). With minPairsPerShard=1, threshold=4 pairs;
+	// 20 pairs well exceeds it, so the fan-out path is exercised.
+	sink4 := &complexityRecordingSink{}
+	prov4 := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
+	c.extractShards = 4
+	c.extractComplexityHistoryBatch(context.Background(), connector.Repo{Slug: "kmcd/foo", Clone: clone}, pairs, sink4, &prov4)
+
+	if len(sink1.rows) == 0 {
+		t.Fatal("serial run produced no rows; check test repo setup")
+	}
+	if len(sink1.rows) != len(sink4.rows) {
+		t.Fatalf("row count: shards=1 got %d, shards=4 got %d", len(sink1.rows), len(sink4.rows))
+	}
+
+	sorted := func(rows []model.FileComplexityHistory) []model.FileComplexityHistory {
+		cp := append([]model.FileComplexityHistory{}, rows...)
+		sort.Slice(cp, func(i, j int) bool {
+			ki := sortedComplexityKey(cp[i])
+			kj := sortedComplexityKey(cp[j])
+			return ki < kj
+		})
+		return cp
+	}
+	s1 := sorted(sink1.rows)
+	s4 := sorted(sink4.rows)
+	for i := range s1 {
+		if s1[i] != s4[i] {
+			t.Errorf("row[%d] mismatch:\n  serial=%+v\n  parallel=%+v", i, s1[i], s4[i])
+		}
+	}
+	if prov1.RowsReturned["file_complexity_history"] != prov4.RowsReturned["file_complexity_history"] {
+		t.Errorf("RowsReturned: serial=%d parallel=%d",
+			prov1.RowsReturned["file_complexity_history"],
+			prov4.RowsReturned["file_complexity_history"])
+	}
+}
+
+// TestExtractComplexityHistoryBatch_ShardsZeroAndOneAreSerial verifies that
+// both shards=0 and shards=1 use the serial fast-path (single CatFileBatch),
+// not the fan-out path. We assert this indirectly: with fewer pairs than
+// shards*minPairsPerShard, the parallel path is also skipped — this test uses
+// an empty pairs slice so any path returns with zero rows.
+func TestExtractComplexityHistoryBatch_ShardsZeroAndOneAreSerial(t *testing.T) {
+	c := newTestConnector(t, httptest.NewServer(http.NewServeMux()))
+	repo := connector.Repo{Slug: "kmcd/foo", Clone: t.TempDir()}
+
+	for _, shards := range []int{0, 1} {
+		sink := &complexityRecordingSink{}
+		prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
+		c.extractShards = shards
+		c.extractComplexityHistoryBatch(context.Background(), repo, nil, sink, &prov)
+		if len(sink.rows) != 0 {
+			t.Errorf("shards=%d: expected 0 rows for empty pairs; got %d", shards, len(sink.rows))
+		}
+		if prov.Errors["file_complexity_history"] != "" {
+			t.Errorf("shards=%d: unexpected error: %s", shards, prov.Errors["file_complexity_history"])
+		}
+	}
+}
+
+// TestExtractComplexityHistoryBatch_ProvMergeUnderShards verifies that the
+// per-shard provenance fragments are correctly merged: RowsReturned sums
+// across shards and the total equals len(pairs) minus missing objects.
+func TestExtractComplexityHistoryBatch_ProvMergeUnderShards(t *testing.T) {
+	orig := minPairsPerShard
+	minPairsPerShard = 1
+	t.Cleanup(func() { minPairsPerShard = orig })
+
+	clone, pairs := setupSmallGitRepo(t, 2, 16)
+
+	c := newTestConnector(t, httptest.NewServer(http.NewServeMux()))
+	sink := &complexityRecordingSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
+	c.extractShards = 4
+	c.extractComplexityHistoryBatch(context.Background(), connector.Repo{Slug: "kmcd/foo", Clone: clone}, pairs, sink, &prov)
+
+	if prov.RowsReturned["file_complexity_history"] != len(sink.rows) {
+		t.Errorf("RowsReturned[file_complexity_history]=%d but sink.rows=%d",
+			prov.RowsReturned["file_complexity_history"], len(sink.rows))
+	}
+	if len(sink.rows) == 0 {
+		t.Error("expected non-zero rows; test repo setup may have failed")
 	}
 }

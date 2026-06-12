@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -21,11 +22,12 @@ import (
 )
 
 type runOpts struct {
-	out        string
-	workers    int
-	keepClones bool
-	noRunLog   bool
-	noCache    bool
+	out           string
+	workers       int
+	keepClones    bool
+	noRunLog      bool
+	noCache       bool
+	extractShards int
 }
 
 func newRunCmd() *cobra.Command {
@@ -103,7 +105,7 @@ func newRunCmd() *cobra.Command {
 
 			ctx := withLogger(cmd.Context(), logger)
 
-			connectors, err := buildConnectors(cfg, logger, opts.noCache)
+			connectors, err := buildConnectors(cfg, logger, opts.noCache, resolveExtractShards(opts.extractShards, opts.workers))
 			if err != nil {
 				return fmt.Errorf("connector setup: %w", err)
 			}
@@ -172,6 +174,7 @@ func newRunCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.keepClones, "keep-clones", false, "skip cleanup of temp clones (debugging)")
 	cmd.Flags().BoolVar(&opts.noRunLog, "no-run-log", false, "disable run log file (mirrors stderr output alongside the artifact by default)")
 	cmd.Flags().BoolVar(&opts.noCache, "no-cache", false, "disable on-disk caches (currently: Honeycomb markers)")
+	cmd.Flags().IntVar(&opts.extractShards, "extract-shards", 0, "concurrent git subprocesses per repo for complexity and walk phases (0 = auto)")
 	return cmd
 }
 
@@ -265,6 +268,34 @@ func connectorNames(cs []connector.Connector) []string {
 		out = append(out, c.Name())
 	}
 	return out
+}
+
+// resolveExtractShards applies the auto-rule when shards==0 and returns the
+// number of concurrent git subprocesses to use per repo for the complexity
+// history and working-tree phases.
+//
+// Auto-rule (shards==0):
+//   - workers==1  → min(runtime.NumCPU(), 4)   (single-monolith case)
+//   - workers>1   → max(1, runtime.NumCPU()/workers)
+//   - hard cap: 4 (subprocess pipes, diminishing returns past 4×)
+func resolveExtractShards(shards, workers int) int {
+	if shards > 0 {
+		return shards
+	}
+	n := runtime.NumCPU()
+	var s int
+	if workers <= 1 {
+		s = n
+	} else {
+		s = n / workers
+	}
+	if s < 1 {
+		s = 1
+	}
+	if s > 4 {
+		s = 4
+	}
+	return s
 }
 
 // emitRunSummary writes the final per-mode output for a run.

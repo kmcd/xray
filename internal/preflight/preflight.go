@@ -81,6 +81,15 @@ const (
 	// while still capturing the dominant cost that the old formula missed.
 	SecondsPerGBFileWalk = 600
 
+	// SecondsPerGBComplexityHistory covers the extractComplexityHistoryBatch
+	// phase: git cat-file decompression of (commit × file) blob pairs.
+	// Calibrated from the issue-#149 profile: 11.4s on 478 MiB clone (75k
+	// pairs) → ~3s after 4× parallelisation ≈ 6 s/GiB. Scaled ×10 for
+	// production hardware (SecondsPerGBFileWalk calibration implies 5-10×
+	// slower per-GiB on non-NVMe). Set above empirical to preserve the
+	// cost-preview's over-estimate posture.
+	SecondsPerGBComplexityHistory = 60
+
 	// MinimumWallClockSeconds is the floor — a "trivial" plan (one tiny
 	// repo, one connector) still has fixed overhead.
 	MinimumWallClockSeconds = 30
@@ -140,7 +149,7 @@ func BuildPlan(cfg *config.Config, stats []RepoStat) Plan {
 
 	diskGB := float64(p.CloneBytes) / float64(1<<30)
 	api := float64(p.APICalls) * SecondsPerAPICall
-	p.WallClockSecs = int(diskGB*SecondsPerGBClone + api + diskGB*SecondsPerGBFileWalk)
+	p.WallClockSecs = int(diskGB*SecondsPerGBClone + api + diskGB*SecondsPerGBFileWalk + diskGB*SecondsPerGBComplexityHistory)
 	if p.WallClockSecs < MinimumWallClockSeconds {
 		p.WallClockSecs = MinimumWallClockSeconds
 	}

@@ -6,6 +6,11 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+### Performance
+
+- **`--extract-shards N`: parallel git subprocesses per repo for complexity-history and working-tree phases.** On a posthog-scale repo (90-day window, 75k blob pairs, 24.6k working-tree files), the two CPU-bound local phases now run with multiple concurrent `git cat-file --batch` subprocesses and concurrent file workers, reducing per-repo wall-clock from ~34s to ~22s (~1.5×) on fast hardware — larger on production servers where the per-GiB calibration implies 5–10× slower storage. Default 0 = auto-rule: `workers==1` → `min(NumCPU,4)` shards (single-monolith case); `workers>1` → `max(1,NumCPU/workers)` shards; hard cap 4. `--extract-shards 1` restores serial behaviour. Lever 4 (slice `LogNumstat` by date range) is out of scope due to `--find-renames` window-boundary risk. ([#149])
+- **Vendor/binary path pre-classification skips `os.ReadFile` in working-tree walk.** Paths matched by `enry.IsVendor` or a known-binary extension (images, archives, fonts, audio/video, compiled objects) skip the per-file `os.ReadFile` call; the `file_metrics` row is still emitted with `is_vendored`/`is_binary` set from the pre-classify. The language totals still pick up vendored files via extension fallback. ([#149])
+
 ### Connectors
 
 - **bugsnag: `max_window_days` config field caps connector window at plan retention.** Bugsnag's Select and Preferred tiers retain data for 60 days; querying a longer global window wastes pagination on empty pages. The new `max_window_days` field (default 60) caps the bugsnag query window at `min(global_window, max_window_days)`, cutting API calls by ~95% on multi-year engagement windows. Set to 7 for Free-tier customers or to the negotiated value for Enterprise. ([#148])
