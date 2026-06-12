@@ -97,6 +97,7 @@ func TestRepoStats_ReadsAggregates(t *testing.T) {
 		_ = r
 		_, _ = w.Write([]byte(`{"data":{"repository":{
 			"diskUsage": 12345,
+			"createdAt": "2020-01-01T00:00:00Z",
 			"pullRequests": {"totalCount": 99},
 			"defaultBranchRef": {"target": {"history": {"totalCount": 500}}}
 		}}}`))
@@ -105,6 +106,7 @@ func TestRepoStats_ReadsAggregates(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := newTestConnector(t, srv)
+	// Zero times → no window adjustment; PullRequests returns the all-time count.
 	stats, err := c.RepoStats(context.Background(), []string{"kmcd/foo"}, zeroTime(), zeroTime())
 	if err != nil {
 		t.Fatalf("RepoStats: %v", err)
@@ -123,6 +125,67 @@ func TestRepoStats_ReadsAggregates(t *testing.T) {
 	}
 	if stats[0].Commits != 500 {
 		t.Errorf("Commits = %d, want 500", stats[0].Commits)
+	}
+}
+
+func TestRepoStats_PRsWindowAdjusted(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/graphql", func(w http.ResponseWriter, _ *http.Request) {
+		// Repo created 2022-01-01, window ends 2024-01-01 (exactly 730 days later).
+		// 1460 all-time PRs, 8-day window → scaled = 1460 * 8 / 730 = 16.
+		_, _ = w.Write([]byte(`{"data":{"repository":{
+			"diskUsage": 0,
+			"createdAt": "2022-01-01T00:00:00Z",
+			"pullRequests": {"totalCount": 1460},
+			"defaultBranchRef": {"target": {"history": {"totalCount": 0}}}
+		}}}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	c := newTestConnector(t, srv)
+	// createdAt=2022-01-01; until=2024-01-01 (730 days); 8-day window → 1460*8/730=16.
+	since := time.Date(2023, 12, 24, 0, 0, 0, 0, time.UTC)
+	until := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	stats, err := c.RepoStats(context.Background(), []string{"kmcd/foo"}, since, until)
+	if err != nil {
+		t.Fatalf("RepoStats: %v", err)
+	}
+	if len(stats) != 1 {
+		t.Fatalf("len(stats) = %d, want 1", len(stats))
+	}
+	if stats[0].PullRequests != 16 {
+		t.Errorf("PullRequests = %d, want 16 (window-adjusted from 1460 all-time)", stats[0].PullRequests)
+	}
+}
+
+func TestWindowAdjustedPRs(t *testing.T) {
+	jan := func(y int) time.Time { return time.Date(y, 1, 1, 0, 0, 0, 0, time.UTC) }
+	cases := []struct {
+		name          string
+		allTime       int
+		repoCreatedAt time.Time
+		since, until  time.Time
+		want          int
+	}{
+		{"zero PRs", 0, jan(2020), jan(2024), jan(2024).AddDate(0, 0, 8), 0},
+		{"zero since → no scale", 100, jan(2020), time.Time{}, jan(2024), 100},
+		{"zero until → no scale", 100, jan(2020), jan(2024), time.Time{}, 100},
+		{"zero createdAt → no scale", 100, time.Time{}, jan(2024), jan(2024).AddDate(0, 0, 8), 100},
+		// Repo created 2022-01-01; until=2024-01-01 (730 days later); 8-day window: 1460*8/730=16.
+		{"typical: 8d window on 2y repo, 1460 PRs", 1460, jan(2022), jan(2024).AddDate(0, 0, -8), jan(2024), 16},
+		// Repo created 2 days before window end; window is 30 days → scaled > allTimePRs → capped.
+		{"new repo: window > age → capped at allTime", 10, jan(2024).AddDate(0, 0, 29), jan(2024), jan(2024).AddDate(0, 0, 31), 10},
+		{"floor: tiny window, many PRs → at least 1", 3000, jan(2020), jan(2025), jan(2025).AddDate(0, 0, 1), 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := windowAdjustedPRs(tc.allTime, tc.repoCreatedAt, tc.since, tc.until)
+			if got != tc.want {
+				t.Errorf("windowAdjustedPRs(%d, createdAt=%s, since=%s, until=%s) = %d, want %d",
+					tc.allTime, tc.repoCreatedAt.Format("2006-01-02"), tc.since.Format("2006-01-02"), tc.until.Format("2006-01-02"), got, tc.want)
+			}
+		})
 	}
 }
 

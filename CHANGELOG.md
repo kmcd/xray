@@ -6,6 +6,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+### Performance / check
+
+- **`xray check` cost-preview: window-adjusted PR count.** The planner was using the all-time PR count (e.g. 8,000 historical PRs on a 5-year-old repo) instead of PRs active in the extraction window. The actual extraction walks PRs ordered by `UPDATED_AT` descending and stops at the window boundary, so API cost is proportional to in-window PRs. The probe now fetches `createdAt` and scales: `allTimePRs × windowDays / repoAgeDays`, bringing a 215k-call estimate on a 13-repo 8-day config into the expected ~1k range. ([#144])
+
 ## [0.4.4] — 2026-06-12
 
 `schema_version` stays at 2. v0.4.4 completes the operator-experience arc: `xray init --probe` eliminates first-run config guesswork by probing every connector live and generating a pre-populated draft; GraphQL throttle pacing closes the last budget-exhaustion gap on large monorepos; and a live rate-limit budget readout in the TTY run view gives operators real-time visibility into their API headroom.

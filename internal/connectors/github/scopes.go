@@ -96,11 +96,12 @@ func diffScopes(a, b []string) []string {
 }
 
 // repoStatQuery is the cheap-aggregate per-repo probe used by the cost
-// preview. diskUsage, pullRequests.totalCount, and commit history total
-// are all O(1) GraphQL reads — no pagination involved.
+// preview. diskUsage, pullRequests.totalCount, createdAt, and commit
+// history total are all O(1) GraphQL reads — no pagination involved.
 type repoStatQuery struct {
 	Repository struct {
 		DiskUsage    githubv4.Int
+		CreatedAt    githubv4.DateTime
 		PullRequests struct {
 			TotalCount githubv4.Int
 		} `graphql:"pullRequests(states: [OPEN, CLOSED, MERGED])"`
@@ -160,7 +161,7 @@ func (c *Connector) RepoStats(ctx context.Context, repos []string, since, until 
 			results[i] = preflight.RepoStat{
 				Slug:         slug,
 				DiskUsageKB:  int64(q.Repository.DiskUsage),
-				PullRequests: int(q.Repository.PullRequests.TotalCount),
+				PullRequests: windowAdjustedPRs(int(q.Repository.PullRequests.TotalCount), q.Repository.CreatedAt.Time, since, until),
 				Commits:      int(q.Repository.DefaultBranchRef.Target.Commit.History.TotalCount),
 			}
 		}(i, slug, owner, name)
@@ -173,6 +174,38 @@ func (c *Connector) RepoStats(ctx context.Context, repos []string, since, until 
 		}
 	}
 	return out, nil
+}
+
+// windowAdjustedPRs scales an all-time PR count to an estimate for the
+// extraction window. GitHub GraphQL has no windowed PR count, so we
+// approximate: allTimePRs × windowDays / repoAgeDays. Without this the
+// planner over-estimates by 100-1000× on repos with years of history
+// (e.g. 8,000 all-time PRs → 215k API calls vs ~1k actual for 8 days).
+// Returns allTimePRs unchanged when any time is zero. Caps at allTimePRs,
+// floors at 1 when allTimePRs > 0.
+func windowAdjustedPRs(allTimePRs int, repoCreatedAt, since, until time.Time) int {
+	if allTimePRs == 0 {
+		return 0
+	}
+	if since.IsZero() || until.IsZero() || repoCreatedAt.IsZero() {
+		return allTimePRs
+	}
+	repoAgeDays := int(until.Sub(repoCreatedAt).Hours() / 24)
+	if repoAgeDays < 1 {
+		repoAgeDays = 1
+	}
+	windowDays := int(until.Sub(since).Hours() / 24)
+	if windowDays < 1 {
+		windowDays = 1
+	}
+	scaled := allTimePRs * windowDays / repoAgeDays
+	if scaled < 1 {
+		scaled = 1
+	}
+	if scaled > allTimePRs {
+		scaled = allTimePRs
+	}
+	return scaled
 }
 
 // branchProtectionProbeQuery is the smallest possible branch_protection

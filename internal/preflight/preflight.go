@@ -97,7 +97,7 @@ type Plan struct {
 type RepoStat struct {
 	Slug         string
 	DiskUsageKB  int64 // GraphQL repository.diskUsage; 0 if unavailable.
-	PullRequests int   // totalCount across all states.
+	PullRequests int   // estimated PRs updated in window (all-time count scaled by window/repo-age ratio; unscaled if window not set).
 	Commits      int   // estimated commits in window; 0 if unknown.
 }
 
