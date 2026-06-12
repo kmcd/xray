@@ -6,6 +6,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+### Connectors
+
+- **GitHub: adaptive pacing on secondary rate-limit triggers.** Long-window runs against a single PAT previously degenerated into a retry storm — `Retry-After` honoured for 60s, then the connector resumed at full burst rate and immediately re-tripped the same secondary limit (~600ms gap between consecutive 60s waits on the original reproduction). The ratelimit transport now layers a per-Transport inter-request delay on top of `Retry-After`: 500ms after the first detection, escalating ×2 (1s → 2s → 4s) to a 5s cap, decaying linearly back to zero over 30 minutes of clean operation. Composes additively with the existing primary low-water-mark pacing; the static `enrichBatchDelay` first-hit-avoidance spacer is unchanged. Customers see one `RateLimit` progress event per ladder step at or above 1s, with `reason: "secondary_adaptive"`. ([#150])
+
 ## [0.4.7] — 2026-06-12
 
 v0.4.7 corrects the `--extract-shards` default to `min(NumCPU, 4)` unconditionally, ensuring operators on any machine with 4+ cores get full parallel extraction without tuning; the previous default divided cores by `--workers`, which was unnecessarily conservative given the shard phases are CPU-bound and the API phase is I/O-bound.

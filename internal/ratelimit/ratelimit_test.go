@@ -703,11 +703,188 @@ func TestGQLPacingEmitsCorrectReason(t *testing.T) {
 	}
 }
 
-// TestSetGQLPacingDoesNotOverrideWithPrimaryReason verifies that a REST
-// low-water-mark detection after SetGQLPacing does not silently stomp the GQL
-// reason when both are in flight — the REST path sets reason immediately, GQL
-// must also set before paceUntil, so the last writer wins. This test documents
-// the ordering contract: SetGQLPacing sets reason before paceUntil.
+// secondaryRLBody matches the exact phrasing of GitHub's documented
+// secondary-rate-limit error envelope. Reused across adaptive-pacing
+// tests to keep the trigger condition uniform.
+const secondaryRLBody = `{"message":"You have exceeded a secondary rate limit."}`
+
+// secondaryRLHandler returns a roundTripperFunc that yields N
+// secondary-RL responses (each with Retry-After: 0 so the retry loop
+// runs fast) followed by a 200. The counter is shared via the supplied
+// pointer so the caller can assert call counts after the fact.
+func secondaryRLHandler(calls *int32, secondaryHits int) roundTripperFunc {
+	return roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		n := atomic.AddInt32(calls, 1)
+		if int(n) <= secondaryHits {
+			return mkRespBody(403, map[string]string{"Retry-After": "0"}, secondaryRLBody), nil
+		}
+		return mkResp(200, nil), nil
+	})
+}
+
+// TestAdaptivePace_FirstSecondaryRLSetsInitial verifies that a single
+// secondary-RL detection causes the next RoundTrip to sleep at least
+// adaptivePaceInitial (500ms) before issuing. The first RoundTrip
+// never pays the adaptive pace — the trigger happens inside its retry
+// loop, after currentAdaptivePace was already consulted at the top of
+// the call.
+func TestAdaptivePace_FirstSecondaryRLSetsInitial(t *testing.T) {
+	var calls int32
+	transport := &ratelimit.Transport{
+		Base:   secondaryRLHandler(&calls, 1),
+		Policy: ratelimit.Policy{MaxAttempts: 3, CumulativeBudget: 5 * time.Second, SecondaryRateLimitBudget: 5 * time.Second},
+	}
+
+	// First call: secondary-RL then 200. No pre-call sleep on this one.
+	req1, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.invalid/", nil)
+	resp1, err := transport.RoundTrip(req1)
+	if err != nil {
+		t.Fatalf("first RoundTrip: %v", err)
+	}
+	resp1.Body.Close()
+
+	// Second call: should sleep ~500ms before issuing.
+	req2, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.invalid/", nil)
+	start := time.Now()
+	resp2, err := transport.RoundTrip(req2)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("second RoundTrip: %v", err)
+	}
+	resp2.Body.Close()
+
+	if elapsed < 450*time.Millisecond {
+		t.Errorf("elapsed %v: expected >= ~500ms adaptive pace after one secondary-RL trigger", elapsed)
+	}
+}
+
+// TestAdaptivePace_EscalatesOnSubsequentTriggers verifies that three
+// secondary-RL detections climb the ladder to 2s (500ms → 1s → 2s),
+// observable via the RateLimit event emitted on the next RoundTrip.
+// 2s is chosen (not 1s) for test robustness: the linear decay starts
+// at the trigger instant, so by the time the next RoundTrip reads the
+// pace, a 1s pace decays to ~999.999ms — below the integer-second
+// threshold by a hair. 2s sits comfortably above it.
+func TestAdaptivePace_EscalatesOnSubsequentTriggers(t *testing.T) {
+	sink := &recordingSink{}
+	var calls int32
+	transport := &ratelimit.Transport{
+		Base:   secondaryRLHandler(&calls, 3),
+		Policy: ratelimit.Policy{MaxAttempts: 5, CumulativeBudget: 5 * time.Second, SecondaryRateLimitBudget: 10 * time.Second},
+		Sink:   sink,
+	}
+
+	// First call: three secondary-RL hits then 200 → escalates three
+	// times (500ms → 1s → 2s). The retry loop runs all hits within a
+	// single call because Retry-After: 0.
+	req1, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.invalid/", nil)
+	resp1, err := transport.RoundTrip(req1)
+	if err != nil {
+		t.Fatalf("first RoundTrip: %v", err)
+	}
+	resp1.Body.Close()
+
+	// Second call: pre-call sleep applies at ~2s, crossing
+	// rateLimitEventThreshold and emitting one event.
+	sink.mu.Lock()
+	sink.events = nil
+	sink.mu.Unlock()
+	req2, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.invalid/", nil)
+	resp2, err := transport.RoundTrip(req2)
+	if err != nil {
+		t.Fatalf("second RoundTrip: %v", err)
+	}
+	resp2.Body.Close()
+
+	rl := sink.byKind(progress.RateLimit)
+	if len(rl) != 1 {
+		t.Fatalf("RateLimit events from adaptive path: got %d want 1; events=%v", len(rl), sink.events)
+	}
+	if got := rl[0].Fields["reason"]; got != "secondary_adaptive" {
+		t.Errorf("reason = %v, want secondary_adaptive", got)
+	}
+	if got := rl[0].Fields["wait_duration_s"]; got != 2 {
+		t.Errorf("wait_duration_s = %v, want 2 (third ladder step)", got)
+	}
+}
+
+// TestAdaptivePace_SubSecondFirstStepEmitsNoEvent verifies the initial
+// 500ms ladder step stays below rateLimitEventThreshold (1s), so the
+// pre-call sleep happens without log spam. Mirrors
+// TestSubSecondWaitNoRateLimitEvent for the existing retry-loop path.
+func TestAdaptivePace_SubSecondFirstStepEmitsNoEvent(t *testing.T) {
+	sink := &recordingSink{}
+	var calls int32
+	transport := &ratelimit.Transport{
+		Base:   secondaryRLHandler(&calls, 1),
+		Policy: ratelimit.Policy{MaxAttempts: 3, CumulativeBudget: 5 * time.Second, SecondaryRateLimitBudget: 5 * time.Second},
+		Sink:   sink,
+	}
+
+	req1, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.invalid/", nil)
+	resp1, err := transport.RoundTrip(req1)
+	if err != nil {
+		t.Fatalf("first RoundTrip: %v", err)
+	}
+	resp1.Body.Close()
+
+	// Clear retry-loop events so only the adaptive-path event count
+	// (or absence) is visible.
+	sink.mu.Lock()
+	sink.events = nil
+	sink.mu.Unlock()
+	req2, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.invalid/", nil)
+	resp2, err := transport.RoundTrip(req2)
+	if err != nil {
+		t.Fatalf("second RoundTrip: %v", err)
+	}
+	resp2.Body.Close()
+
+	if rl := sink.byKind(progress.RateLimit); len(rl) != 0 {
+		t.Errorf("RateLimit events from adaptive path: got %d want 0 (500ms < 1s threshold); events=%v", len(rl), rl)
+	}
+}
+
+// TestAdaptivePace_ContextCancelDuringSleep verifies that context
+// cancellation while the adaptive pre-call sleep is in progress
+// returns immediately with context.Canceled, not after the full pace
+// has elapsed. Mirrors TestLowWaterMarkContextCancel for the
+// existing paceUntil path.
+func TestAdaptivePace_ContextCancelDuringSleep(t *testing.T) {
+	// 4 hits → ladder at 4s. Plenty of headroom to cancel mid-sleep.
+	var calls int32
+	transport := &ratelimit.Transport{
+		Base:   secondaryRLHandler(&calls, 4),
+		Policy: ratelimit.Policy{MaxAttempts: 10, CumulativeBudget: 5 * time.Second, SecondaryRateLimitBudget: 30 * time.Second},
+	}
+
+	req1, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://example.invalid/", nil)
+	resp1, err := transport.RoundTrip(req1)
+	if err != nil {
+		t.Fatalf("first RoundTrip: %v", err)
+	}
+	resp1.Body.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	req2, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://example.invalid/", nil)
+	start := time.Now()
+	resp2, err := transport.RoundTrip(req2)
+	elapsed := time.Since(start)
+	if resp2 != nil {
+		_ = resp2.Body.Close()
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err: got %v want context.Canceled", err)
+	}
+	if elapsed > 1*time.Second {
+		t.Errorf("elapsed %v: context cancellation took too long during ~4s adaptive sleep", elapsed)
+	}
+}
+
 func TestUpdateGQLBudget_UpdatesSnapshot(t *testing.T) {
 	transport := &ratelimit.Transport{
 		Base:   http.DefaultTransport,

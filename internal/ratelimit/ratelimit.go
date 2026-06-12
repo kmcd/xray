@@ -60,6 +60,24 @@ func DefaultPolicy() Policy {
 // shorter risks immediately tripping the same limit again.
 const secondaryRateLimitWait = 60 * time.Second
 
+// Adaptive pacing ladder applied after a secondary-RL trigger. The
+// reactive Retry-After wait alone does not break the storm: GitHub's
+// per-token secondary limit re-trips within a few hundred ms of
+// resuming, so every subsequent request needs a small inter-call sleep
+// until the budget recovers. Issue #150 evidence: ~600ms between
+// consecutive 60s waits on a single-PAT long-window run.
+//
+// Ladder: 500ms -> 1s -> 2s -> 4s -> 5s (capped). 500ms is just above
+// the observed re-trip interval; one escalation to 1s clears it
+// decisively. 5s cap keeps tail latency tolerable vs the 60s reactive
+// waits the storm would otherwise incur.
+const (
+	adaptivePaceInitial    = 500 * time.Millisecond
+	adaptivePaceMultiplier = 2
+	adaptivePaceMax        = 5 * time.Second
+	adaptivePaceDecay      = 30 * time.Minute
+)
+
 // peekLimit caps how many bytes of a 4xx response body we read for
 // rate-limit-signature detection before re-attaching the body for the
 // caller. 4 KB covers GitHub's JSON error envelope and keeps the cost
@@ -84,6 +102,12 @@ type hooks struct {
 	sink      progress.Sink
 	connector string
 	now       func() time.Time
+	// onSecondaryRL fires once per secondary-RL detection (the same
+	// detection that routes the wait to SecondaryRateLimitBudget). The
+	// Transport supplies escalateAdaptivePace here so its pacing ladder
+	// advances on every confirmed hit; Do's zero-hooks path leaves it
+	// nil and the trigger is a no-op.
+	onSecondaryRL func()
 }
 
 func (h hooks) emit(ev progress.Event) {
@@ -171,6 +195,9 @@ func doWithHooks(ctx context.Context, p Policy, log *slog.Logger, h hooks, fn fu
 			budgetLabel string
 		)
 		if isSecondaryRL {
+			if h.onSecondaryRL != nil {
+				h.onSecondaryRL()
+			}
 			thisBudget = p.SecondaryRateLimitBudget
 			thisSpent = &spentSecondary
 			budgetLabel = "secondary"
@@ -430,6 +457,18 @@ type Transport struct {
 	// triggering response is never blocked by the pacing sleep.
 	paceUntil  atomic.Int64
 	paceReason atomic.Value // string: "primary_low_water" or "graphql_low_water"
+	// adaptivePaceNanos is the current inter-request delay applied
+	// before every RoundTrip after a secondary-RL hit. Escalated by
+	// escalateAdaptivePace; decayed linearly on read in
+	// currentAdaptivePace. Zero means no adaptive pacing in effect.
+	// Issue #150: reactive Retry-After waits alone do not break the
+	// per-token secondary-RL storm — every subsequent request needs a
+	// small inter-call sleep until the budget recovers.
+	adaptivePaceNanos atomic.Int64
+	// adaptiveTriggerNanos is the unix-nanosecond wall-clock of the
+	// most recent secondary-RL trigger. Drives the linear decay back
+	// to zero over adaptivePaceDecay since the last hit.
+	adaptiveTriggerNanos atomic.Int64
 	budgets   budgetTracker
 	// warned tracks per-connector predictive-exhaustion warnings so we
 	// emit at most one PhaseError event per connector per Transport
@@ -488,6 +527,85 @@ func (t *Transport) loadPaceReason() string {
 		return v
 	}
 	return "primary_low_water"
+}
+
+// escalateAdaptivePace bumps the adaptive inter-request pace one step
+// up the ladder (adaptivePaceInitial → ×adaptivePaceMultiplier each
+// step, capped at adaptivePaceMax) and resets the decay clock. Called
+// from doWithHooks via the onSecondaryRL hook on every secondary-RL
+// detection. CAS loop guarantees parallel hits both escalate rather
+// than stomping each other to the initial value.
+func (t *Transport) escalateAdaptivePace() {
+	now := time.Now().UnixNano()
+	for {
+		cur := t.adaptivePaceNanos.Load()
+		var next int64
+		switch {
+		case cur <= 0:
+			next = adaptivePaceInitial.Nanoseconds()
+		case cur >= adaptivePaceMax.Nanoseconds():
+			next = adaptivePaceMax.Nanoseconds()
+		default:
+			next = cur * int64(adaptivePaceMultiplier)
+			if next > adaptivePaceMax.Nanoseconds() {
+				next = adaptivePaceMax.Nanoseconds()
+			}
+		}
+		if t.adaptivePaceNanos.CompareAndSwap(cur, next) {
+			t.adaptiveTriggerNanos.Store(now)
+			return
+		}
+	}
+}
+
+// currentAdaptivePace returns the in-effect inter-request delay,
+// linearly decayed toward zero over adaptivePaceDecay since the last
+// trigger. Returns 0 once the decay window has elapsed. Cheap atomic
+// loads on the hot path; no goroutine.
+func (t *Transport) currentAdaptivePace(now time.Time) time.Duration {
+	base := t.adaptivePaceNanos.Load()
+	if base <= 0 {
+		return 0
+	}
+	trigger := t.adaptiveTriggerNanos.Load()
+	if trigger <= 0 {
+		return time.Duration(base)
+	}
+	elapsed := now.UnixNano() - trigger
+	decayNs := adaptivePaceDecay.Nanoseconds()
+	if elapsed >= decayNs {
+		// Decay complete. Deliberately do NOT zero out
+		// adaptivePaceNanos here: a concurrent escalateAdaptivePace at
+		// the ladder cap performs a CAS(cap, cap) no-op then stores a
+		// fresh trigger. Between our two atomic loads above, an
+		// escalator could refresh the trigger while leaving the base
+		// pace value unchanged; our subsequent CAS(base, 0) would
+		// still succeed (cur matches) and silently drop the
+		// escalation. Returning 0 without zeroing leaves the state
+		// for the next reader, which will re-read the fresh trigger
+		// and apply the correct decayed value. The cost is a few
+		// extra atomic loads and one multiplication per RoundTrip
+		// long after the storm has passed — negligible vs the per-
+		// request network latency.
+		return 0
+	}
+	if elapsed <= 0 {
+		return time.Duration(base)
+	}
+	// Compute base * (decayNs - elapsed) / decayNs without int64
+	// overflow. With base ≤ adaptivePaceMax (5s = 5e9 ns) and decay =
+	// 30 min (1.8e12 ns), base*elapsed reaches ~9e21 — overflows int64
+	// (max ~9.2e18). Scale to milliseconds: base*elapsedMs ≤ 5e9 *
+	// 1.8e6 = 9e15, safely within range. Precision loss is sub-ms,
+	// well below any caller-visible tolerance.
+	const msNs = int64(time.Millisecond)
+	elapsedMs := elapsed / msNs
+	decayMs := decayNs / msNs
+	remaining := base - (base*elapsedMs)/decayMs
+	if remaining < 0 {
+		return 0
+	}
+	return time.Duration(remaining)
 }
 
 // effectiveSink returns t.Sink if set, otherwise the ambient Sink on
@@ -553,7 +671,41 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 	}
 
-	resp, err := doWithHooks(req.Context(), t.Policy, t.Log, hooks{sink: sink, connector: connector}, func() (*http.Response, error) {
+	// Adaptive secondary-RL pacing: if a prior response triggered
+	// secondary-RL detection, sleep currentAdaptivePace before issuing
+	// this request to stay below the per-token burst threshold.
+	// Composes additively with the paceUntil block above — the two have
+	// orthogonal triggers (low-water-remaining vs anti-burst hit) and
+	// can both apply simultaneously.
+	if pace := t.currentAdaptivePace(time.Now()); pace > 0 {
+		if pace >= rateLimitEventThreshold {
+			// Round to the nearest integer-second for the event. The
+			// linear decay continuously shaves a hair off the ladder
+			// value so truncation would report N-1 for a step the user
+			// configured at N (e.g. 1.9998s → "1s"). Round preserves
+			// the ladder semantics in the customer-visible field.
+			waitS := int((pace + time.Second/2) / time.Second)
+			sink.Emit(progress.Event{
+				Kind:      progress.RateLimit,
+				Connector: connector,
+				Message:   fmt.Sprintf("adaptive pacing, waiting %ds", waitS),
+				At:        time.Now(),
+				Fields: map[string]any{
+					"wait_duration_s": waitS,
+					"reason":          "secondary_adaptive",
+				},
+			})
+		}
+		timer := time.NewTimer(pace)
+		select {
+		case <-timer.C:
+		case <-req.Context().Done():
+			timer.Stop()
+			return nil, req.Context().Err()
+		}
+	}
+
+	resp, err := doWithHooks(req.Context(), t.Policy, t.Log, hooks{sink: sink, connector: connector, onSecondaryRL: t.escalateAdaptivePace}, func() (*http.Response, error) {
 		// Per net/http contract, callers can't reuse a request body across
 		// retries unless it is rewindable. RoundTripper is normally called
 		// by the client which arranges GetBody; we trust that contract.
