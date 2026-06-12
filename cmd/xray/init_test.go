@@ -84,11 +84,11 @@ func TestInitCmd_RoundTripsThroughValidate(t *testing.T) {
 
 	// Round-trip: feed the scaffold to config.Load + config.Validate
 	// directly (skipping the cobra layer so we are not double-testing it).
-	// The scaffold is a starting point: window is empty and connector tokens
-	// are all empty. Connectors with all required fields empty are treated as
-	// pre-staged (disabled) — no diagnostics emitted for them. We assert the
-	// *exact* set of diagnostics the scaffold yields so any future drift
-	// between scaffold and validator surfaces here.
+	// The scaffold emits a pre-filled window and empty connector tokens.
+	// Connectors with all required fields empty are treated as pre-staged
+	// (disabled) — no diagnostics emitted for them. We assert the *exact*
+	// set of diagnostics the scaffold yields so any future drift between
+	// scaffold and validator surfaces here.
 	cfg, meta, loadErr := config.Load(outPath)
 	if loadErr != nil {
 		t.Fatalf("scaffold failed config.Load: %v", loadErr)
@@ -133,12 +133,14 @@ func TestInitCmd_FilledScaffoldValidatesCleanly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read scaffold: %v", err)
 	}
-	// Fill in window, drop every connector block by overwriting with a
-	// minimal valid config that keeps the discovered teams. The teams block
-	// is what we are asserting init produces correctly.
-	filled := strings.Replace(string(body), `window = ""`,
-		`window = "2025-01-01..2025-06-30"`, 1)
-	// Strip every [connectors.*] block. Easier than filling each in.
+	// Scaffold now emits a pre-filled window starting 2021-01-01. Assert it
+	// is present so a future regression that blanks the window fails here.
+	if !strings.Contains(string(body), `window = "2021-01-01..`) {
+		t.Errorf("scaffold missing pre-filled window starting 2021-01-01:\n%s", string(body))
+	}
+	// Strip every [connectors.*] block — easier than filling each token in.
+	// The teams block and pre-filled window are what we are validating here.
+	filled := string(body)
 	if i := strings.Index(filled, "[connectors."); i >= 0 {
 		filled = filled[:i]
 	}
