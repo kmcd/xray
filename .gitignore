@@ -5,6 +5,8 @@
 *.swp
 .DS_Store
 /coverage.out
+# go test -c / -cpuprofile= leaves a <pkg>.test binary in the cwd
+*.test
 
 # Claude Code runtime state. scheduled_tasks.lock is local lock state;
 # .claude/worktrees/ is forbidden by guard-worktree.sh but the directory
