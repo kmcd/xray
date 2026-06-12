@@ -47,6 +47,11 @@ func (c *Connector) listErrors(
 	q.Set("filters[event.since]", window.Start.UTC().Format(time.RFC3339))
 	q.Set("filters[event.before]", window.End.UTC().Format(time.RFC3339))
 	q.Set("per_page", "100")
+	// sort=unsorted disables Bugsnag's default date-based sort, which causes
+	// 422 errors when paginating deep into large result sets (the cursor
+	// becomes invalid once the sorted window shifts). ratelimit.Transport
+	// already handles 429 Retry-After for this connector via New().
+	q.Set("sort", "unsorted")
 
 	next := fmt.Sprintf("%s/projects/%s/errors?%s",
 		c.baseURL, url.PathEscape(projectID), q.Encode())
