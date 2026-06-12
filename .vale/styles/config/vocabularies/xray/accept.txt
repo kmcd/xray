@@ -267,6 +267,7 @@ indent_sd
 (?i)paginators
 (?i)subprocess
 (?i)subprocesses
+(?i)zlib
 (?i)subquery
 (?i)postprocess
 (?i)file_metrics

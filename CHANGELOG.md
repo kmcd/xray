@@ -6,6 +6,14 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+## [0.4.7] — 2026-06-12
+
+v0.4.7 corrects the `--extract-shards` default to `min(NumCPU, 4)` unconditionally, ensuring operators on any machine with 4+ cores get full parallel extraction without tuning; the previous default divided cores by `--workers`, which was unnecessarily conservative given the shard phases are CPU-bound and the API phase is I/O-bound.
+
+### Performance
+
+- **`--extract-shards` default simplified to `min(NumCPU, 4)`.** The previous auto-rule divided cores by `--workers`, which was unnecessarily conservative: the shard phases are CPU-bound on zlib decompression while the API phase is I/O-bound, so they do not compete for cores. On any machine with 4+ cores the default now gives 4 shards with no operator tuning required. ([#149])
+
 ## [0.4.6] — 2026-06-12
 
 v0.4.6 reduces single-big-repo extract wall-clock by parallelising the two dominant CPU-bound local phases — complexity-history blob decompression and working-tree file scanning — across concurrent git subprocesses, and pre-classifies vendor and binary-extension paths to skip redundant file reads; a new `--extract-shards` flag exposes the concurrency with a sensible auto-rule. A companion connector change caps the bugsnag window at plan retention to avoid wasted pagination on long engagement windows.
