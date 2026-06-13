@@ -122,3 +122,61 @@ func TestAdaptivePace_ZeroStateReturnsZero(t *testing.T) {
 		t.Errorf("fresh transport: pace = %v, want 0", got)
 	}
 }
+
+// TestAdaptivePace_RecoversFromCapWithinDecayWindow pins down the
+// wall-clock behaviour required by issue #151: from a saturated ladder
+// the pace must reach zero within adaptivePaceDecay, and must already
+// be sub-second well before the window ends. v0.4.8 shipped a 30-minute
+// decay window which mathematically worked but left long-window runs
+// throttled past the planner-estimated wall-clock; v0.4.9 shortens the
+// window to 3 minutes so a 3-minute storm costs ~3 minutes of recovery
+// tail rather than ~30 minutes.
+//
+// Probes ordered small-elapsed first because each probe past the
+// decay window returns 0 and a subsequent same-base probe would too;
+// the small-elapsed ordering verifies the curve directly.
+func TestAdaptivePace_RecoversFromCapWithinDecayWindow(t *testing.T) {
+	tr := &Transport{}
+	for i := 0; i < 10; i++ {
+		tr.escalateAdaptivePace()
+	}
+	base := time.Duration(tr.adaptivePaceNanos.Load())
+	if base != adaptivePaceMax {
+		t.Fatalf("setup: ladder = %v, want %v (saturated)", base, adaptivePaceMax)
+	}
+	trigger := time.Unix(0, tr.adaptiveTriggerNanos.Load())
+
+	cases := []struct {
+		name   string
+		now    time.Time
+		assert func(t *testing.T, pace time.Duration)
+	}{
+		{
+			name: "halfway through window: pace still above 1s but well below cap",
+			now:  trigger.Add(adaptivePaceDecay / 2),
+			assert: func(t *testing.T, pace time.Duration) {
+				if pace < time.Second || pace > 3*time.Second {
+					t.Errorf("pace at half-decay = %v, want in [1s, 3s]", pace)
+				}
+			},
+		},
+		{
+			name: "at decay window: pace fully relaxed to zero",
+			now:  trigger.Add(adaptivePaceDecay),
+			assert: func(t *testing.T, pace time.Duration) {
+				if pace != 0 {
+					t.Errorf("pace at decay end = %v, want 0", pace)
+				}
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			c.assert(t, tr.currentAdaptivePace(c.now))
+		})
+	}
+
+	if adaptivePaceDecay > 5*time.Minute {
+		t.Errorf("adaptivePaceDecay = %v: #151 requires recovery within minutes, not tens of minutes; revisit before relaxing this bound", adaptivePaceDecay)
+	}
+}

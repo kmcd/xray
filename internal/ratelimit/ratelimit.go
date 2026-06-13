@@ -71,11 +71,23 @@ const secondaryRateLimitWait = 60 * time.Second
 // the observed re-trip interval; one escalation to 1s clears it
 // decisively. 5s cap keeps tail latency tolerable vs the 60s reactive
 // waits the storm would otherwise incur.
+//
+// adaptivePaceDecay bounds the wall-clock cost of a recovered storm:
+// pace linearly relaxes from its ladder value to zero over this window
+// since the last secondary-RL trigger. v0.4.8 originally set this to
+// 30 minutes — defensive against re-storms but unfit-for-purpose on
+// long-window runs, where a 3-minute storm left the connector in a
+// sub-throttle pacing tail far longer than the storm itself (issue
+// #151 reported the tail dominating the planner-estimated wall-clock
+// on a 1h51m run). 3 minutes keeps the recovery tail comparable to
+// the typical storm duration rather than an order of magnitude
+// longer; the ladder still rebuilds immediately if a fresh trigger
+// fires while pace is decaying.
 const (
 	adaptivePaceInitial    = 500 * time.Millisecond
 	adaptivePaceMultiplier = 2
 	adaptivePaceMax        = 5 * time.Second
-	adaptivePaceDecay      = 30 * time.Minute
+	adaptivePaceDecay      = 3 * time.Minute
 )
 
 // peekLimit caps how many bytes of a 4xx response body we read for
