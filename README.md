@@ -136,9 +136,9 @@ connector state and generate a pre-populated config:
 export GITHUB_TOKEN="ghp_..."       # required
 export CIRCLECI_TOKEN="..."         # optional
 export BUGSNAG_AUTH_TOKEN="..."     # optional
-export HC_API_KEY="..."             # optional (or HONEYCOMB_API_KEY)
+export HONEYCOMB_API_KEY="..."      # optional (or HC_API_KEY)
 
-xray init --org my-org --probe
+xray init --from-org my-org --probe
 ```
 
 To scaffold from repo names only (no connector discovery), set
@@ -146,7 +146,7 @@ To scaffold from repo names only (no connector discovery), set
 
 ```bash
 export GITHUB_TOKEN="ghp_..."
-xray init --org my-org
+xray init --from-org my-org
 ```
 
 Hand-edit the generated `xray.toml`: verify the window, paste any connector

@@ -59,7 +59,7 @@ func TestInitCmd_RoundTripsThroughValidate(t *testing.T) {
 	outPath := filepath.Join(t.TempDir(), "xray.toml")
 
 	root, stdout, stderr := newTestRoot(t)
-	root.SetArgs([]string{"init", "--org", "kmcd", "--token", "x", "--out", outPath})
+	root.SetArgs([]string{"init", "--from-org", "kmcd", "--token", "x", "--out", outPath})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("init err: %v (stderr=%q)", err, stderr.String())
 	}
@@ -124,7 +124,7 @@ func TestInitCmd_FilledScaffoldValidatesCleanly(t *testing.T) {
 
 	outPath := filepath.Join(t.TempDir(), "xray.toml")
 	root, _, _ := newTestRoot(t)
-	root.SetArgs([]string{"init", "--org", "kmcd", "--token", "x", "--out", outPath})
+	root.SetArgs([]string{"init", "--from-org", "kmcd", "--token", "x", "--out", outPath})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("init err: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestInitCmd_RefuseOverwrite(t *testing.T) {
 
 	// First run without --force: must refuse and leave the file untouched.
 	root, _, _ := newTestRoot(t)
-	root.SetArgs([]string{"init", "--org", "kmcd", "--token", "x", "--out", outPath})
+	root.SetArgs([]string{"init", "--from-org", "kmcd", "--token", "x", "--out", outPath})
 	err := root.Execute()
 	if err == nil {
 		t.Fatal("init err = nil, want error refusing to overwrite")
@@ -187,7 +187,7 @@ func TestInitCmd_RefuseOverwrite(t *testing.T) {
 
 	// Second run with --force: file is overwritten with the scaffold.
 	root2, _, _ := newTestRoot(t)
-	root2.SetArgs([]string{"init", "--org", "kmcd", "--token", "x", "--out", outPath, "--force"})
+	root2.SetArgs([]string{"init", "--from-org", "kmcd", "--token", "x", "--out", outPath, "--force"})
 	if err := root2.Execute(); err != nil {
 		t.Fatalf("init --force err: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestInitCmd_QuietSuppressesSuccessLine(t *testing.T) {
 	withFakeGitHub(t, payload)
 	outPath := filepath.Join(t.TempDir(), "xray.toml")
 	root, stdout, _ := newTestRoot(t)
-	root.SetArgs([]string{"init", "--org", "kmcd", "--token", "x", "--out", outPath, "--output", "quiet"})
+	root.SetArgs([]string{"init", "--from-org", "kmcd", "--token", "x", "--out", outPath, "--output", "quiet"})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("init err: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestInitCmd_JSONEmitsSummary(t *testing.T) {
 	withFakeGitHub(t, payload)
 	outPath := filepath.Join(t.TempDir(), "xray.toml")
 	root, stdout, _ := newTestRoot(t)
-	root.SetArgs([]string{"init", "--org", "kmcd", "--token", "x", "--out", outPath, "--output", "json"})
+	root.SetArgs([]string{"init", "--from-org", "kmcd", "--token", "x", "--out", outPath, "--output", "json"})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("init err: %v", err)
 	}
@@ -243,12 +243,123 @@ func TestInitCmd_JSONOverwrittenTrue(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	root, stdout, _ := newTestRoot(t)
-	root.SetArgs([]string{"init", "--org", "kmcd", "--token", "x", "--out", outPath, "--force", "--output", "json"})
+	root.SetArgs([]string{"init", "--from-org", "kmcd", "--token", "x", "--out", outPath, "--force", "--output", "json"})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("init err: %v", err)
 	}
 	if !strings.Contains(stdout.String(), `"overwritten":true`) {
 		t.Errorf("stdout = %q, want overwritten=true", stdout.String())
+	}
+}
+
+func TestInitCmd_ExcludesForksAndArchivedByDefault(t *testing.T) {
+	// The fake server returns all repos regardless of ?type=sources; the
+	// client-side r.GetFork() guard is what makes this test meaningful.
+	payload := `[
+		{"name": "main",   "full_name": "kmcd/main",   "fork": false, "archived": false},
+		{"name": "forked", "full_name": "kmcd/forked", "fork": true,  "archived": false},
+		{"name": "old",    "full_name": "kmcd/old",    "fork": false, "archived": true}
+	]`
+	withFakeGitHub(t, payload)
+
+	outPath := filepath.Join(t.TempDir(), "xray.toml")
+	root, _, _ := newTestRoot(t)
+	root.SetArgs([]string{"init", "--from-org", "kmcd", "--token", "x", "--out", outPath})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("init err: %v", err)
+	}
+	body, _ := os.ReadFile(outPath)
+	bs := string(body)
+	if strings.Contains(bs, `"kmcd/forked"`) {
+		t.Error("forked repo should be excluded by default")
+	}
+	if strings.Contains(bs, `"kmcd/old"`) {
+		t.Error("archived repo should be excluded by default")
+	}
+	if !strings.Contains(bs, `"kmcd/main"`) {
+		t.Error("active non-forked repo should be included")
+	}
+}
+
+func TestInitCmd_IncludeForksFlag(t *testing.T) {
+	payload := `[
+		{"name": "main",   "full_name": "kmcd/main",   "fork": false, "archived": false},
+		{"name": "forked", "full_name": "kmcd/forked", "fork": true,  "archived": false}
+	]`
+	withFakeGitHub(t, payload)
+
+	outPath := filepath.Join(t.TempDir(), "xray.toml")
+	root, _, _ := newTestRoot(t)
+	root.SetArgs([]string{"init", "--from-org", "kmcd", "--token", "x", "--out", outPath, "--include-forks"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("init --include-forks err: %v", err)
+	}
+	body, _ := os.ReadFile(outPath)
+	bs := string(body)
+	if !strings.Contains(bs, `"kmcd/forked"`) {
+		t.Error("forked repo should be included with --include-forks")
+	}
+}
+
+func TestInitCmd_ExcludesArchivedByDefault(t *testing.T) {
+	payload := `[
+		{"name": "active", "full_name": "kmcd/active", "archived": false},
+		{"name": "old",    "full_name": "kmcd/old",    "archived": true}
+	]`
+	withFakeGitHub(t, payload)
+
+	outPath := filepath.Join(t.TempDir(), "xray.toml")
+	root, _, _ := newTestRoot(t)
+	root.SetArgs([]string{"init", "--from-org", "kmcd", "--token", "x", "--out", outPath})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("init err: %v", err)
+	}
+	body, _ := os.ReadFile(outPath)
+	bs := string(body)
+	if strings.Contains(bs, `"kmcd/old"`) {
+		t.Error("archived repo should be excluded by default")
+	}
+	if !strings.Contains(bs, `"kmcd/active"`) {
+		t.Error("active repo should be included")
+	}
+}
+
+func TestInitCmd_IncludeArchivedFlag(t *testing.T) {
+	payload := `[
+		{"name": "active",   "full_name": "kmcd/active",   "archived": false},
+		{"name": "archived", "full_name": "kmcd/archived", "archived": true}
+	]`
+	withFakeGitHub(t, payload)
+
+	outPath := filepath.Join(t.TempDir(), "xray.toml")
+	root, _, _ := newTestRoot(t)
+	root.SetArgs([]string{"init", "--from-org", "kmcd", "--token", "x", "--out", outPath, "--include-archived"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("init --include-archived err: %v", err)
+	}
+	body, _ := os.ReadFile(outPath)
+	bs := string(body)
+	if !strings.Contains(bs, `"kmcd/archived"`) {
+		t.Error("archived repo should be included with --include-archived")
+	}
+}
+
+func TestInitCmd_XrayGHTokenEnvVar(t *testing.T) {
+	payload := `[{"name": "repo", "full_name": "kmcd/repo"}]`
+	withFakeGitHub(t, payload)
+
+	outPath := filepath.Join(t.TempDir(), "xray.toml")
+	t.Setenv("XRAY_GH_TOKEN", "xray-token")
+	t.Setenv("GITHUB_TOKEN", "")
+
+	root, _, _ := newTestRoot(t)
+	root.SetArgs([]string{"init", "--from-org", "kmcd", "--out", outPath})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("init with XRAY_GH_TOKEN err: %v", err)
+	}
+	body, _ := os.ReadFile(outPath)
+	if !strings.Contains(string(body), `"kmcd/repo"`) {
+		t.Error("scaffold missing expected repo")
 	}
 }
 

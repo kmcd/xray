@@ -60,7 +60,7 @@ the draft config.
 | GitHub | `GITHUB_TOKEN` | Personal access token or GitHub App with `repo` and `read:org` |
 | CircleCI | `CIRCLECI_TOKEN` | CircleCI v1.1 personal token |
 | Bugsnag | `BUGSNAG_AUTH_TOKEN` | Bugsnag auth token |
-| Honeycomb | `HC_API_KEY` or `HONEYCOMB_API_KEY` | Honeycomb configuration key |
+| Honeycomb | `HONEYCOMB_API_KEY` or `HC_API_KEY` | Honeycomb configuration key |
 | Sentry | `SENTRY_AUTH_TOKEN` | Sentry auth token with `project:read` |
 
 `xray` is read-only. Tokens are never logged and never leave your machine;
@@ -70,7 +70,7 @@ see [docs/security.md → No secrets in the artifact](./security.md#3-no-secrets
 export GITHUB_TOKEN="ghp_..."
 export CIRCLECI_TOKEN="..."
 export BUGSNAG_AUTH_TOKEN="..."
-export HC_API_KEY="..."
+export HONEYCOMB_API_KEY="..."
 # export SENTRY_AUTH_TOKEN="..."  # add when available
 ```
 
@@ -112,7 +112,7 @@ a Classic token with `repo` and `read:org` scopes.
 prints a summary, and writes a draft config to `xray.toml`.
 
 ```bash
-xray init --probe --org acme-corp --out xray.toml
+xray init --from-org acme-corp --probe --out xray.toml
 ```
 
 ### Sample probe output
