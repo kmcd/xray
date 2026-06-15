@@ -8,6 +8,8 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ### Connectors
 
+- **GitHub: drop static 250ms `enrichBatchDelay` between GraphQL batches.** With the adaptive secondary-RL ladder in place (#150, refined in #151), the connector now reacts to actual storm signal rather than pre-emptively pausing every batch. On a 10k-commit window (100 batches at `enrichBatchSize=100`), this removes ~25 seconds of unconditional pause from the happy path; on storm-prone runs the adaptive ladder still kicks in at the right magnitude. Context cancellation between batches is preserved by the existing `ctx.Err()` check at the loop head and ctx propagation into the GraphQL POST. ([#157])
+
 - **GitHub: shorter adaptive-pacing decay window (30 min → 3 min).** v0.4.8 introduced an adaptive inter-request ladder that decays linearly back to zero over 30 minutes — defensively long to avoid re-storming, but on long-window runs it left the connector sub-throttle for the entire planner-estimated wall-clock budget (3-minute storm → 30-minute recovery tail dominating a 1h51m run). The decay window is now 3 minutes: the linear-decay shape is unchanged and the escalation ladder still rebuilds immediately on any fresh secondary-RL trigger, but the post-storm recovery tail now matches typical storm duration instead of an order of magnitude longer. The other adaptive-pacing paths (low-water REST and GraphQL throttle) anchor their wall-clock targets to response headers and naturally release; only the secondary-RL path has internal state that needs an explicit decay bound. ([#151])
 
 ## [0.4.8] — 2026-06-12
