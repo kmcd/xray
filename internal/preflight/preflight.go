@@ -134,25 +134,49 @@ func BuildPlan(cfg *config.Config, stats []RepoStat) Plan {
 		Connectors:  connectorNames(cfg),
 	}
 
-	// prScale adjusts the PR-cluster API-call estimate when pr_window narrows
-	// the extraction relative to the global window. Uniform-distribution
-	// assumption: PRs per day is constant across the window.
+	// prScale adjusts the PR-cluster API-call estimate when the extraction
+	// window is narrowed. Uniform-distribution assumption: PRs per day is
+	// constant across the window. Sparse-historical mode (pr_inflection)
+	// has two regions: the full-fidelity bracket+recent slice (scaled by
+	// bracketDays/totalDays) and the sparse pre-bracket slice (scaled by
+	// ~3 API calls per month bucket, which is much cheaper than a full walk).
 	prScale := 1.0
-	if gh := cfg.Connectors.GitHub; gh != nil && gh.PRWindow != nil && p.WindowDays > 0 {
-		prStart := gh.PRWindow.Start
-		if prStart.Before(cfg.Window.Start) {
-			prStart = cfg.Window.Start
-		}
-		prDays := windowDays(prStart, gh.PRWindow.End)
-		if prDays < p.WindowDays {
-			prScale = float64(prDays) / float64(p.WindowDays)
+	var sparseBucketCalls int
+	if gh := cfg.Connectors.GitHub; gh != nil && p.WindowDays > 0 {
+		switch {
+		case gh.PRWindow != nil:
+			prStart := gh.PRWindow.Start
+			if prStart.Before(cfg.Window.Start) {
+				prStart = cfg.Window.Start
+			}
+			prDays := windowDays(prStart, gh.PRWindow.End)
+			if prDays < p.WindowDays {
+				prScale = float64(prDays) / float64(p.WindowDays)
+			}
+		case gh.PRInflection != nil && gh.PRBracketWindow != nil:
+			bw := gh.PRBracketWindow
+			bracketStart := gh.PRInflection.AddDate(-bw.Years, -bw.Months, -bw.Days)
+			if bracketStart.Before(cfg.Window.Start) {
+				bracketStart = cfg.Window.Start
+			}
+			bracketDays := windowDays(bracketStart, cfg.Window.End)
+			if bracketDays < p.WindowDays {
+				prScale = float64(bracketDays) / float64(p.WindowDays)
+			}
+			if gh.PRHistorySample != nil {
+				// Estimate ~3 API calls per month bucket for the sparse slice.
+				// This covers the search() call plus per-PR overflow paginators.
+				preBracketDays := windowDays(cfg.Window.Start, bracketStart)
+				bucketMonths := (preBracketDays + 29) / 30 // ceil
+				sparseBucketCalls = bucketMonths * 3
+			}
 		}
 	}
 
 	for _, s := range stats {
 		p.CloneBytes += s.DiskUsageKB * CloneBytesPerKBDiskUsage
 		p.APICalls += APICallsPerRepoBase
-		p.APICalls += int(float64(s.PullRequests) * float64(APICallsPerPR) * prScale)
+		p.APICalls += int(float64(s.PullRequests)*float64(APICallsPerPR)*prScale) + sparseBucketCalls
 		p.APICalls += s.Commits * APICallsPerCommit
 	}
 	// Repos for which we have no stat still contribute the per-repo

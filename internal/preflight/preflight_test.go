@@ -126,6 +126,53 @@ func TestBuildPlan_PRWindowScaling(t *testing.T) {
 	}
 }
 
+func TestBuildPlan_SparseHistoricalScaling(t *testing.T) {
+	// Global window: 2021-01-01..2026-06-15 = 5+ years
+	// Inflection: 2023-06-01, bracket: 12m → bracket_start = 2022-06-01
+	// Full-fidelity slice: 2022-06-01..2026-06-15 (~4y)
+	// Sparse pre-bracket: 2021-01-01..2022-06-01 (~17 months → ~17 buckets × 3 calls = 51)
+	inflection := time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC)
+	cfg := &config.Config{
+		Window: config.Window{
+			Start: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC),
+			End:   time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+			Raw:   "2021-01-01..2026-06-15",
+		},
+		Teams: map[string][]string{"t": {"a/b"}},
+		Connectors: config.Connectors{
+			GitHub: &config.GitHubConn{
+				Token:           "x",
+				PRInflection:    &inflection,
+				PRBracketWindow: &config.DurationSpec{Months: 12, Raw: "12m"},
+				PRHistorySample: &config.HistorySampleSpec{Strategy: "monthly", N: 20, Raw: "monthly:20"},
+			},
+		},
+	}
+	stats := []RepoStat{{Slug: "a/b", PullRequests: 500, Commits: 2000}}
+	p := BuildPlan(cfg, stats)
+
+	// Sparse mode should produce fewer API calls than full-window.
+	cfgFull := *cfg
+	cfgFull.Connectors.GitHub = &config.GitHubConn{Token: "x"}
+	pFull := BuildPlan(&cfgFull, stats)
+	if p.APICalls >= pFull.APICalls {
+		t.Errorf("sparse mode APICalls=%d should be less than full-walk APICalls=%d",
+			p.APICalls, pFull.APICalls)
+	}
+
+	// Without pr_history_sample, the sparse mode still scales PR calls down
+	// but does not add per-bucket calls.
+	cfgNoBuckets := *cfg
+	noBucket := *cfgNoBuckets.Connectors.GitHub
+	noBucket.PRHistorySample = nil
+	cfgNoBuckets.Connectors.GitHub = &noBucket
+	pNoBuckets := BuildPlan(&cfgNoBuckets, stats)
+	if p.APICalls <= pNoBuckets.APICalls {
+		t.Errorf("sparse with buckets=%d should be > sparse without buckets=%d (bucket calls added)",
+			p.APICalls, pNoBuckets.APICalls)
+	}
+}
+
 func TestWindowDays(t *testing.T) {
 	cases := []struct {
 		name       string
