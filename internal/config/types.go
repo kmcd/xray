@@ -29,8 +29,30 @@ type Connectors struct {
 }
 
 type GitHubConn struct {
-	Token    string
-	PRWindow *Window // nil → use global window for PR cluster extraction
+	Token           string
+	PRWindow        *Window           // nil → use global window for PR cluster extraction
+	PRInflection    *time.Time        // operator-supplied inflection date (UTC midnight); nil = no sparse mode
+	PRBracketWindow *DurationSpec     // ±N months/weeks/days full fidelity; nil = no sparse mode
+	PRHistorySample *HistorySampleSpec // nil = skip pre-bracket extraction
+}
+
+// DurationSpec is a parsed duration string of the form Nu where u ∈ {y,m,w,d}.
+// Calendar-accurate arithmetic is applied via time.AddDate, so "12m" is
+// exactly 12 calendar months rather than 365 days.
+type DurationSpec struct {
+	Years  int
+	Months int
+	Days   int
+	Raw    string // verbatim from TOML, e.g. "12m"
+}
+
+// HistorySampleSpec is a parsed pr_history_sample string "monthly:N" or
+// "monthly:N:random".
+type HistorySampleSpec struct {
+	Strategy string // always "monthly"
+	N        int    // PRs per bucket (1–100)
+	Random   bool   // true when ":random" suffix present
+	Raw      string // verbatim from TOML
 }
 
 type GitHubActionsConn struct {

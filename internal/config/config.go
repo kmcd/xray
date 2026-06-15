@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,8 +29,11 @@ type rawConnectors struct {
 }
 
 type rawGitHub struct {
-	Token    string `toml:"token"`
-	PRWindow string `toml:"pr_window"`
+	Token           string `toml:"token"`
+	PRWindow        string `toml:"pr_window"`
+	PRInflection    string `toml:"pr_inflection"`
+	PRBracketWindow string `toml:"pr_bracket_window"`
+	PRHistorySample string `toml:"pr_history_sample"`
 }
 
 type rawGitHubActions struct {
@@ -93,6 +97,27 @@ func Load(path string) (*Config, *toml.MetaData, error) {
 			}
 			conn.PRWindow = &w
 		}
+		if rc.PRInflection != "" {
+			t, err := parseInflectionDate(rc.PRInflection)
+			if err != nil {
+				return nil, nil, fmt.Errorf("connectors.github.pr_inflection: %w", err)
+			}
+			conn.PRInflection = &t
+		}
+		if rc.PRBracketWindow != "" {
+			d, err := parseDurationSpec(rc.PRBracketWindow)
+			if err != nil {
+				return nil, nil, fmt.Errorf("connectors.github.pr_bracket_window: %w", err)
+			}
+			conn.PRBracketWindow = &d
+		}
+		if rc.PRHistorySample != "" {
+			s, err := parseHistorySample(rc.PRHistorySample)
+			if err != nil {
+				return nil, nil, fmt.Errorf("connectors.github.pr_history_sample: %w", err)
+			}
+			conn.PRHistorySample = &s
+		}
 		cfg.Connectors.GitHub = conn
 	}
 	if rc := raw.Connectors.GitHubActions; rc != nil {
@@ -127,6 +152,70 @@ func Load(path string) (*Config, *toml.MetaData, error) {
 	}
 
 	return cfg, &meta, nil
+}
+
+// parseInflectionDate accepts "YYYY-MM-DD" and returns a UTC midnight time.
+func parseInflectionDate(s string) (time.Time, error) {
+	t, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(s), time.UTC)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("expected YYYY-MM-DD, got %q: %w", s, err)
+	}
+	return t, nil
+}
+
+// parseDurationSpec accepts Nu where u ∈ {y,m,w,d} and returns a DurationSpec.
+// Weeks are converted to days (1w = 7d). Only a single unit per value is
+// supported; compound durations ("1y6m") are not accepted.
+func parseDurationSpec(s string) (DurationSpec, error) {
+	s = strings.TrimSpace(s)
+	if len(s) < 2 {
+		return DurationSpec{}, fmt.Errorf("expected Nu (e.g. 12m), got %q", s)
+	}
+	unit := s[len(s)-1]
+	n, err := strconv.Atoi(s[:len(s)-1])
+	if err != nil || n <= 0 {
+		return DurationSpec{}, fmt.Errorf("expected positive integer before unit in %q", s)
+	}
+	d := DurationSpec{Raw: s}
+	switch unit {
+	case 'y':
+		d.Years = n
+	case 'm':
+		d.Months = n
+	case 'w':
+		d.Days = n * 7
+	case 'd':
+		d.Days = n
+	default:
+		return DurationSpec{}, fmt.Errorf("unknown unit %q in %q: expected y, m, w, or d", string(unit), s)
+	}
+	return d, nil
+}
+
+// parseHistorySample accepts "monthly:N" or "monthly:N:random" and returns a
+// HistorySampleSpec. N must be in [1, 100]. Other strategies are rejected
+// (only "monthly" is supported in v1).
+func parseHistorySample(s string) (HistorySampleSpec, error) {
+	s = strings.TrimSpace(s)
+	parts := strings.Split(s, ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return HistorySampleSpec{}, fmt.Errorf("expected monthly:N or monthly:N:random, got %q", s)
+	}
+	if parts[0] != "monthly" {
+		return HistorySampleSpec{}, fmt.Errorf("unknown strategy %q in %q: only \"monthly\" is supported", parts[0], s)
+	}
+	n, err := strconv.Atoi(parts[1])
+	if err != nil || n < 1 || n > 100 {
+		return HistorySampleSpec{}, fmt.Errorf("N in %q must be an integer in [1, 100]", s)
+	}
+	spec := HistorySampleSpec{Strategy: "monthly", N: n, Raw: s}
+	if len(parts) == 3 {
+		if parts[2] != "random" {
+			return HistorySampleSpec{}, fmt.Errorf("unknown modifier %q in %q: expected \"random\"", parts[2], s)
+		}
+		spec.Random = true
+	}
+	return spec, nil
 }
 
 // parseWindow accepts "YYYY-MM-DD..YYYY-MM-DD" and returns a Window with

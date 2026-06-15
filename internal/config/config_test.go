@@ -148,3 +148,151 @@ token = "ghp_x"
 		t.Errorf("PRWindow should be nil when omitted, got %+v", cfg.Connectors.GitHub.PRWindow)
 	}
 }
+
+func TestLoadSparseHistoricalConfig(t *testing.T) {
+	p := writeTempTOML(t, `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "ghp_x"
+pr_inflection = "2023-06-01"
+pr_bracket_window = "12m"
+pr_history_sample = "monthly:20"
+`)
+	cfg, _, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	gh := cfg.Connectors.GitHub
+	if gh.PRInflection == nil {
+		t.Fatal("PRInflection is nil")
+	}
+	if got := gh.PRInflection.Format("2006-01-02"); got != "2023-06-01" {
+		t.Errorf("PRInflection = %s, want 2023-06-01", got)
+	}
+	if gh.PRBracketWindow == nil {
+		t.Fatal("PRBracketWindow is nil")
+	}
+	if gh.PRBracketWindow.Months != 12 {
+		t.Errorf("PRBracketWindow.Months = %d, want 12", gh.PRBracketWindow.Months)
+	}
+	if gh.PRBracketWindow.Raw != "12m" {
+		t.Errorf("PRBracketWindow.Raw = %q, want 12m", gh.PRBracketWindow.Raw)
+	}
+	if gh.PRHistorySample == nil {
+		t.Fatal("PRHistorySample is nil")
+	}
+	if gh.PRHistorySample.N != 20 {
+		t.Errorf("PRHistorySample.N = %d, want 20", gh.PRHistorySample.N)
+	}
+	if gh.PRHistorySample.Random {
+		t.Error("PRHistorySample.Random should be false")
+	}
+}
+
+func TestLoadSparseHistoricalRandom(t *testing.T) {
+	p := writeTempTOML(t, `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "ghp_x"
+pr_inflection = "2023-06-01"
+pr_bracket_window = "12m"
+pr_history_sample = "monthly:20:random"
+`)
+	cfg, _, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	s := cfg.Connectors.GitHub.PRHistorySample
+	if s == nil {
+		t.Fatal("PRHistorySample is nil")
+	}
+	if !s.Random {
+		t.Error("PRHistorySample.Random should be true")
+	}
+	if s.Raw != "monthly:20:random" {
+		t.Errorf("PRHistorySample.Raw = %q, want monthly:20:random", s.Raw)
+	}
+}
+
+func TestParseDurationSpec(t *testing.T) {
+	tests := []struct {
+		in      string
+		years   int
+		months  int
+		days    int
+		wantErr bool
+	}{
+		{"12m", 0, 12, 0, false},
+		{"1y", 1, 0, 0, false},
+		{"30d", 0, 0, 30, false},
+		{"4w", 0, 0, 28, false},
+		{"6m", 0, 6, 0, false},
+		// invalid
+		{"12", 0, 0, 0, true},
+		{"12mo", 0, 0, 0, true},
+		{"-3m", 0, 0, 0, true},
+		{"0d", 0, 0, 0, true},
+		{"", 0, 0, 0, true},
+		{"m", 0, 0, 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got, err := parseDurationSpec(tt.in)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("parseDurationSpec(%q): expected error, got %+v", tt.in, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseDurationSpec(%q): %v", tt.in, err)
+			}
+			if got.Years != tt.years || got.Months != tt.months || got.Days != tt.days {
+				t.Errorf("parseDurationSpec(%q) = {Y:%d M:%d D:%d}, want {Y:%d M:%d D:%d}",
+					tt.in, got.Years, got.Months, got.Days, tt.years, tt.months, tt.days)
+			}
+		})
+	}
+}
+
+func TestParseHistorySample(t *testing.T) {
+	tests := []struct {
+		in       string
+		n        int
+		random   bool
+		wantErr  bool
+	}{
+		{"monthly:20", 20, false, false},
+		{"monthly:1", 1, false, false},
+		{"monthly:100", 100, false, false},
+		{"monthly:20:random", 20, true, false},
+		// invalid
+		{"monthly:0", 0, false, true},
+		{"monthly:101", 0, false, true},
+		{"weekly:20", 0, false, true},
+		{"monthly", 0, false, true},
+		{"20", 0, false, true},
+		{"monthly:20:typo", 0, false, true},
+		{"monthly:-1", 0, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got, err := parseHistorySample(tt.in)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("parseHistorySample(%q): expected error, got %+v", tt.in, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseHistorySample(%q): %v", tt.in, err)
+			}
+			if got.N != tt.n || got.Random != tt.random {
+				t.Errorf("parseHistorySample(%q) = {N:%d Random:%v}, want {N:%d Random:%v}",
+					tt.in, got.N, got.Random, tt.n, tt.random)
+			}
+		})
+	}
+}
