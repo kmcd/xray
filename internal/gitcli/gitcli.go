@@ -404,13 +404,70 @@ func (c *Client) DefaultBranch(ctx context.Context, clonePath string) (string, e
 	if err != nil {
 		return "main", nil
 	}
-	ref := strings.TrimSpace(out)
-	// refs/remotes/origin/<branch>
+	return parseOriginHEADRef(out), nil
+}
+
+// HeadAndDefaultBranch resolves HEAD's SHA and the default branch in a single
+// `git` subprocess, replacing the sequential HeadSHA + DefaultBranch pair on
+// the clone path. At N repos the saved fork+exec on macOS (~5ms each, ~250ms
+// at 50 repos) compounds noticeably.
+//
+// `git rev-parse HEAD --symbolic-full-name refs/remotes/origin/HEAD` prints
+// two stdout lines:
+//
+//   - line 1: HEAD's SHA (always, on any normal repo).
+//   - line 2: either `refs/remotes/origin/<branch>` (origin/HEAD set, exit 0)
+//     or the literal `refs/remotes/origin/HEAD` (unresolved, exit 128).
+//
+// On the failure path stdout is still well-formed, so we parse it regardless
+// of exit status and surface a real error only when line 1 isn't a valid SHA.
+// The default-branch lookup retains the same "fall back to main" semantics as
+// DefaultBranch.
+func (c *Client) HeadAndDefaultBranch(ctx context.Context, clonePath string) (string, string, error) {
+	out, err := c.run(ctx, clonePath,
+		"rev-parse", "HEAD", "--symbolic-full-name", "refs/remotes/origin/HEAD",
+	)
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) < 1 || !isHex40(lines[0]) {
+		if err != nil {
+			return "", "", err
+		}
+		return "", "", fmt.Errorf("gitcli: rev-parse HEAD: unexpected output %q", out)
+	}
+	sha := lines[0]
+	branch := "main"
+	if len(lines) >= 2 {
+		branch = parseOriginHEADRef(lines[1])
+	}
+	return sha, branch, nil
+}
+
+// parseOriginHEADRef extracts the branch name from a `refs/remotes/origin/<branch>`
+// line, returning "main" for any other input (including the literal
+// `refs/remotes/origin/HEAD` that `rev-parse --symbolic-full-name` echoes back
+// when origin/HEAD is unset).
+func parseOriginHEADRef(s string) string {
+	ref := strings.TrimSpace(s)
 	const prefix = "refs/remotes/origin/"
 	if strings.HasPrefix(ref, prefix) {
-		return ref[len(prefix):], nil
+		name := ref[len(prefix):]
+		if name != "" && name != "HEAD" {
+			return name
+		}
 	}
-	return "main", nil
+	return "main"
+}
+
+func isHex40(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // CommitRecord is a parsed git log entry covering everything the github

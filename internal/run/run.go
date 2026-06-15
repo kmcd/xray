@@ -446,11 +446,11 @@ func cloneOneRepo(ctx context.Context, git *gitcli.Client, log *slog.Logger, slu
 	var head, branch string
 	if cloneErr == nil {
 		var err error
-		if head, err = git.HeadSHA(ctx, dest); err != nil {
+		// One subprocess resolves both HEAD's SHA and the default branch;
+		// at N repos the saved fork+exec compounds noticeably.
+		if head, branch, err = git.HeadAndDefaultBranch(ctx, dest); err != nil {
 			log.Error("run: head-sha failed", slog.String("repo", slug), slog.String("error", err.Error()))
 			cloneErr = err
-		} else {
-			branch, _ = git.DefaultBranch(ctx, dest)
 		}
 	}
 	pfwg.Wait()

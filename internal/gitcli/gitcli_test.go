@@ -823,6 +823,83 @@ func TestClient_DefaultBranch_Success(t *testing.T) {
 	}
 }
 
+func TestClient_HeadAndDefaultBranch_Success(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	// Build a real clone whose origin/HEAD points to a non-default name so
+	// we exercise both the SHA path and the symbolic-ref parse.
+	srcDir := t.TempDir()
+	runShell(t, srcDir, nil, "init", "-b", "trunk")
+	runShell(t, srcDir, nil, "config", "user.email", "c@example.com")
+	runShell(t, srcDir, nil, "config", "user.name", "C")
+	writeFile(t, srcDir, "f", "x\n")
+	runShell(t, srcDir, nil, "add", "-A")
+	runShell(t, srcDir, nil, "commit", "-m", "init")
+
+	cloneDir := filepath.Join(t.TempDir(), "clone")
+	runShell(t, "", nil, "clone", "-q", srcDir, cloneDir)
+
+	c := newClient()
+	ctx := context.Background()
+	sha, branch, err := c.HeadAndDefaultBranch(ctx, cloneDir)
+	if err != nil {
+		t.Fatalf("HeadAndDefaultBranch: %v", err)
+	}
+	wantSHA := strings.TrimSpace(runShell(t, cloneDir, nil, "rev-parse", "HEAD"))
+	if sha != wantSHA {
+		t.Errorf("sha = %q, want %q", sha, wantSHA)
+	}
+	if branch != "trunk" {
+		t.Errorf("branch = %q, want %q", branch, "trunk")
+	}
+}
+
+func TestClient_HeadAndDefaultBranch_FallbackBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	// Init-and-commit (no origin), so refs/remotes/origin/HEAD is absent.
+	// HEAD's SHA still resolves; branch must fall back to "main".
+	dir := t.TempDir()
+	runShell(t, dir, nil, "init", "-b", "main")
+	runShell(t, dir, nil, "config", "user.email", "c@example.com")
+	runShell(t, dir, nil, "config", "user.name", "C")
+	writeFile(t, dir, "f", "x\n")
+	runShell(t, dir, nil, "add", "-A")
+	runShell(t, dir, nil, "commit", "-m", "init")
+
+	c := newClient()
+	ctx := context.Background()
+	sha, branch, err := c.HeadAndDefaultBranch(ctx, dir)
+	if err != nil {
+		t.Fatalf("HeadAndDefaultBranch: %v", err)
+	}
+	if len(sha) != 40 {
+		t.Errorf("sha length = %d, want 40 (%q)", len(sha), sha)
+	}
+	if branch != "main" {
+		t.Errorf("branch = %q, want %q (fallback)", branch, "main")
+	}
+}
+
+func TestClient_HeadAndDefaultBranch_NoHEAD(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	// Empty repo: HEAD is unborn, rev-parse HEAD fails. We must surface a
+	// real error (matching HeadSHA's original behaviour on the cloneErr path).
+	dir := t.TempDir()
+	runShell(t, dir, nil, "init", "-b", "main")
+
+	c := newClient()
+	ctx := context.Background()
+	_, _, err := c.HeadAndDefaultBranch(ctx, dir)
+	if err == nil {
+		t.Fatal("expected error for empty repo, got nil")
+	}
+}
+
 func TestClient_RemoteBranches(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")
