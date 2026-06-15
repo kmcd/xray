@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -474,6 +475,95 @@ func TestRun_FailedConnectorReported(t *testing.T) {
 	}
 	if !foundErr {
 		t.Errorf("manifest extraction_provenance did not carry the stub error: %v", provs)
+	}
+}
+
+func TestRun_CloneFailure_OtherReposExtract(t *testing.T) {
+	// Two repos: one clones successfully and runs the stub connector; one has
+	// no insteadOf mapping so git.Clone fails. Verify that the successful
+	// repo is fully extracted and the failed clone appears in provenance.
+	good := "owner/fixture"
+	bad := "owner/missing"
+	bare := setupFakeRemote(t)
+	installInsteadOf(t, map[string]string{good: bare})
+
+	stub := &stubConnector{name: "stub", commits: 2}
+
+	cfg := &config.Config{
+		Window: config.Window{
+			Start: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+			End:   time.Date(2025, 6, 30, 0, 0, 0, 0, time.UTC),
+			Raw:   "2025-01-01..2025-06-30",
+		},
+		Teams: map[string][]string{"platform": {good, bad}},
+	}
+	out := filepath.Join(t.TempDir(), "artifact.tar.gz")
+	opts := run.Options{
+		Out:         out,
+		ToolVersion: "test",
+		Logger:      run.NewLogger(false, true),
+		Connectors:  []connector.Connector{stub},
+	}
+
+	result, err := run.Run(context.Background(), cfg, opts)
+	if !errors.Is(err, run.ErrPartial) {
+		t.Fatalf("Run err = %v, want ErrPartial", err)
+	}
+	if result.ArtifactPath == "" {
+		t.Fatal("artifact path empty")
+	}
+	if _, statErr := os.Stat(result.ArtifactPath); statErr != nil {
+		t.Fatalf("artifact missing: %v", statErr)
+	}
+
+	dir, m := extractArtifact(t, result.ArtifactPath)
+
+	// Good repo: commits must be present in SQLite.
+	db, err := sql.Open("sqlite", filepath.Join(dir, "metrics.sqlite"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	var commitCount int
+	if err := db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM commits WHERE repo = ?`, good).Scan(&commitCount); err != nil {
+		t.Fatalf("count commits: %v", err)
+	}
+	if commitCount != stub.commits {
+		t.Errorf("commits for good repo: got %d want %d", commitCount, stub.commits)
+	}
+
+	// Provenance: good repo has a stub entry; bad repo has a clone error entry.
+	provs, ok := m["extraction_provenance"].([]any)
+	if !ok {
+		t.Fatalf("extraction_provenance not a slice: %T", m["extraction_provenance"])
+	}
+	var foundGoodStub, foundBadClone bool
+	for _, p := range provs {
+		pm, ok := p.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch pm["connector"] {
+		case "stub":
+			if pm["repo"] == good {
+				foundGoodStub = true
+			}
+		case "clone":
+			if pm["repo"] == bad {
+				if errs, ok := pm["errors"].(map[string]any); ok {
+					if _, hasErr := errs["clone"]; hasErr {
+						foundBadClone = true
+					}
+				}
+			}
+		}
+	}
+	if !foundGoodStub {
+		t.Errorf("no stub provenance entry for %s: %v", good, provs)
+	}
+	if !foundBadClone {
+		t.Errorf("no clone-error provenance entry for %s: %v", bad, provs)
 	}
 }
 

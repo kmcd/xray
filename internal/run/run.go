@@ -119,36 +119,16 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (Result, error) 
 	git := &gitcli.Client{Log: log, GitHubToken: cfg.GitHubToken()}
 	win := connector.Window{Start: cfg.Window.Start, End: cfg.Window.End}
 
-	// 1. Clone each repo in parallel. Failures are recorded as provenance
-	// errors with a synthetic connector entry per failed repo so the manifest
-	// still records the failure.
-	clones, cloneErrors := clonePhase(ctx, cfg, opts, log, sink, tmpDir, git, win)
-
-	if err := ctx.Err(); err != nil {
-		return interruptedResult(tmpDir, "clone", nil), err
-	}
-
-	// 2. Open store.
+	// 1. Open store before workers start so extract goroutines can write rows.
 	dbPath := filepath.Join(tmpDir, "metrics.sqlite")
 	st, err := store.Open(dbPath, opts.ToolVersion)
 	if err != nil {
 		return Result{}, fmt.Errorf("run: open store: %w", err)
 	}
 
-	// 3. Dispatch (repo, connector) pairs across worker pool. Each
-	// connector returns a Provenance; we collect them all.
 	type job struct {
 		repo connector.Repo
 		conn connector.Connector
-	}
-	var jobs []job
-	for _, c := range clones {
-		if c.err != nil {
-			continue
-		}
-		for _, conn := range opts.Connectors {
-			jobs = append(jobs, job{repo: c.repo, conn: conn})
-		}
 	}
 
 	var (
@@ -161,65 +141,92 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (Result, error) 
 		provMu.Unlock()
 	}
 
-	// Synthetic provenance entries for clone failures so the run records
-	// the failure even though no connector ran.
-	for slug, e := range cloneErrors {
-		p := connector.NewProvenance("clone", slug, win)
-		p.Errors["clone"] = e.Error()
-		p.PaginationComplete = false
-		addProv(p)
+	// 2. Start the extract worker pool. Workers block on jobCh until jobs
+	// arrive; the channel is closed after all clones have been processed.
+	jobCh := make(chan job)
+	var extractWg sync.WaitGroup
+	for i := 0; i < opts.Workers; i++ {
+		extractWg.Add(1)
+		go func() {
+			defer extractWg.Done()
+			for j := range jobCh {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+				log.Info("run: extracting",
+					slog.String("repo", j.repo.Slug),
+					slog.String("connector", j.conn.Name()),
+				)
+				sink.Emit(progress.Event{
+					Kind: progress.PhaseStart, Repo: j.repo.Slug, Connector: j.conn.Name(), Phase: j.conn.Name(), At: time.Now().UTC(),
+				})
+				inflight.add(j.repo.Slug, j.conn.Name())
+				p := j.conn.Extract(ctx, j.repo, win, st)
+				inflight.done(j.repo.Slug, j.conn.Name())
+				addProv(p)
+				emitExtractResult(sink, j.repo.Slug, j.conn.Name(), p)
+			}
+		}()
 	}
 
-	if len(jobs) > 0 {
-		ch := make(chan job)
-		var wg sync.WaitGroup
-		workers := opts.Workers
-		if workers > len(jobs) {
-			workers = len(jobs)
+	// 3. Clone each repo in parallel. As each clone completes, route it
+	// directly to the worker pool rather than waiting for all clones to
+	// finish first. Prefetch goroutines (started inside cloneOneRepo) run
+	// concurrently with extract; connectors block on their done channel only
+	// when they actually need the prefetch result.
+	var clones []cloned
+	extractStarted := false
+	cloneCh := streamClones(ctx, cfg, opts, log, sink, tmpDir, git, win)
+	for c := range cloneCh {
+		clones = append(clones, c)
+		if c.err != nil {
+			// Synthetic provenance so the manifest records the failure even
+			// though no connector ran for this repo.
+			p := connector.NewProvenance("clone", c.repo.Slug, win)
+			p.Errors["clone"] = c.err.Error()
+			p.PaginationComplete = false
+			addProv(p)
+			continue
 		}
-		for i := 0; i < workers; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for j := range ch {
-					select {
-					case <-ctx.Done():
-						return
-					default:
-					}
-					log.Info("run: extracting",
-						slog.String("repo", j.repo.Slug),
-						slog.String("connector", j.conn.Name()),
-					)
-					sink.Emit(progress.Event{
-						Kind: progress.PhaseStart, Repo: j.repo.Slug, Connector: j.conn.Name(), Phase: j.conn.Name(), At: time.Now().UTC(),
-					})
-					inflight.add(j.repo.Slug, j.conn.Name())
-					p := j.conn.Extract(ctx, j.repo, win, st)
-					inflight.done(j.repo.Slug, j.conn.Name())
-					addProv(p)
-					emitExtractResult(sink, j.repo.Slug, j.conn.Name(), p)
-				}
-			}()
-		}
-		for _, j := range jobs {
+		for _, conn := range opts.Connectors {
 			select {
 			case <-ctx.Done():
+				// Snapshot inflight before signalling workers to stop; after
+				// Wait() all done() calls have fired and the snapshot is empty.
 				snap := inflight.snapshot()
-				close(ch)
-				wg.Wait()
+				// Drain remaining clone results so their goroutines can exit.
+				go func() {
+					for range cloneCh {
+					}
+				}()
+				close(jobCh)
+				extractWg.Wait()
+				phase := "extract"
+				if !extractStarted {
+					phase = "clone"
+				}
 				_ = st.Close()
-				return interruptedResult(tmpDir, "extract", snap), ctx.Err()
-			case ch <- j:
+				return interruptedResult(tmpDir, phase, snap), ctx.Err()
+			case jobCh <- job{repo: c.repo, conn: conn}:
+				extractStarted = true
 			}
 		}
-		close(ch)
-		wg.Wait()
 	}
+	// Snapshot inflight before signalling workers to stop; after Wait() all
+	// done() calls have fired and the snapshot would always be empty.
+	snap := inflight.snapshot()
+	close(jobCh)
+	extractWg.Wait()
 
 	if err := ctx.Err(); err != nil {
+		phase := "extract"
+		if !extractStarted {
+			phase = "clone"
+		}
 		_ = st.Close()
-		return interruptedResult(tmpDir, "extract", inflight.snapshot()), err
+		return interruptedResult(tmpDir, phase, snap), err
 	}
 
 	addProv(runPostprocess(ctx, st, log, sink, win))
@@ -302,11 +309,12 @@ func writeManifestAndCloseStore(tmpDir string, m *manifest.Manifest, st *store.S
 	return manifestPath, nil
 }
 
-// clonePhase fans out one goroutine per repo to clone in parallel. Each
-// goroutine writes into its own index slot so no mutex is needed on clones[].
-// Returns the populated clone results and a map of slug -> clone error for
-// repos that failed to clone (used downstream to emit synthetic provenance).
-func clonePhase(
+// streamClones fans out one goroutine per repo to clone in parallel. Each
+// goroutine sends its result to the returned channel as soon as the git clone
+// (and HeadSHA/DefaultBranch) completes; Prefetch for that repo continues in
+// background goroutines started inside cloneOneRepo. The channel is closed
+// after all repos have completed or failed.
+func streamClones(
 	ctx context.Context,
 	cfg *config.Config,
 	opts Options,
@@ -315,44 +323,43 @@ func clonePhase(
 	tmpDir string,
 	git *gitcli.Client,
 	win connector.Window,
-) ([]cloned, map[string]error) {
+) <-chan cloned {
 	repos := cfg.AllRepos()
-	clones := make([]cloned, len(repos))
-	cloneErrors := map[string]error{}
+	ch := make(chan cloned, len(repos))
 
 	var wg sync.WaitGroup
-	for i, slug := range repos {
+	for _, slug := range repos {
 		dest := filepath.Join(tmpDir, "clones", sanitizeSlug(slug))
 		if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
-			clones[i] = cloned{repo: connector.Repo{Slug: slug, Team: cfg.RepoToTeam(slug)}, err: err}
+			ch <- cloned{repo: connector.Repo{Slug: slug, Team: cfg.RepoToTeam(slug)}, err: err}
 			continue
 		}
 		wg.Add(1)
-		go func(i int, slug, dest string) {
+		go func(slug, dest string) {
 			defer wg.Done()
 			log.Info("run: cloning", slog.String("repo", slug))
 			sink.Emit(progress.Event{
 				Kind: progress.PhaseStart, Repo: slug, Connector: "clone", Phase: "clone", At: time.Now().UTC(),
 			})
-			clones[i] = cloneOneRepo(ctx, git, log, slug, dest, cfg, opts, win)
+			c := cloneOneRepo(ctx, git, log, slug, dest, cfg, opts, win)
 			ev := progress.Event{Repo: slug, Connector: "clone", Phase: "clone", At: time.Now().UTC()}
-			if clones[i].err != nil {
+			if c.err != nil {
 				ev.Kind = progress.PhaseError
-				ev.Message = clones[i].err.Error()
+				ev.Message = c.err.Error()
 			} else {
 				ev.Kind = progress.PhaseDone
 			}
 			sink.Emit(ev)
-		}(i, slug, dest)
+			ch <- c
+		}(slug, dest)
 	}
-	wg.Wait()
 
-	for _, c := range clones {
-		if c.err != nil {
-			cloneErrors[c.repo.Slug] = c.err
-		}
-	}
-	return clones, cloneErrors
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
+	return ch
 }
 
 // runPostprocess runs cross-cutting post-extraction linkage. Errors are
@@ -415,20 +422,18 @@ type cloned struct {
 }
 
 // cloneOneRepo clones slug into dest while concurrently firing each
-// connector's optional Prefetch (#71). Joins the prefetch goroutines before
-// returning so the workers pool downstream sees a consistent state.
+// connector's optional Prefetch (#71). Prefetch goroutines run independently
+// and are not joined before returning — the connector's consumePRPrefetch
+// blocks on the done channel when it actually needs the result during Extract.
 // Any prefetch failures are logged but never propagated — Extract will
 // fall back to a live fetch on a cache miss.
 func cloneOneRepo(ctx context.Context, git *gitcli.Client, log *slog.Logger, slug, dest string, cfg *config.Config, opts Options, win connector.Window) cloned {
-	var pfwg sync.WaitGroup
 	for _, conn := range opts.Connectors {
 		pf, ok := conn.(connector.Prefetcher)
 		if !ok {
 			continue
 		}
-		pfwg.Add(1)
 		go func(pf connector.Prefetcher) {
-			defer pfwg.Done()
 			if err := pf.Prefetch(ctx, slug, win); err != nil {
 				log.Warn("run: prefetch failed",
 					slog.String("repo", slug),
@@ -453,7 +458,6 @@ func cloneOneRepo(ctx context.Context, git *gitcli.Client, log *slog.Logger, slu
 			cloneErr = err
 		}
 	}
-	pfwg.Wait()
 
 	if cloneErr != nil {
 		repoRow := connector.Repo{Slug: slug, Team: cfg.RepoToTeam(slug)}
