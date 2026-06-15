@@ -427,8 +427,10 @@ func (c *Client) HeadAndDefaultBranch(ctx context.Context, clonePath string) (st
 	out, err := c.run(ctx, clonePath,
 		"rev-parse", "HEAD", "--symbolic-full-name", "refs/remotes/origin/HEAD",
 	)
+	// strings.Split always returns at least one element, so a leading SHA
+	// check is sufficient; len(lines) >= 1 is invariant.
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if len(lines) < 1 || !isHex40(lines[0]) {
+	if !isHex40(lines[0]) {
 		if err != nil {
 			return "", "", err
 		}
