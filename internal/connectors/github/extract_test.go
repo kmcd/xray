@@ -153,12 +153,14 @@ func TestExtractPRs_UsesPrefetchCache(t *testing.T) {
 	defer srv.Close()
 	c := newTestConnector(t, srv)
 
-	// Prefetch first.
-	if err := c.Prefetch(context.Background(), "kmcd/foo", standardWindow()); err != nil {
-		t.Fatalf("Prefetch: %v", err)
+	// Prefetch the PR side directly. The top-level Prefetch fans out to
+	// both PRs and releases; this test isolates the PR cache assertion
+	// and avoids needing to register a releases fake on the same mux.
+	if err := c.prefetchPRs(context.Background(), "kmcd/foo", standardWindow()); err != nil {
+		t.Fatalf("prefetchPRs: %v", err)
 	}
 	if prListPosts != 1 {
-		t.Fatalf("after Prefetch: expected 1 PR-list POST, got %d", prListPosts)
+		t.Fatalf("after prefetchPRs: expected 1 PR-list POST, got %d", prListPosts)
 	}
 
 	// extractPRs should consume the cache, not refetch.

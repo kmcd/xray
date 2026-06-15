@@ -64,6 +64,15 @@ type Connector struct {
 	prefetchMu   sync.Mutex
 	prefetchData map[string]*prPrefetchResult // slug -> result
 
+	// prefetchReleasesMu guards prefetchReleasesData. Mirrors the PR
+	// prefetch lock; held only for map mutation. The prefetch goroutine
+	// writes the result struct outside the lock and signals via done.
+	// Releases REST hits a different rate-limit bucket from the GraphQL
+	// PR prefetch, so the two prefetchers progress in parallel without
+	// same-bucket contention.
+	prefetchReleasesMu   sync.Mutex
+	prefetchReleasesData map[string]*releasePrefetchResult // slug -> result
+
 	extractShards int
 }
 
@@ -80,6 +89,17 @@ type prPrefetchResult struct {
 	nextCursor string
 	err        error
 	done       chan struct{}
+}
+
+// releasePrefetchResult holds the eventually-available output of the
+// releases half of Prefetch. consumeReleasesPrefetch returns nodes once
+// done is closed. There is no resume cursor: the GitHub REST releases
+// pagination uses opaque Link-header URLs, so an interrupted walk
+// restarts from page 1 in the live fallback rather than resuming.
+type releasePrefetchResult struct {
+	nodes []*gh.RepositoryRelease
+	err   error
+	done  chan struct{}
 }
 
 // gqlLowWaterMark is the throttleStatus.remaining threshold below which the
@@ -221,14 +241,15 @@ func New(cfg config.GitHubConn, log *slog.Logger) (*Connector, error) {
 	}
 
 	c := &Connector{
-		cfg:           cfg,
-		log:           log,
-		httpClient:    httpClient,
-		graphqlURL:    "https://api.github.com/graphql",
-		git:           &gitcli.Client{Log: log},
-		templateCache: map[string]*template{},
-		prefetchData:  map[string]*prPrefetchResult{},
-		rl:            rl,
+		cfg:                  cfg,
+		log:                  log,
+		httpClient:           httpClient,
+		graphqlURL:           "https://api.github.com/graphql",
+		git:                  &gitcli.Client{Log: log},
+		templateCache:        map[string]*template{},
+		prefetchData:         map[string]*prPrefetchResult{},
+		prefetchReleasesData: map[string]*releasePrefetchResult{},
+		rl:                   rl,
 	}
 
 	// Wrap the outermost transport with the costInterceptor so every GraphQL
@@ -257,13 +278,39 @@ func New(cfg config.GitHubConn, log *slog.Logger) (*Connector, error) {
 	return c, nil
 }
 
-// Prefetch starts a paginated PR walk for the supplied slug and stashes
-// the result for Extract to consume later. Safe to call concurrently for
-// distinct slugs. Returns immediately after the walk completes (the result
-// is held on the connector). The function signature satisfies the
+// Prefetch fans out the connector's slug-scoped prefetch work and waits
+// for every stage to settle. The two stages — PRs (GraphQL) and releases
+// (REST) — hit different rate-limit buckets, so they progress in parallel
+// without same-bucket contention. The function signature satisfies the
 // connector.Prefetcher interface so run.go can invoke it during the clone
-// phase without a github-specific import.
+// phase without a github-specific import. Errors from the sub-stages are
+// folded into a single returned error: prefetch failures degrade to a
+// live fetch in Extract regardless, so the caller only needs to know
+// whether anything went wrong, not which stage. Safe to call concurrently
+// for distinct slugs.
 func (c *Connector) Prefetch(ctx context.Context, slug string, window connector.Window) error {
+	var wg sync.WaitGroup
+	var prErr, relErr error
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		prErr = c.prefetchPRs(ctx, slug, window)
+	}()
+	go func() {
+		defer wg.Done()
+		relErr = c.prefetchReleases(ctx, slug, window)
+	}()
+	wg.Wait()
+	if prErr != nil {
+		return prErr
+	}
+	return relErr
+}
+
+// prefetchPRs starts a paginated PR walk for the supplied slug and stashes
+// the result for Extract to consume later. Idempotent per slug — a second
+// call with the same slug awaits the existing result instead of restarting.
+func (c *Connector) prefetchPRs(ctx context.Context, slug string, window connector.Window) error {
 	r := &prPrefetchResult{done: make(chan struct{})}
 	c.prefetchMu.Lock()
 	if existing, ok := c.prefetchData[slug]; ok {
@@ -278,6 +325,28 @@ func (c *Connector) Prefetch(ctx context.Context, slug string, window connector.
 	c.prefetchMu.Unlock()
 
 	r.nodes, r.nextCursor, r.err = c.fetchPRs(ctx, connector.Repo{Slug: slug}, window, "")
+	close(r.done)
+	return r.err
+}
+
+// prefetchReleases starts a paginated releases walk for the supplied slug
+// and stashes the result for extractReleases to consume later. Mirrors
+// prefetchPRs (idempotent per slug, done-channel signalling). REST
+// pagination is opaque (Link-header driven), so the stash carries nodes
+// only; on error the live fallback restarts from page 1 rather than
+// resuming.
+func (c *Connector) prefetchReleases(ctx context.Context, slug string, window connector.Window) error {
+	r := &releasePrefetchResult{done: make(chan struct{})}
+	c.prefetchReleasesMu.Lock()
+	if existing, ok := c.prefetchReleasesData[slug]; ok {
+		c.prefetchReleasesMu.Unlock()
+		<-existing.done
+		return existing.err
+	}
+	c.prefetchReleasesData[slug] = r
+	c.prefetchReleasesMu.Unlock()
+
+	r.nodes, r.err = c.fetchAllReleases(ctx, slug, window)
 	close(r.done)
 	return r.err
 }
@@ -305,6 +374,32 @@ func (c *Connector) consumePRPrefetch(ctx context.Context, slug string) ([]prGra
 		return r.nodes, r.nextCursor, true, r.err
 	case <-ctx.Done():
 		return nil, "", true, ctx.Err()
+	}
+}
+
+// consumeReleasesPrefetch returns (nodes, cached, err) for the prefetch
+// stashed by prefetchReleases for slug. cached=false means no prefetch
+// ran for this slug — caller falls back to a live walk. cached=true with
+// err != nil means the prefetch errored mid-walk; caller records
+// prov.Errors["releases:prefetch"] and runs the live walk from scratch
+// (REST pagination is opaque, no resume cursor). The result struct is
+// removed from the map on consumption so a subsequent extract for the
+// same slug hits the live path rather than reusing stale nodes.
+func (c *Connector) consumeReleasesPrefetch(ctx context.Context, slug string) ([]*gh.RepositoryRelease, bool, error) {
+	c.prefetchReleasesMu.Lock()
+	r, ok := c.prefetchReleasesData[slug]
+	if ok {
+		delete(c.prefetchReleasesData, slug)
+	}
+	c.prefetchReleasesMu.Unlock()
+	if !ok {
+		return nil, false, nil
+	}
+	select {
+	case <-r.done:
+		return r.nodes, true, r.err
+	case <-ctx.Done():
+		return nil, true, ctx.Err()
 	}
 }
 

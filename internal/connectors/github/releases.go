@@ -12,49 +12,78 @@ import (
 	"github.com/kmcd/xray/internal/model"
 )
 
-// extractReleases lists releases and emits releases rows plus deploys rows
-// (source="github") so the analyser can treat each release as a
-// successful deploy when no other deploy source is configured.
-//
-// Releases whose CreatedAt falls outside the configured window are skipped
-// (issue #56). The API does not expose a server-side date filter on this
-// endpoint, so we walk pages until we see a release older than the window
-// start and stop (releases come back created-at-descending).
+// extractReleases is the releases-stage entry point. It prefers a prefetch
+// cache hit (populated by prefetchReleases during the run.go clone phase)
+// and falls back to a live walk on cache miss or on a cached error. REST
+// pagination is opaque, so an errored prefetch does not carry a resume
+// cursor — the live fallback restarts from page 1. Releases are emitted
+// as both releases and deploys rows (source="github") so the analyser
+// can treat each release as a successful deploy when no other deploy
+// source is configured.
 func (c *Connector) extractReleases(ctx context.Context, repo connector.Repo, window connector.Window, sink connector.Sink, prov *connector.Provenance) {
-	owner, name, ok := splitSlug(repo.Slug)
-	if !ok {
-		prov.Endpoints["releases"] = connector.EndpointStatus{
-			Accessible: false,
-			Reason:     "invalid slug: " + repo.Slug,
-		}
+	nodes, cached, err := c.consumeReleasesPrefetch(ctx, repo.Slug)
+	if !cached {
+		c.emitReleasesLive(ctx, repo, window, sink, prov)
 		return
 	}
+	if err != nil {
+		prov.Errors["releases:prefetch"] = err.Error()
+		c.log.Warn("github: releases prefetch errored, falling back to live",
+			slog.String("repo", repo.Slug),
+			slog.String("error", err.Error()),
+		)
+		c.emitReleasesLive(ctx, repo, window, sink, prov)
+		return
+	}
+	c.emitReleases(ctx, repo, window, nodes, sink, prov)
+}
+
+// emitReleasesLive walks the releases endpoint live and emits rows in a
+// single pass. Used on prefetch miss or when the cached prefetch errored.
+func (c *Connector) emitReleasesLive(ctx context.Context, repo connector.Repo, window connector.Window, sink connector.Sink, prov *connector.Provenance) {
+	rels, err := c.fetchAllReleases(ctx, repo.Slug, window)
+	if err != nil {
+		prov.Errors["releases"] = err.Error()
+		prov.Endpoints["releases"] = connector.EndpointStatus{
+			Accessible: false,
+			Reason:     err.Error(),
+		}
+		prov.PaginationComplete = false
+		c.log.Warn("github: list releases",
+			slog.String("repo", repo.Slug),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	c.emitReleases(ctx, repo, window, rels, sink, prov)
+}
+
+// fetchAllReleases walks the releases endpoint and returns in-window
+// releases. No row emission and no provenance mutation — both happen in
+// emitReleases on the consumer side. Returns (nil, ctx.Err()) on
+// cancellation so the caller can treat that as a normal error.
+//
+// Releases whose CreatedAt falls outside the configured window are
+// skipped (issue #56). The API does not expose a server-side date filter
+// on this endpoint, so we walk pages until we see a release older than
+// the window start and stop (releases come back created-at-descending).
+func (c *Connector) fetchAllReleases(ctx context.Context, slug string, window connector.Window) ([]*gh.RepositoryRelease, error) {
+	owner, name, ok := splitSlug(slug)
+	if !ok {
+		return nil, fmt.Errorf("invalid slug: %s", slug)
+	}
 	opts := &gh.ListOptions{PerPage: 100}
+	var collected []*gh.RepositoryRelease
 	for {
 		if ctx.Err() != nil {
-			prov.PaginationComplete = false
-			return
+			return collected, ctx.Err()
 		}
 		rels, resp, err := c.rest.Repositories.ListReleases(ctx, owner, name, opts)
 		if err != nil {
-			prov.Errors["releases"] = err.Error()
-			prov.Endpoints["releases"] = connector.EndpointStatus{
-				Accessible: false,
-				Reason:     err.Error(),
-			}
-			prov.PaginationComplete = false
-			c.log.Warn("github: list releases",
-				slog.String("repo", repo.Slug),
-				slog.String("error", err.Error()),
-			)
-			return
+			return collected, err
 		}
 		stopPaging := false
 		for _, r := range rels {
-			tag := r.GetTagName()
-			if tag == "" {
-				continue
-			}
 			createdAt := r.GetCreatedAt().UTC()
 			// Releases come back in CreatedAt-desc order. Once we drop
 			// before the window start, the remainder of the page (and
@@ -63,49 +92,79 @@ func (c *Connector) extractReleases(ctx context.Context, repo connector.Repo, wi
 				stopPaging = true
 				break
 			}
-			if createdAt.After(window.End) {
-				continue
-			}
-			sha := resolveReleaseSHA(ctx, c.rest, owner, name, r)
-
-			relRow := model.Release{
-				Repo:         repo.Slug,
-				Tag:          tag,
-				Name:         r.GetName(),
-				CreatedAt:    createdAt,
-				SHA:          sha,
-				IsPrerelease: r.GetPrerelease(),
-			}
-			if err := sink.InsertRelease(relRow); err != nil {
-				if prov.Errors["releases"] == "" {
-					prov.Errors["releases"] = err.Error()
-				}
-			} else {
-				prov.RowsReturned["releases"]++
-			}
-
-			deployRow := model.Deploy{
-				ID:         fmt.Sprintf("release:%s", tag),
-				Repo:       repo.Slug,
-				DeployedAt: createdAt,
-				CommitSHA:  sha,
-				Source:     "github",
-				Status:     "success",
-				ReleaseTag: tag,
-				Version:    r.GetName(),
-			}
-			if err := sink.InsertDeploy(deployRow); err != nil {
-				if prov.Errors["deploys"] == "" {
-					prov.Errors["deploys"] = err.Error()
-				}
-			} else {
-				prov.RowsReturned["deploys"]++
-			}
+			collected = append(collected, r)
 		}
 		if stopPaging || resp == nil || resp.NextPage == 0 {
 			break
 		}
 		opts.Page = resp.NextPage
+	}
+	return collected, nil
+}
+
+// emitReleases writes releases and deploys rows for the supplied nodes.
+// invalid-slug and empty-tag entries are skipped silently; CreatedAt is
+// filtered against window.End here (window.Start is handled by
+// fetchAllReleases' stop-paging cutoff). On a successful walk
+// (rows-or-no-rows) the endpoint is marked Accessible=true so absence
+// reads as "endpoint reachable, no in-window releases".
+func (c *Connector) emitReleases(ctx context.Context, repo connector.Repo, window connector.Window, rels []*gh.RepositoryRelease, sink connector.Sink, prov *connector.Provenance) {
+	owner, name, ok := splitSlug(repo.Slug)
+	if !ok {
+		prov.Endpoints["releases"] = connector.EndpointStatus{
+			Accessible: false,
+			Reason:     "invalid slug: " + repo.Slug,
+		}
+		return
+	}
+	for _, r := range rels {
+		if ctx.Err() != nil {
+			prov.PaginationComplete = false
+			return
+		}
+		tag := r.GetTagName()
+		if tag == "" {
+			continue
+		}
+		createdAt := r.GetCreatedAt().UTC()
+		if createdAt.After(window.End) {
+			continue
+		}
+		sha := resolveReleaseSHA(ctx, c.rest, owner, name, r)
+
+		relRow := model.Release{
+			Repo:         repo.Slug,
+			Tag:          tag,
+			Name:         r.GetName(),
+			CreatedAt:    createdAt,
+			SHA:          sha,
+			IsPrerelease: r.GetPrerelease(),
+		}
+		if err := sink.InsertRelease(relRow); err != nil {
+			if prov.Errors["releases"] == "" {
+				prov.Errors["releases"] = err.Error()
+			}
+		} else {
+			prov.RowsReturned["releases"]++
+		}
+
+		deployRow := model.Deploy{
+			ID:         fmt.Sprintf("release:%s", tag),
+			Repo:       repo.Slug,
+			DeployedAt: createdAt,
+			CommitSHA:  sha,
+			Source:     "github",
+			Status:     "success",
+			ReleaseTag: tag,
+			Version:    r.GetName(),
+		}
+		if err := sink.InsertDeploy(deployRow); err != nil {
+			if prov.Errors["deploys"] == "" {
+				prov.Errors["deploys"] = err.Error()
+			}
+		} else {
+			prov.RowsReturned["deploys"]++
+		}
 	}
 	prov.Endpoints["releases"] = connector.EndpointStatus{Accessible: true}
 }
