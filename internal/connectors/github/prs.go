@@ -51,7 +51,7 @@ type prGraph struct {
 		Oid     githubv4.String
 		Parents struct {
 			TotalCount githubv4.Int
-		} `graphql:"parents(first: 5)"`
+		} `graphql:"parents(first: 1)"`
 	}
 	HeadRefOid githubv4.String
 	Author     struct {
@@ -73,10 +73,14 @@ type prGraph struct {
 		}
 	} `graphql:"commits(first: 25)"`
 	Labels struct {
+		PageInfo struct {
+			EndCursor   githubv4.String
+			HasNextPage githubv4.Boolean
+		}
 		Nodes []struct {
 			Name githubv4.String
 		}
-	} `graphql:"labels(first: 50)"`
+	} `graphql:"labels(first: 10)"`
 	ClosingIssuesReferences struct {
 		TotalCount githubv4.Int
 	} `graphql:"closingIssuesReferences(first: 1)"`
@@ -570,13 +574,9 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 	}
 
 	// pr_labels straight from GraphQL nodes; no extra round-trip.
-	for _, l := range p.Labels.Nodes {
-		row := model.PRLabel{PRNumber: prNum, Repo: repo.Slug, Label: string(l.Name)}
-		if err := prlB.Add(row); err != nil {
-			if prov.Errors["pr_labels"] == "" {
-				prov.Errors["pr_labels"] = err.Error()
-			}
-		}
+	emitPRLabelsInline(p.Labels.Nodes, prNum, repo.Slug, prlB, prov)
+	if bool(p.Labels.PageInfo.HasNextPage) {
+		c.paginatePRLabelsOverflow(ctx, owner, name, prNum, repo.Slug, string(p.Labels.PageInfo.EndCursor), prlB, prov)
 	}
 
 	// pr_commits: emit every commit oid attached to the PR.
@@ -774,4 +774,68 @@ func (c *Connector) resolveMergeMethod(ctx context.Context, p prGraph, clonePath
 		return "squash"
 	}
 	return deriveMergeMethod(parents, prHeadCommits, reachable)
+}
+
+// emitPRLabelsInline writes pr_labels rows from the inline GraphQL connection
+// on a PR.
+func emitPRLabelsInline(nodes []struct{ Name githubv4.String }, prNum int, slug string, b prLabelsBatch, prov *connector.Provenance) {
+	for _, l := range nodes {
+		row := model.PRLabel{PRNumber: prNum, Repo: slug, Label: string(l.Name)}
+		if err := b.Add(row); err != nil {
+			if prov.Errors["pr_labels"] == "" {
+				prov.Errors["pr_labels"] = err.Error()
+			}
+		}
+	}
+}
+
+// paginatePRLabelsOverflow drains additional label pages for a PR whose inline
+// Labels.PageInfo.HasNextPage was true. Best-effort; on error the rows written
+// so far are kept and pagination is marked incomplete in provenance.
+func (c *Connector) paginatePRLabelsOverflow(ctx context.Context, owner, name string, number int, slug, cursor string, b prLabelsBatch, prov *connector.Provenance) {
+	for {
+		if ctx.Err() != nil {
+			prov.PaginationComplete = false
+			return
+		}
+		var q struct {
+			Repository struct {
+				PullRequest struct {
+					Labels struct {
+						PageInfo struct {
+							EndCursor   githubv4.String
+							HasNextPage githubv4.Boolean
+						}
+						Nodes []struct {
+							Name githubv4.String
+						}
+					} `graphql:"labels(first: 100, after: $after)"`
+				} `graphql:"pullRequest(number: $number)"`
+			} `graphql:"repository(owner: $owner, name: $name)"`
+		}
+		vars := map[string]any{
+			"owner": githubv4.String(owner),
+			"name":  githubv4.String(name),
+			// #nosec G115 -- PR numbers fit comfortably in int32.
+			"number": githubv4.Int(int32(number)),
+			"after":  githubv4.String(cursor),
+		}
+		if err := c.queryWithEOFRetry(ctx, &q, vars); err != nil {
+			if prov.Errors["pr_labels"] == "" {
+				prov.Errors["pr_labels"] = err.Error()
+			}
+			prov.PaginationComplete = false
+			c.log.Warn("github: graphql labels overflow",
+				slog.String("repo", slug),
+				slog.Int("pr", number),
+				slog.String("error", err.Error()),
+			)
+			return
+		}
+		emitPRLabelsInline(q.Repository.PullRequest.Labels.Nodes, number, slug, b, prov)
+		if !bool(q.Repository.PullRequest.Labels.PageInfo.HasNextPage) {
+			return
+		}
+		cursor = string(q.Repository.PullRequest.Labels.PageInfo.EndCursor)
+	}
 }

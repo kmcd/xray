@@ -161,7 +161,8 @@ type commitConnNodeWrap struct {
 	Commit oidNode `json:"commit"`
 }
 type labelConn struct {
-	Nodes []labelNode `json:"nodes"`
+	PageInfo pageInfoNode `json:"pageInfo"`
+	Nodes    []labelNode  `json:"nodes"`
 }
 type labelNode struct {
 	Name string `json:"name"`
