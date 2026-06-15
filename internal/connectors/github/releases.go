@@ -40,7 +40,19 @@ func (c *Connector) extractReleases(ctx context.Context, repo connector.Repo, wi
 
 // emitReleasesLive walks the releases endpoint live and emits rows in a
 // single pass. Used on prefetch miss or when the cached prefetch errored.
+// An invalid slug short-circuits to a connector-config endpoint signal
+// (Accessible:false, no Errors entry, no PaginationComplete flip) so the
+// analyser distinguishes "operator misconfigured this slug" from "endpoint
+// reachable but errored mid-walk" — preserving the original extractReleases
+// contract.
 func (c *Connector) emitReleasesLive(ctx context.Context, repo connector.Repo, window connector.Window, sink connector.Sink, prov *connector.Provenance) {
+	if _, _, ok := splitSlug(repo.Slug); !ok {
+		prov.Endpoints["releases"] = connector.EndpointStatus{
+			Accessible: false,
+			Reason:     "invalid slug: " + repo.Slug,
+		}
+		return
+	}
 	rels, err := c.fetchAllReleases(ctx, repo.Slug, window)
 	if err != nil {
 		prov.Errors["releases"] = err.Error()
@@ -60,8 +72,11 @@ func (c *Connector) emitReleasesLive(ctx context.Context, repo connector.Repo, w
 
 // fetchAllReleases walks the releases endpoint and returns in-window
 // releases. No row emission and no provenance mutation — both happen in
-// emitReleases on the consumer side. Returns (nil, ctx.Err()) on
-// cancellation so the caller can treat that as a normal error.
+// emitReleases on the consumer side. Returns (nil, nil) on invalid slug
+// to mirror fetchPRs' silent short-circuit; the consumer-side caller
+// (emitReleasesLive) records the EndpointStatus separately. Returns
+// (collected, ctx.Err()) on cancellation so the caller can treat that
+// as a normal error.
 //
 // Releases whose CreatedAt falls outside the configured window are
 // skipped (issue #56). The API does not expose a server-side date filter
@@ -70,7 +85,7 @@ func (c *Connector) emitReleasesLive(ctx context.Context, repo connector.Repo, w
 func (c *Connector) fetchAllReleases(ctx context.Context, slug string, window connector.Window) ([]*gh.RepositoryRelease, error) {
 	owner, name, ok := splitSlug(slug)
 	if !ok {
-		return nil, fmt.Errorf("invalid slug: %s", slug)
+		return nil, nil
 	}
 	opts := &gh.ListOptions{PerPage: 100}
 	var collected []*gh.RepositoryRelease
