@@ -52,13 +52,10 @@ func newInitCmd() *cobra.Command {
 			}
 			tok := opts.token
 			if tok == "" {
-				tok = os.Getenv("XRAY_GH_TOKEN")
-			}
-			if tok == "" {
 				tok = os.Getenv("GITHUB_TOKEN")
 			}
 			if tok == "" {
-				return errors.New("no GitHub token provided (set --token, $XRAY_GH_TOKEN, or $GITHUB_TOKEN)")
+				return errors.New("no GitHub token provided (set --token or $GITHUB_TOKEN)")
 			}
 			overwritten := false
 			if _, statErr := os.Stat(opts.out); statErr == nil {
@@ -103,7 +100,7 @@ func newInitCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&opts.org, "from-org", "", "GitHub organisation to discover repos from (required)")
 	cmd.Flags().StringVar(&opts.out, "out", "xray.toml", "output path for the generated config")
-	cmd.Flags().StringVar(&opts.token, "token", "", "GitHub token (else $XRAY_GH_TOKEN or $GITHUB_TOKEN)")
+	cmd.Flags().StringVar(&opts.token, "token", "", "GitHub token (else $GITHUB_TOKEN)")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "overwrite the output file if it already exists")
 	cmd.Flags().BoolVar(&opts.probe, "probe", false, "discover connector data live and scaffold config from real observations")
 	cmd.Flags().BoolVar(&opts.includeForks, "include-forks", false, "include forked repositories (excluded by default)")

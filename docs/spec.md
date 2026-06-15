@@ -26,13 +26,17 @@ runnable TOML scaffold with all repos under a single `unassigned` team and
 connector blocks ready to be filled in.
 
 ```
-xray init --org <github-org> [--out xray.toml] [--token <token>] [--probe]
+xray init --from-org <github-org> [--out xray.toml] [--token <token>] [--probe]
+          [--include-forks] [--include-archived]
 ```
 
-Token sourcing for `init` only: `--token` flag, else `GITHUB_TOKEN` env var.
-This is the one place env is involved, because the config file does not yet
-exist. After `init`, the client pastes the token into the generated file
-alongside the others.
+Token sourcing for `init` only: `--token` flag, else `$GITHUB_TOKEN`. This
+is the one place env is involved, because the config file does not yet exist.
+After `init`, the client pastes the token into the generated file alongside
+the others.
+
+Forks and archived repositories are excluded by default. Pass
+`--include-forks` or `--include-archived` to opt back in.
 
 Output: writes TOML to `--out` (default `xray.toml`). Refuses to overwrite an
 existing file unless `--force`.
@@ -45,7 +49,7 @@ recommended Honeycomb dataset, reducing first-run trial-and-error.
 
 | Connector   | Token env var                          |
 |-------------|----------------------------------------|
-| GitHub      | `$GITHUB_TOKEN` or `--token`           |
+| GitHub      | `--token` or `$GITHUB_TOKEN`                           |
 | CircleCI    | `$CIRCLECI_TOKEN`                      |
 | Bugsnag     | `$BUGSNAG_AUTH_TOKEN`                  |
 | Honeycomb   | `$HC_API_KEY` or `$HONEYCOMB_API_KEY`  |

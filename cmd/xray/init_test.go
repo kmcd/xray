@@ -344,25 +344,6 @@ func TestInitCmd_IncludeArchivedFlag(t *testing.T) {
 	}
 }
 
-func TestInitCmd_XrayGHTokenEnvVar(t *testing.T) {
-	payload := `[{"name": "repo", "full_name": "kmcd/repo"}]`
-	withFakeGitHub(t, payload)
-
-	outPath := filepath.Join(t.TempDir(), "xray.toml")
-	t.Setenv("XRAY_GH_TOKEN", "xray-token")
-	t.Setenv("GITHUB_TOKEN", "")
-
-	root, _, _ := newTestRoot(t)
-	root.SetArgs([]string{"init", "--from-org", "kmcd", "--out", outPath})
-	if err := root.Execute(); err != nil {
-		t.Fatalf("init with XRAY_GH_TOKEN err: %v", err)
-	}
-	body, _ := os.ReadFile(outPath)
-	if !strings.Contains(string(body), `"kmcd/repo"`) {
-		t.Error("scaffold missing expected repo")
-	}
-}
-
 func equalStringSlices(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

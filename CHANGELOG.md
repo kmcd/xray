@@ -28,9 +28,11 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ### CLI
 
-- **`xray init --from-org <org>`: discover repos from GitHub API with fork and archived exclusion.** Renames the `--org` flag to `--from-org` (more explicit about the source direction). Forks are excluded by default via `type=sources` at the API level; archived repos are excluded client-side. `--include-forks` and `--include-archived` flags opt back in. Token lookup now also reads `$XRAY_GH_TOKEN` (before the existing `$GITHUB_TOKEN` fallback) for operators who want an xray-specific env var. Generated config header updated to `xray init --from-org`. ([#165])
+- **`xray init --from-org <org>`: discover repos from GitHub API with fork and archived exclusion.** Renames the `--org` flag to `--from-org` (more explicit about the source direction). Forks are excluded by default via `type=sources` at the API level; archived repos are excluded client-side. `--include-forks` and `--include-archived` flags opt back in. Generated config header updated to `xray init --from-org`. ([#165])
 
 ### Docs
+
+- **Scheduled-extraction workflow template.** `.github/workflows/xray-extract.yml.example` and `docs/scheduled-extraction.md` document how to set up a scheduled quarterly extraction via a GitHub Actions workflow — no consultant infrastructure, no GitHub App. Covers PAT scope, secret setup, S3 and GitHub artifact handover variants, schedule tuning, on/off toggle, cost, self-hosted runners, and PAT rotation. ([#164])
 
 - **Operator-setup guide: PAT steps, long-run visibility, handover instructions.** `docs/operator-setup.md` now covers how to create a fine-grained GitHub PAT with the exact required scopes (Contents, Metadata, Pull requests, Actions, Members: Read) and the org-restricted PAT approval path; adds a note on rate-limit waits during long runs and how to background the process under `tmux` or `screen`; and clarifies the handover — send the `.tar.gz`, the `.log`, and `xray version` output; do not send the config file. README `Configure` section now leads with `xray init --probe` as the canonical first-run command; new FAQ entry answers "where do I run this?" explicitly. ([#163])
 

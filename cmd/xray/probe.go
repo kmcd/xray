@@ -126,13 +126,10 @@ func runProbe(cmd *cobra.Command, opts initOpts) error {
 
 	githubToken := opts.token
 	if githubToken == "" {
-		githubToken = os.Getenv("XRAY_GH_TOKEN")
-	}
-	if githubToken == "" {
 		githubToken = os.Getenv("GITHUB_TOKEN")
 	}
 	if githubToken == "" {
-		return fmt.Errorf("no GitHub token provided (set --token, $XRAY_GH_TOKEN, or $GITHUB_TOKEN)")
+		return fmt.Errorf("no GitHub token provided (set --token or $GITHUB_TOKEN)")
 	}
 
 	honeycombToken := os.Getenv("HONEYCOMB_API_KEY")
