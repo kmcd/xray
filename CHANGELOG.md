@@ -26,6 +26,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 - **`gitcli`: fold post-clone `rev-parse HEAD` + `symbolic-ref refs/remotes/origin/HEAD` into one subprocess per repo.** The clone phase previously ran the two helpers back-to-back. A new `HeadAndDefaultBranch(ctx, dir)` issues a single `git rev-parse HEAD --symbolic-full-name refs/remotes/origin/HEAD` invocation that returns both pieces from one fork+exec. At ~5ms per fork on macOS the saving is ~250-500ms per run on a 50-repo target. The existing single-purpose helpers stay in place for callers that need only one half. ([#155])
 
+### Docs
+
+- **Operator-setup guide: PAT steps, long-run visibility, handover instructions.** `docs/operator-setup.md` now covers how to create a fine-grained GitHub PAT with the exact required scopes (Contents, Metadata, Pull requests, Actions, Members: Read) and the org-restricted PAT approval path; adds a note on rate-limit waits during long runs and how to background the process under `tmux` or `screen`; and clarifies the handover — send the `.tar.gz`, the `.log`, and `xray version` output; do not send the config file. README `Configure` section now leads with `xray init --probe` as the canonical first-run command; new FAQ entry answers "where do I run this?" explicitly. ([#163])
+
 ## [0.4.8] — 2026-06-12
 
 v0.4.8 breaks the GitHub secondary rate-limit retry storm that previously stalled long-window runs against a single PAT: the ratelimit transport now layers an adaptive inter-request delay on top of `Retry-After`, escalating after each secondary trigger and decaying linearly back to zero during clean operation.

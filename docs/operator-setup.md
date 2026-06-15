@@ -74,6 +74,38 @@ export HC_API_KEY="..."
 # export SENTRY_AUTH_TOKEN="..."  # add when available
 ```
 
+### Creating a GitHub personal access token
+
+**Fine-grained tokens (recommended):** GitHub Settings → Developer settings →
+Personal access tokens → Fine-grained tokens → Generate new token.
+
+Required repository permissions:
+
+| Permission | Access |
+|------------|--------|
+| Contents | Read |
+| Metadata | Read |
+| Pull requests | Read |
+| Actions | Read |
+
+Required organisation permissions:
+
+| Permission | Access |
+|------------|--------|
+| Members | Read |
+
+Set the expiry to 7 days for a one-shot extraction. Fine-grained tokens support
+per-repo access restrictions, so scope them to the repos being extracted if your
+org requires it.
+
+**Org-restricted PATs.** Some organisations require admin approval before a PAT
+can access private resources. If `xray check` returns 403 on repo endpoints,
+ask your GitHub org admin to approve the token under GitHub → Organisation
+settings → Personal access tokens → Pending requests.
+
+**Classic tokens:** If fine-grained tokens are not available for your org, use
+a Classic token with `repo` and `read:org` scopes.
+
 ## 3. Run the probe and review the report
 
 `xray init --probe` hits each configured connector, discovers live state,
@@ -290,6 +322,11 @@ acme-corp/web       ✔ done          ● prs             ▢ pending        ▢
 acme-corp/pipeline  ● clone         ▢ pending         ▢ pending        ▢ pending
 ```
 
+On a long run (1+ hour), rate-limit waits appear as `rate limited, waiting Ns`,
+`primary limit low, waiting Ns`, or `adaptive pacing, waiting Ns` lines — these
+are normal and the run resumes automatically. Run under `tmux` or `screen` to
+keep the process alive if you need to close your terminal.
+
 On completion, `xray run` writes two files to the current directory:
 
 ```
@@ -303,8 +340,13 @@ The last line of the log records the artifact path and its SHA-256:
 run: artifact xray-export-20250215T143022Z.tar.gz sha256=3a4b1c...
 ```
 
-Send the consultant both files. Also send the `xray version` output from
-the binary you ran — they need it to verify provenance.
+Send the consultant both files and the `xray version` output from the binary
+you ran — they need it to verify provenance and map the run to a schema version.
+Do not send the config file — it contains your tokens.
+
+Common handover channels are Slack DM, a download link your consultant
+provides, or a private file share. The artifact is typically 10–200 MiB for a
+multi-repo engagement.
 
 ### Exit codes
 

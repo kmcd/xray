@@ -12,7 +12,7 @@
 - **Captures**: commits, PRs, reviews, CI runs, deploys, incidents — structural data and declared configuration / tooling manifests, never application logic.
 - **Produces**: a single `.tar.gz` (SQLite + JSON manifest) — verifiable SHA256, no secrets.
 - **Touches**: GitHub, GitHub Actions, CircleCI, Sentry, Bugsnag, Honeycomb — read-only, even when tokens hold write scope.
-- **Doesn't do**: application-logic capture, per-individual rankings, daemon mode, scheduled runs.
+- **Doesn't do**: application-logic capture, per-individual rankings, daemon mode, built-in scheduler (use the [GitHub Actions template](docs/scheduled-extraction.md)).
 
 > [!IMPORTANT]
 > `xray` runs inside a customer environment against the customer's own
@@ -60,6 +60,9 @@ what a representative run actually looks like.
 - [`docs/engagement-guide.md`](docs/engagement-guide.md) — the
   consultant-side counterpart: what happens to the artifact after
   you send it. Public so the methodology stays auditable.
+- [`docs/scheduled-extraction.md`](docs/scheduled-extraction.md) — how
+  to set up a scheduled quarterly extraction via a GitHub Actions
+  workflow (no consultant infrastructure, no GitHub App).
 
 ## Install
 
@@ -126,18 +129,32 @@ The default flow: **configure → validate → run → export**.
 
 ### 1. Configure
 
-```bash
-# Scaffold a starter config from a GitHub org's repos.
-xray init --org my-org --token "$GITHUB_TOKEN"
+Set tokens for each connector, then run `xray init --probe` to discover live
+connector state and generate a pre-populated config:
 
-# Or probe live connector data first and seed mappings automatically.
-# Set env vars for each connector you want to probe, then:
-xray init --org my-org --probe --out xray.toml.draft
+```bash
+export GITHUB_TOKEN="ghp_..."       # required
+export CIRCLECI_TOKEN="..."         # optional
+export BUGSNAG_AUTH_TOKEN="..."     # optional
+export HC_API_KEY="..."             # optional (or HONEYCOMB_API_KEY)
+
+xray init --org my-org --probe
 ```
 
-Hand-edit the generated file: connector tokens, project mappings, team layout.
-The file stays on the operator's machine — never committed to git, never
-shared back to the consultant.
+To scaffold from repo names only (no connector discovery), set
+`GITHUB_TOKEN` first (the API call to list repos still requires it):
+
+```bash
+export GITHUB_TOKEN="ghp_..."
+xray init --org my-org
+```
+
+Hand-edit the generated `xray.toml`: verify the window, paste any connector
+tokens not already set as env vars, and split repos into teams. See
+[`docs/operator-setup.md`](docs/operator-setup.md) for the full walkthrough,
+PAT scope requirements, and per-connector examples. The config stays on the
+operator's machine — never committed to git, never shared back to the
+consultant.
 
 ### 2. Validate and check
 
@@ -182,6 +199,8 @@ kmcd/baz            ● clone         ▢ pending        ▢ pending        ▢ 
 
 Non-TTY (CI, pipe to file) falls back to a stderr log with one line per phase boundary; force the log explicitly with `--output log`.
 
+On a long run (1+ hour), rate-limit waits appear as `rate limited, waiting Ns`, `primary limit low, waiting Ns`, or `adaptive pacing, waiting Ns` lines — these are normal and the run resumes automatically. Run under `tmux` or `screen` to keep the process alive if you close your terminal.
+
 </details>
 
 Exit codes: `0` clean, `1` config / pre-flight error, `2` partial run
@@ -198,6 +217,13 @@ The run produces two files in the working directory:
 Inspect `manifest.json` inside the archive before sending — it lists every
 connector's status, row counts, and per-endpoint errors. No source content,
 no secrets. Sample: [`docs/sample-manifest.json`](docs/sample-manifest.json).
+
+Send the consultant the `.tar.gz`, the `.log`, and the output of `xray version`.
+Do not send the config file — it contains your token.
+
+Common handover channels are Slack DM, a download link your consultant
+provides, or a private file share. The artifact is typically 10–200 MiB for a
+multi-repo engagement.
 
 The full configuration reference and behaviour spec live in [`docs/spec.md`](./docs/spec.md). The output schema is documented in [`docs/schema.md`](./docs/schema.md). Agent-facing constraints (invariants, non-goals, schema-versioning rules) live in [`CLAUDE.md`](./CLAUDE.md).
 
@@ -287,6 +313,14 @@ never stores credentials or source content in the output artifact.
 
 <!-- vale Google.FirstPerson = NO -->
 <!-- vale Microsoft.FirstPerson = NO -->
+
+**Where do I run this?**\
+On your laptop. `xray` is a ~30 MiB static binary; it clones repos to a temp
+directory, writes a SQLite file, and packages it into a `.tar.gz`. No install,
+no daemon, no system dependencies. macOS, Linux, and Windows are supported.
+Keep ~5 GiB of disk free for the temp clones (varies with repo
+sizes). To run on a server instead, copy the binary, config, and token env var
+— nothing else is needed.
 
 **Can I run this against repositories with sensitive history?**\
 Yes. `xray` reads git metadata — SHAs, timestamps, author handles, file paths, numstat — plus declared configuration and tooling manifests (workflow YAML, dependency manifests, AI-harness config files). It never reads application logic. No diff text, no commit bodies, no application source is read or stored. See the full capture inventory in [`docs/security.md`](docs/security.md#2-no-source-content-stored).
