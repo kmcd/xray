@@ -55,8 +55,36 @@ type Provenance struct {
 	// narrow what data was captured. Absent keys mean the connector ran at
 	// full depth. The analyser reads this to interpret reduced row counts as
 	// "out of scope" rather than "no signal". Currently used by the github
-	// connector for "pr_window".
+	// connector for "pr_window" and "pr_history_sample".
 	ConfigDepth map[string]string `json:"config_depth,omitempty"`
+
+	// Sampling holds per-bucket statistics when sparse-historical PR sampling
+	// is active (pr_inflection + pr_history_sample configured). Nil when the
+	// connector ran at full PR fidelity. The analyser uses the per-bucket
+	// target/actual/total counts to compute confidence intervals on metrics
+	// derived from pre-bracket sparse data.
+	Sampling *SamplingProvenance `json:"sampling,omitempty"`
+}
+
+// SamplingProvenance records the sparse-historical PR sampling configuration
+// and per-bucket extraction results. Present only when pr_inflection is set.
+type SamplingProvenance struct {
+	InflectionDate string         `json:"inflection_date"`        // "2023-06-01"
+	BracketWindow  string         `json:"bracket_window"`         // "12m"
+	BracketStart   string         `json:"bracket_start"`          // "2022-06-01"
+	BracketEnd     string         `json:"bracket_end"`            // "2026-06-15"
+	Strategy       string         `json:"strategy"`               // "search_default_relevance" | "random"
+	Buckets        []SampleBucket `json:"buckets"`
+}
+
+// SampleBucket records the extraction result for one month (or week) bucket
+// in the pre-bracket sparse slice.
+type SampleBucket struct {
+	Month     string `json:"month"`               // "2022-01" or "2022-01-W1" for weekly sub-buckets
+	Target    int    `json:"target"`              // requested N per bucket
+	Actual    int    `json:"actual"`              // PRs emitted
+	Total     int    `json:"total"`               // totalCount from GraphQL search
+	Truncated bool   `json:"truncated,omitempty"` // true when Total > 1000 (search cap)
 }
 
 func NewProvenance(name, repo string, w Window) Provenance {
@@ -133,6 +161,9 @@ func (p *Provenance) Merge(other Provenance) {
 		if _, ok := p.ConfigDepth[k]; !ok {
 			p.ConfigDepth[k] = v
 		}
+	}
+	if other.Sampling != nil && p.Sampling == nil {
+		p.Sampling = other.Sampling
 	}
 }
 

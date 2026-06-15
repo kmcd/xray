@@ -160,6 +160,43 @@ func TestProvenance_Merge_GraphQLPoints(t *testing.T) {
 	})
 }
 
+// TestProvenance_Merge_SamplingFirstWins: Sampling is copied from other when
+// p has none; p's existing Sampling wins when both are populated.
+func TestProvenance_Merge_SamplingFirstWins(t *testing.T) {
+	t.Run("nil p takes other", func(t *testing.T) {
+		a := newProv(t)
+		b := newProv(t)
+		b.Sampling = &SamplingProvenance{InflectionDate: "2023-06-01", Strategy: "search_default_relevance"}
+		a.Merge(b)
+		if a.Sampling == nil {
+			t.Fatal("expected Sampling to be copied from b")
+		}
+		if a.Sampling.InflectionDate != "2023-06-01" {
+			t.Errorf("InflectionDate = %q, want 2023-06-01", a.Sampling.InflectionDate)
+		}
+	})
+
+	t.Run("p's Sampling wins when both set", func(t *testing.T) {
+		a := newProv(t)
+		b := newProv(t)
+		a.Sampling = &SamplingProvenance{InflectionDate: "2023-01-01"}
+		b.Sampling = &SamplingProvenance{InflectionDate: "2024-01-01"}
+		a.Merge(b)
+		if a.Sampling.InflectionDate != "2023-01-01" {
+			t.Errorf("InflectionDate = %q, want 2023-01-01 (a's value preserved)", a.Sampling.InflectionDate)
+		}
+	})
+
+	t.Run("both nil remains nil", func(t *testing.T) {
+		a := newProv(t)
+		b := newProv(t)
+		a.Merge(b)
+		if a.Sampling != nil {
+			t.Errorf("expected Sampling to remain nil when both nil")
+		}
+	})
+}
+
 // TestProvenance_Merge_EndpointsAndFlagsFirstWins: like Errors, existing
 // entries on p win.
 func TestProvenance_Merge_EndpointsAndFlagsFirstWins(t *testing.T) {
