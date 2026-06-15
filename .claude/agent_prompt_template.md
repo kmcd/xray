@@ -22,6 +22,20 @@ Verbatim clauses to paste into agent prompts when fanning out parallel work. Eac
 
 **Why:** Lost an hour the first time when `internal/config/types.go` was never committed because two agents both assumed the other had it. The fix: declare foundation types as "already here, read them" in every brief.
 
+### Idiom-anchor clause
+
+> Before adding code to package `P`, read at least one well-established sibling file in `P` to anchor style, error handling, logging-level discipline, and table-driven test shape. Match the established style; don't drift. If `P` is sparse or you're scaffolding a new package, the canonical references are:
+>
+> - `internal/connectors/github/extract.go`, `prs.go`, `commits.go` — connector idioms (extract orchestration, provenance writes, paginator shape, GraphQL + REST mixing).
+> - `internal/store/store.go` — store idioms (mutex-guarded inserts, prepared statements, `nstr` / `nbool` / `rfc` null-helpers, append-only `InsertX` shape).
+> - `internal/connectors/github/extract_test.go`, `prs_eof_retry_test.go` — connector test idioms (table-driven shape, `httptest.NewServer` fixtures, `recordingSink`, fixture-stable timestamps).
+> - `internal/ratelimit/ratelimit.go` — transport idioms (atomic-load hot path, multi-line comments capturing intent, CAS-loop discipline on contended state).
+> - `internal/connectors/github/walk.go` — local-IO idioms (working-tree walks, vendor/binary pre-classification, sharded fan-out).
+>
+> Cite the file(s) you anchored on in your deliverable so review can verify the match.
+
+**Why:** Connector, store, and ratelimit packages have grown idioms not documented elsewhere — provenance error-recording shape, mutex granularity, multi-line comment density on intent, table-driven test layouts. Agents adding to a sparse package (a new connector, a fresh store helper) tend to invent a slightly different convention each time, which fragments the codebase. Anchoring on a canonical reference once per session keeps drift bounded and surfaces during review as a citation rather than a diff diff.
+
 ### Git-handoff clause
 
 > **Do not** run `git`. Do not stage, commit, push, tag, or reset. Main commits after collecting your deliverable. Report the file list and per-issue commit message — no Claude co-author trailer, concise imperative subject, body only when not self-evident from the diff.
