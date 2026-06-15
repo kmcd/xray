@@ -173,6 +173,45 @@ func TestBuildPlan_SparseHistoricalScaling(t *testing.T) {
 	}
 }
 
+func TestBuildPlan_SparseHistoricalClampedBracketNoSparseCalls(t *testing.T) {
+	// When bracketStart <= window.Start (bracket covers entire window), there is
+	// no pre-bracket slice. sparseBucketCalls must be 0, not 3.
+	inflection := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
+	cfg := &config.Config{
+		Window: config.Window{
+			Start: time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC), // window.Start AFTER bracketStart
+			End:   time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+			Raw:   "2023-01-01..2026-06-15",
+		},
+		Teams: map[string][]string{"t": {"a/b"}},
+		Connectors: config.Connectors{
+			GitHub: &config.GitHubConn{
+				Token:           "x",
+				PRInflection:    &inflection,
+				PRBracketWindow: &config.DurationSpec{Months: 6, Raw: "6m"},
+				PRHistorySample: &config.HistorySampleSpec{Strategy: "monthly", N: 20, Raw: "monthly:20"},
+			},
+		},
+	}
+	// bracketStart = 2022-01-01 - 6m = 2021-07-01, which is before window.Start (2023-01-01).
+	// After clamping: bracketStart = window.Start. Pre-bracket slice is empty.
+	stats := []RepoStat{{Slug: "a/b", PullRequests: 200, Commits: 500}}
+	p := BuildPlan(cfg, stats)
+
+	// With no pre-bracket slice, sparseBucketCalls must be 0.
+	// If it were 3, the API estimate would be wrong.
+	cfgNoBracket := *cfg
+	cfgNoBracket.Connectors.GitHub = &config.GitHubConn{Token: "x"}
+	pFull := BuildPlan(&cfgNoBracket, stats)
+
+	// With a clamped bracket, prScale stays 1.0 and sparseBucketCalls should be 0,
+	// so the estimate should match the full-walk estimate.
+	if p.APICalls > pFull.APICalls {
+		t.Errorf("clamped-bracket APICalls=%d > full-walk APICalls=%d; spurious bucket calls added",
+			p.APICalls, pFull.APICalls)
+	}
+}
+
 func TestWindowDays(t *testing.T) {
 	cases := []struct {
 		name       string

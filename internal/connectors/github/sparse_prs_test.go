@@ -373,7 +373,7 @@ func TestExtractSparsePRs_EndToEnd(t *testing.T) {
 		t.Fatal("prov.Sampling is nil")
 	}
 	if len(prov.Sampling.Buckets) != 2 {
-		t.Errorf("Sampling.Buckets has %d entries, want 2", len(prov.Sampling.Buckets))
+		t.Errorf("Sampling.Buckets has %d entries, want 2 (regression: bucket records were dropped when Sampling was on prov not provB)", len(prov.Sampling.Buckets))
 	}
 	// Buckets are sorted by month label.
 	if len(prov.Sampling.Buckets) >= 1 && prov.Sampling.Buckets[0].Month != "2022-01" {

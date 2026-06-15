@@ -236,6 +236,13 @@ func (c *Connector) fetchBucketLeaf(ctx context.Context, slug string, b monthBuc
 		Target: spec.N,
 		Total:  total,
 	}
+	if err != nil {
+		meta.Actual = len(nodes)
+		return bucketResult{meta: meta, nodes: nodes, err: err}
+	}
+	// Truncation check comes after the error check: a network failure can
+	// return a partial totalCount that exceeds the cap without meaning the
+	// search cap was actually hit. Only flag Truncated on a clean response.
 	if total > searchTruncationCap {
 		meta.Truncated = true
 		c.log.Warn("github: sparse: weekly bucket also exceeds 1000-result cap; capping at search limit",
@@ -243,10 +250,6 @@ func (c *Connector) fetchBucketLeaf(ctx context.Context, slug string, b monthBuc
 			slog.String("bucket", b.Label),
 			slog.Int("total_count", total),
 		)
-	}
-	if err != nil {
-		meta.Actual = len(nodes)
-		return bucketResult{meta: meta, nodes: nodes, err: err}
 	}
 	if spec.Random {
 		nodes = randomPickN(nodes, spec.N, bucketSeed(slug, b.Label))
@@ -320,6 +323,7 @@ func (c *Connector) extractSparsePRs(ctx context.Context, repo connector.Repo, s
 	prog := newProgress(c.log, repo.Slug, "prs_sample")
 	defer prog.done()
 
+outer:
 	for _, r := range all {
 		if r.err != nil {
 			key := fmt.Sprintf("prs_sample:%s", r.meta.Month)
@@ -331,7 +335,7 @@ func (c *Connector) extractSparsePRs(ctx context.Context, repo connector.Repo, s
 		for _, p := range r.nodes {
 			if ctx.Err() != nil {
 				prov.PaginationComplete = false
-				goto commitBatches
+				break outer
 			}
 			c.emitPR(ctx, repo, p, tpl, sink, prsB, prcB, prlB, revB, cmtB, prov)
 			prog.tick()
@@ -341,7 +345,6 @@ func (c *Connector) extractSparsePRs(ctx context.Context, repo connector.Repo, s
 		}
 	}
 
-commitBatches:
 	commitBatch(prsB, prov, "prs")
 	commitBatch(prcB, prov, "pr_commits")
 	commitBatch(prlB, prov, "pr_labels")

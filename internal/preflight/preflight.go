@@ -163,9 +163,10 @@ func BuildPlan(cfg *config.Config, stats []RepoStat) Plan {
 			if bracketDays < p.WindowDays {
 				prScale = float64(bracketDays) / float64(p.WindowDays)
 			}
-			if gh.PRHistorySample != nil {
-				// Estimate ~3 API calls per month bucket for the sparse slice.
-				// This covers the search() call plus per-PR overflow paginators.
+			if gh.PRHistorySample != nil && bracketStart.After(cfg.Window.Start) {
+				// When bracketStart was clamped to window.Start, there is no
+				// pre-bracket slice to fetch; guard avoids a spurious 3-call
+				// estimate from windowDays returning 1 for a zero-width range.
 				preBracketDays := windowDays(cfg.Window.Start, bracketStart)
 				bucketMonths := (preBracketDays + 29) / 30 // ceil
 				sparseBucketCalls = bucketMonths * 3

@@ -68,17 +68,13 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 		if c.sampleSpec != nil {
 			prov.ConfigDepth["pr_history_sample"] = c.sampleSpec.Raw
 		}
-		strategy := "search_default_relevance"
-		if c.sampleSpec != nil && c.sampleSpec.Random {
-			strategy = "random"
-		}
-		prov.Sampling = &connector.SamplingProvenance{
-			InflectionDate: c.inflection.Format("2006-01-02"),
-			BracketWindow:  c.bracketSpec.Raw,
-			BracketStart:   c.bracketStart.Format("2006-01-02"),
-			BracketEnd:     window.End.Format("2006-01-02"),
-			Strategy:       strategy,
-		}
+		// SamplingProvenance (with per-bucket Buckets slice) is initialized on
+		// provB inside goroutine B, not here. Initializing it on prov here would
+		// mean extractSparsePRs (which receives &provB) appends to the wrong
+		// Sampling pointer — provB.Sampling would stay nil, so the guard inside
+		// extractSparsePRs would never fire and all bucket records would be lost.
+		// Merge (first-wins) copies provB.Sampling to prov after the parallel
+		// block completes.
 	}
 
 	// --- Phase 1: sync prelude --------------------------------------------
@@ -143,13 +139,32 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 		bracketAndRecent := c.effectivePRWindow(window)
 		c.extractPRs(ctx, repo, bracketAndRecent, sink, &provB)
 
-		if c.sampleSpec != nil && c.bracketStart != nil {
-			sparseSlice := connector.Window{
-				Start: window.Start,
-				End:   bracketAndRecent.Start.Add(-time.Second),
+		if c.bracketStart != nil {
+			strategy := "search_default_relevance"
+			if c.sampleSpec != nil && c.sampleSpec.Random {
+				strategy = "random"
 			}
-			if sparseSlice.End.After(sparseSlice.Start) {
-				c.extractSparsePRs(ctx, repo, sparseSlice, c.sampleSpec, sink, &provB)
+			// Initialize provB.Sampling here (not in the sync prelude on prov)
+			// so that extractSparsePRs can append bucket records to the same
+			// Sampling pointer it receives via &provB. Merge (Phase 3) copies
+			// provB.Sampling to prov under first-wins policy since prov.Sampling
+			// is nil at merge time.
+			provB.Sampling = &connector.SamplingProvenance{
+				InflectionDate: c.inflection.Format("2006-01-02"),
+				BracketWindow:  c.bracketSpec.Raw,
+				BracketStart:   c.bracketStart.Format("2006-01-02"),
+				BracketEnd:     window.End.Format("2006-01-02"),
+				Strategy:       strategy,
+			}
+
+			if c.sampleSpec != nil {
+				sparseSlice := connector.Window{
+					Start: window.Start,
+					End:   bracketAndRecent.Start.Add(-time.Second),
+				}
+				if sparseSlice.End.After(sparseSlice.Start) {
+					c.extractSparsePRs(ctx, repo, sparseSlice, c.sampleSpec, sink, &provB)
+				}
 			}
 		}
 	}()
