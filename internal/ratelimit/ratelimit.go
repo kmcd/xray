@@ -179,6 +179,10 @@ func doWithHooks(ctx context.Context, p Policy, log *slog.Logger, h hooks, fn fu
 			lastResp = nil
 		}
 
+		// secondaryHinted is set by shouldRetryResp from a single 4 KB
+		// body peek per retryable 403 and threaded into nextWait so the
+		// ToLower + strings.Contains scan runs at most once per response.
+		var secondaryHinted bool
 		resp, err := fn()
 		if err != nil {
 			lastErr = err
@@ -188,7 +192,9 @@ func doWithHooks(ctx context.Context, p Policy, log *slog.Logger, h hooks, fn fu
 		} else {
 			lastResp = resp
 			lastErr = nil
-			if !shouldRetryResp(resp) {
+			var retry bool
+			retry, secondaryHinted = shouldRetryResp(resp)
+			if !retry {
 				// Success or non-retryable 4xx: hand the response back to
 				// the caller untouched. Permanent 4xx errors are surfaced
 				// as the raw response so the caller sees status/headers/
@@ -200,7 +206,7 @@ func doWithHooks(ctx context.Context, p Policy, log *slog.Logger, h hooks, fn fu
 			}
 		}
 
-		wait, isSecondaryRL := nextWait(lastResp, bo)
+		wait, isSecondaryRL := nextWait(lastResp, bo, secondaryHinted)
 		var (
 			thisBudget  time.Duration
 			thisSpent   *time.Duration
@@ -341,20 +347,25 @@ func unixHeader(v string) (time.Time, bool) {
 // whose message contains "secondary rate limit". The body is peeked up to
 // peekLimit bytes and re-attached so the caller still sees it on the
 // terminal attempt.
-func shouldRetryResp(resp *http.Response) bool {
+//
+// The second return is true when the retry is driven by a secondary-RL
+// signature in the body — threaded into nextWait so the (expensive) 4 KB
+// peek + ToLower + strings.Contains scan runs at most once per response
+// rather than once in each function.
+func shouldRetryResp(resp *http.Response) (retry, secondaryRL bool) {
 	if resp == nil {
-		return false
+		return false, false
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return true
+		return true, false
 	}
 	if resp.StatusCode >= 500 && resp.StatusCode <= 599 {
-		return true
+		return true, false
 	}
 	if resp.StatusCode == http.StatusForbidden && isSecondaryRateLimited(resp) {
-		return true
+		return true, true
 	}
-	return false
+	return false, false
 }
 
 // isSecondaryRateLimited reads (and re-attaches) up to peekLimit bytes of
@@ -389,19 +400,21 @@ func isSecondaryRateLimited(resp *http.Response) bool {
 // counts as a secondary-RL retry, even when Retry-After was supplied —
 // the wait amount honours the header, but the budget accounting reflects
 // the actual cause.
-func nextWait(resp *http.Response, bo *backoff.ExponentialBackOff) (time.Duration, bool) {
-	isSecondaryRL := resp != nil &&
-		resp.StatusCode == http.StatusForbidden &&
-		isSecondaryRateLimited(resp)
-
+//
+// secondaryHint is shouldRetryResp's already-computed secondary-RL
+// classification: passing it through avoids re-peeking the body here.
+// nextWait is only called for responses shouldRetryResp accepted as
+// retryable, so secondaryHint is authoritative and the body is not
+// re-read.
+func nextWait(resp *http.Response, bo *backoff.ExponentialBackOff, secondaryHint bool) (time.Duration, bool) {
 	if resp != nil {
 		if d, ok := parseRetryAfter(resp.Header.Get("Retry-After")); ok {
-			return d, isSecondaryRL
+			return d, secondaryHint
 		}
 		if d, ok := parseRateLimitReset(resp.Header.Get("X-RateLimit-Reset")); ok {
-			return d, isSecondaryRL
+			return d, secondaryHint
 		}
-		if isSecondaryRL {
+		if secondaryHint {
 			return secondaryRateLimitWait, true
 		}
 	}
@@ -481,11 +494,16 @@ type Transport struct {
 	// most recent secondary-RL trigger. Drives the linear decay back
 	// to zero over adaptivePaceDecay since the last hit.
 	adaptiveTriggerNanos atomic.Int64
-	budgets   budgetTracker
+	budgets budgetTracker
 	// warned tracks per-connector predictive-exhaustion warnings so we
 	// emit at most one PhaseError event per connector per Transport
-	// lifetime (acceptance: "a single ... warning event").
-	warned sync.Map
+	// lifetime (acceptance: "a single ... warning event"). Cardinality
+	// is ≤ 5 (one entry per connector) so a plain Mutex + map is cheaper
+	// than sync.Map, which is tuned for high-cardinality high-read
+	// low-write workloads. Both call sites mutate, so a plain Mutex (not
+	// RWMutex) is the right primitive — no read-only fast path exists.
+	warnedMu sync.Mutex
+	warned   map[string]struct{}
 	// startedAt is the first RoundTrip's wall-clock moment, used to gate
 	// the "5+ minutes left" leg of the predictive heuristic in the
 	// absence of an ETA from #81.
@@ -645,7 +663,12 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	sink := t.effectiveSink(req.Context())
 
-	t.startedAt.CompareAndSwap(0, time.Now().UnixNano())
+	// Same shape as the adaptive-pace short-circuit below: skip the
+	// time.Now() syscall once startedAt is set, since CAS would no-op
+	// anyway. The branch fires once per Transport lifetime.
+	if t.startedAt.Load() == 0 {
+		t.startedAt.CompareAndSwap(0, time.Now().UnixNano())
+	}
 
 	// Proactive primary-limit pacing: if a prior response set paceUntil,
 	// sleep before issuing this request. Sleeping here (not after the prior
@@ -689,7 +712,17 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Composes additively with the paceUntil block above — the two have
 	// orthogonal triggers (low-water-remaining vs anti-burst hit) and
 	// can both apply simultaneously.
-	if pace := t.currentAdaptivePace(time.Now()); pace > 0 {
+	//
+	// Happy-path short-circuit: skip the time.Now() syscall and the
+	// currentAdaptivePace function call entirely when no secondary-RL
+	// has ever fired. The atomic load is ~ns; time.Now() is ~hundreds of
+	// ns and dominates per-RoundTrip overhead on runs that never trip
+	// secondary RL.
+	var pace time.Duration
+	if base := t.adaptivePaceNanos.Load(); base > 0 {
+		pace = t.currentAdaptivePace(time.Now())
+	}
+	if pace > 0 {
 		if pace >= rateLimitEventThreshold {
 			// Round to the nearest integer-second for the event. The
 			// linear decay continuously shaves a hair off the ladder
@@ -775,7 +808,9 @@ func (t *Transport) maybeEmitPredictiveWarning(sink progress.Sink, connector str
 		return
 	}
 	if st.Remaining >= predictClearAbove {
-		t.warned.Delete(connector)
+		t.warnedMu.Lock()
+		delete(t.warned, connector)
+		t.warnedMu.Unlock()
 		return
 	}
 	if st.Remaining >= predictWarnBelow {
@@ -785,9 +820,16 @@ func (t *Transport) maybeEmitPredictiveWarning(sink progress.Sink, connector str
 	if started == 0 || time.Since(time.Unix(0, started)) < 5*time.Minute {
 		return
 	}
-	if _, loaded := t.warned.LoadOrStore(connector, struct{}{}); loaded {
+	t.warnedMu.Lock()
+	if _, already := t.warned[connector]; already {
+		t.warnedMu.Unlock()
 		return
 	}
+	if t.warned == nil {
+		t.warned = make(map[string]struct{})
+	}
+	t.warned[connector] = struct{}{}
+	t.warnedMu.Unlock()
 	sink.Emit(progress.Event{
 		Kind:      progress.PhaseError,
 		Connector: connector,
