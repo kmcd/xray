@@ -15,7 +15,7 @@ import (
 // emitReviewsInline emits review rows from the inline GraphQL connection on
 // a PR and returns the earliest submitted_at across non-PENDING reviews.
 // Body strings are length-measured and discarded — never persisted.
-func emitReviewsInline(nodes []reviewGraph, prNum int, slug string, sink connector.Sink, prov *connector.Provenance) *time.Time {
+func emitReviewsInline(nodes []reviewGraph, prNum int, slug string, b reviewsBatch, prov *connector.Provenance) *time.Time {
 	var first *time.Time
 	for _, r := range nodes {
 		if strings.EqualFold(string(r.State), "PENDING") {
@@ -33,12 +33,10 @@ func emitReviewsInline(nodes []reviewGraph, prNum int, slug string, sink connect
 			State:          string(r.State),
 			BodyLength:     len(string(r.Body)),
 		}
-		if err := sink.InsertReview(row); err != nil {
+		if err := b.Add(row); err != nil {
 			if prov.Errors["reviews"] == "" {
 				prov.Errors["reviews"] = err.Error()
 			}
-		} else {
-			prov.RowsReturned["reviews"]++
 		}
 		if first == nil || submitted.Before(*first) {
 			t := submitted
@@ -52,7 +50,7 @@ func emitReviewsInline(nodes []reviewGraph, prNum int, slug string, sink connect
 // inline Reviews.PageInfo.HasNextPage was true. Best-effort: an error
 // during pagination leaves the PR's review_count unchanged on the row
 // (the PR row records the GraphQL TotalCount, not the emitted count).
-func (c *Connector) paginatePRReviewsOverflow(ctx context.Context, owner, name string, number int, slug, cursor string, sink connector.Sink, prov *connector.Provenance) *time.Time {
+func (c *Connector) paginatePRReviewsOverflow(ctx context.Context, owner, name string, number int, slug, cursor string, b reviewsBatch, prov *connector.Provenance) *time.Time {
 	var first *time.Time
 	for {
 		if ctx.Err() != nil {
@@ -91,7 +89,7 @@ func (c *Connector) paginatePRReviewsOverflow(ctx context.Context, owner, name s
 			)
 			return first
 		}
-		if t := emitReviewsInline(q.Repository.PullRequest.Reviews.Nodes, number, slug, sink, prov); t != nil {
+		if t := emitReviewsInline(q.Repository.PullRequest.Reviews.Nodes, number, slug, b, prov); t != nil {
 			if first == nil || t.Before(*first) {
 				first = t
 			}

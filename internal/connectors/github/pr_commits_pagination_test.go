@@ -140,7 +140,9 @@ func TestPaginatePRCommits_ReturnsOids(t *testing.T) {
 	sink := &memSink{}
 	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
 
-	oids := c.paginatePRCommits(context.Background(), "kmcd", "foo", 77, "kmcd/foo", "cursor-start", sink, &prov)
+	b := openPRCommitsBatch(sink)
+	oids := c.paginatePRCommits(context.Background(), "kmcd", "foo", 77, "kmcd/foo", "cursor-start", b, &prov)
+	commitBatch(b, &prov, "pr_commits")
 
 	if len(oids) != 2 {
 		t.Fatalf("paginatePRCommits returned %d OIDs, want 2: %v", len(oids), oids)

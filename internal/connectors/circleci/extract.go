@@ -46,6 +46,16 @@ func (c *Connector) extractProject(ctx context.Context, projSlug, repoSlug strin
 	}
 	prov.Endpoints[endpointKey] = connector.EndpointStatus{Accessible: true}
 
+	// Hot-table batches flushed once at the end of this project's walk.
+	bB := openBuildsBatch(sink)
+	defer bB.Rollback()
+	bjB := openBuildJobsBatch(sink)
+	defer bjB.Rollback()
+	defer func() {
+		commitBatch(bB, prov, "builds")
+		commitBatch(bjB, prov, "build_jobs")
+	}()
+
 	for _, p := range pipelines {
 		// Skip pipelines whose created_at falls outside the window. The
 		// pipelines call short-circuits on stopBefore; we still need an
@@ -75,11 +85,10 @@ func (c *Connector) extractProject(ctx context.Context, projSlug, repoSlug strin
 			}
 
 			build := buildFromWorkflow(repoSlug, p, w)
-			if err := sink.InsertBuild(build); err != nil {
+			if err := bB.Add(build); err != nil {
 				prov.Errors["build:"+w.ID] = err.Error()
 				continue
 			}
-			prov.RowsReturned["builds"]++
 
 			jobs, jComplete, err := c.listJobsForWorkflow(ctx, w.ID)
 			if err != nil {
@@ -97,11 +106,10 @@ func (c *Connector) extractProject(ctx context.Context, projSlug, repoSlug strin
 
 			for _, j := range jobs {
 				bj := buildJobFromJob(repoSlug, w.ID, j)
-				if err := sink.InsertBuildJob(bj); err != nil {
+				if err := bjB.Add(bj); err != nil {
 					prov.Errors["build_job:"+w.ID+":"+j.Name] = err.Error()
 					continue
 				}
-				prov.RowsReturned["build_jobs"]++
 			}
 
 			if err := ctx.Err(); err != nil {

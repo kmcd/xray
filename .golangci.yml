@@ -121,6 +121,11 @@ linters:
       - path: ^internal/store/store\.go$
         linters:
           - noctx
+      # internal/store/batch.go opens explicit transactions on the same
+      # local SQLite handle as store.go. Same ctx-thread argument applies.
+      - path: ^internal/store/batch\.go$
+        linters:
+          - noctx
       # DDL-roundtrip and postprocess tests exercise ~70 in-memory SQLite
       # calls. ctx threading buys no behaviour change in tests that hold
       # the DB lifetime entirely within a single subtest; the noctx sensor

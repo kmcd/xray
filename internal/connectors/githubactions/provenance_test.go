@@ -133,7 +133,9 @@ func TestJobsForRun_Forbidden_RecordsEndpoint(t *testing.T) {
 	runID := int64(7777)
 	attempt := 1
 	run := &github.WorkflowRun{ID: &runID, RunAttempt: &attempt}
-	c.jobsForRun(context.Background(), "kmcd", "foo", "kmcd/foo", run, sink, &prov)
+	bjB := openBuildJobsBatch(sink)
+	c.jobsForRun(context.Background(), "kmcd", "foo", "kmcd/foo", run, bjB, &prov)
+	commitBatch(bjB, &prov, "build_jobs")
 
 	ep, ok := prov.Endpoints["workflow_jobs"]
 	if !ok {
@@ -311,7 +313,9 @@ func TestJobsForRun_InsertError_ContinuesWalk_PerIDKey(t *testing.T) {
 	runID := int64(7777)
 	attempt := 1
 	run := &github.WorkflowRun{ID: &runID, RunAttempt: &attempt}
-	c.jobsForRun(context.Background(), "kmcd", "foo", "kmcd/foo", run, sink, &prov)
+	bjB := openBuildJobsBatch(sink)
+	c.jobsForRun(context.Background(), "kmcd", "foo", "kmcd/foo", run, bjB, &prov)
+	commitBatch(bjB, &prov, "build_jobs")
 
 	if sink.buildJobCalls != 3 {
 		t.Errorf("expected 3 InsertBuildJob attempts (walk continues past failure); got %d", sink.buildJobCalls)

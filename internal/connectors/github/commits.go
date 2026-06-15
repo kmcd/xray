@@ -61,10 +61,24 @@ func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, win
 	prog := newProgress(c.log, repo.Slug, "commits")
 	defer prog.done()
 	var cxPairs []complexityPair
+
+	// Hot-table batches: commits, commit_files, commit_coauthors. Each flushes
+	// every batchChunk Adds inside one explicit tx, then increments
+	// prov.RowsReturned by the committed count at Commit time. emitDefects
+	// (called inside this loop) hits a Cold table via per-row Insert — that
+	// runs between Adds when the batch holds no open tx, so no deadlock on
+	// the single-writer SQLite connection.
+	cb := openCommitsBatch(sink)
+	defer cb.Rollback()
+	cfb := openCommitFilesBatch(sink)
+	defer cfb.Rollback()
+	ccb := openCommitCoauthorsBatch(sink)
+	defer ccb.Rollback()
+
 	for _, rec := range records {
 		if ctx.Err() != nil {
 			prov.PaginationComplete = false
-			return
+			break
 		}
 		prog.tick()
 
@@ -98,13 +112,11 @@ func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, win
 		// row.LandedViaPR stays nil here; postprocess fills it via a
 		// join against pr_commits (issue #75).
 
-		if err := sink.InsertCommit(row); err != nil {
+		if err := cb.Add(row); err != nil {
 			if prov.Errors["commits"] == "" {
 				prov.Errors["commits"] = err.Error()
 			}
 			c.log.Warn("github: insert commit", slog.String("sha", rec.SHA), slog.String("error", err.Error()))
-		} else {
-			prov.RowsReturned["commits"]++
 		}
 
 		// Defect emission: parse ticket references out of the commit
@@ -126,12 +138,10 @@ func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, win
 				ChangeType: f.ChangeType,
 				PrevPath:   f.PrevPath,
 			}
-			if err := sink.InsertCommitFile(cf); err != nil {
+			if err := cfb.Add(cf); err != nil {
 				if prov.Errors["commit_files"] == "" {
 					prov.Errors["commit_files"] = err.Error()
 				}
-			} else {
-				prov.RowsReturned["commit_files"]++
 			}
 			if f.ChangeType != "D" && !complexityHistoryExcluded(f.Path) {
 				cxPairs = append(cxPairs, complexityPair{rec.SHA, f.Path})
@@ -140,24 +150,30 @@ func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, win
 
 		// Coauthor rows.
 		for _, ca := range trailerCoauthors(rec, repo.Slug, mm) {
-			if err := sink.InsertCommitCoauthor(ca); err != nil {
+			if err := ccb.Add(ca); err != nil {
 				if prov.Errors["commit_coauthors"] == "" {
 					prov.Errors["commit_coauthors"] = err.Error()
 				}
-			} else {
-				prov.RowsReturned["commit_coauthors"]++
 			}
 		}
 		if ca, ok := committerDistinctCoauthor(rec, repo.Slug, mm); ok {
-			if err := sink.InsertCommitCoauthor(ca); err != nil {
+			if err := ccb.Add(ca); err != nil {
 				if prov.Errors["commit_coauthors"] == "" {
 					prov.Errors["commit_coauthors"] = err.Error()
 				}
-			} else {
-				prov.RowsReturned["commit_coauthors"]++
 			}
 		}
 	}
+
+	// Commit the three hot-table batches before the complexity history
+	// pass runs. Each Commit() flushes the buffered tail and returns the
+	// total rows that landed; prov.RowsReturned increments by exactly that
+	// count, satisfying the "increment only after successful tx.Commit()"
+	// invariant. A flush error sets the per-table errors entry first-wins.
+	commitBatch(cb, prov, "commits")
+	commitBatch(cfb, prov, "commit_files")
+	commitBatch(ccb, prov, "commit_coauthors")
+
 	// Batch-fetch file content via one git cat-file --batch subprocess and
 	// emit file_complexity_history rows. Replaces O(N) git-show subprocesses.
 	c.extractComplexityHistoryBatch(ctx, repo, cxPairs, sink, prov)

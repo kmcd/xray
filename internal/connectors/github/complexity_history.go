@@ -84,6 +84,14 @@ func (c *Connector) catFileBatchOnPairs(ctx context.Context, repo connector.Repo
 	for i, p := range pairs {
 		refs[i] = p.sha + ":" + p.path
 	}
+
+	// file_complexity_history is the largest hot table — batch its writes
+	// inside an explicit tx per N rows. Defer Rollback (no-op after a
+	// successful Commit). emitDefects / other Cold inserts aren't called
+	// from this loop, so no nested-conn deadlock risk.
+	fch := openFileComplexityHistoryBatch(sink)
+	defer fch.Rollback()
+
 	i := 0
 	batchErr := c.git.CatFileBatch(ctx, repo.Clone, refs, func(_ string, content []byte) {
 		p := pairs[i]
@@ -102,14 +110,14 @@ func (c *Connector) catFileBatchOnPairs(ctx context.Context, repo connector.Repo
 			IndentSD:    stats.sd,
 			IndentMax:   stats.maxLevel,
 		}
-		if err := sink.InsertFileComplexityHistory(row); err != nil {
+		if err := fch.Add(row); err != nil {
 			if prov.Errors["file_complexity_history"] == "" {
 				prov.Errors["file_complexity_history"] = err.Error()
 			}
 			return
 		}
-		prov.RowsReturned["file_complexity_history"]++
 	})
+	commitBatch(fch, prov, "file_complexity_history")
 	if batchErr != nil {
 		if prov.Errors["file_complexity_history"] == "" {
 			prov.Errors["file_complexity_history"] = batchErr.Error()

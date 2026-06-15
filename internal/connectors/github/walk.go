@@ -50,12 +50,15 @@ func emitRepoLanguages(sink connector.Sink, repo connector.Repo, langTotals map[
 
 // processWalkFile handles all per-file work: file_metrics, language
 // accumulation, and harness detection. It is called from both the serial
-// walk callback and the parallel worker goroutines.
+// walk callback and the parallel worker goroutines. fmB is the per-shard
+// file_metrics batch handle owned by the caller; harness_artifacts (cold)
+// stays on the per-row sink.
 func (c *Connector) processWalkFile(
 	ctx context.Context,
 	repo connector.Repo,
 	root string,
 	sink connector.Sink,
+	fmB fileMetricsBatch,
 	prov *connector.Provenance,
 	langTotals map[string]int64,
 	prog *progress,
@@ -116,12 +119,10 @@ func (c *Connector) processWalkFile(
 		fm.IsBinary = true
 	}
 
-	if err := sink.InsertFileMetric(fm); err != nil {
+	if err := fmB.Add(fm); err != nil {
 		if prov.Errors["file_metrics"] == "" {
 			prov.Errors["file_metrics"] = err.Error()
 		}
-	} else {
-		prov.RowsReturned["file_metrics"]++
 	}
 	prog.tick()
 
@@ -197,15 +198,16 @@ func (c *Connector) extractRepoFiles(ctx context.Context, repo connector.Repo, s
 		prov.Errors["repo_file"] = err.Error()
 		return
 	}
+	rfB := openRepoFilesBatch(sink)
+	defer rfB.Rollback()
 	for _, p := range paths {
-		if err := sink.InsertRepoFile(model.RepoFile{Repo: repo.Slug, Path: p}); err != nil {
+		if err := rfB.Add(model.RepoFile{Repo: repo.Slug, Path: p}); err != nil {
 			if prov.Errors["repo_file"] == "" {
 				prov.Errors["repo_file"] = err.Error()
 			}
-		} else {
-			prov.RowsReturned["repo_file"]++
 		}
 	}
+	commitBatch(rfB, prov, "repo_file")
 }
 
 // walkEntry carries the data a worker goroutine needs to process one file.
@@ -286,6 +288,9 @@ func (c *Connector) extractWorkingTreeSerial(ctx context.Context, repo connector
 	prog := newProgress(logger, repo.Slug, "file_metrics")
 	defer prog.done()
 
+	fmB := openFileMetricsBatch(sink)
+	defer fmB.Rollback()
+
 	_ = filepath.Walk(root, func(path string, info fs.FileInfo, err error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -307,10 +312,11 @@ func (c *Connector) extractWorkingTreeSerial(ctx context.Context, repo connector
 			}
 			return nil
 		}
-		c.processWalkFile(ctx, repo, root, sink, prov, langTotals, prog, path, relPosix, info)
+		c.processWalkFile(ctx, repo, root, sink, fmB, prov, langTotals, prog, path, relPosix, info)
 		return nil
 	})
 
+	commitBatch(fmB, prov, "file_metrics")
 	emitRepoLanguages(sink, repo, langTotals, prov)
 }
 
@@ -366,9 +372,16 @@ func (c *Connector) extractWorkingTreeParallel(ctx context.Context, repo connect
 			wl := workerLangs[idx]
 			prog := newProgress(logger, repo.Slug, "file_metrics")
 			defer prog.done()
+			// Per-worker file_metrics batch. The batches serialise on the
+			// store's write mutex at flush time so concurrent shards still
+			// see single-writer SQLite semantics; each shard's committed
+			// count rolls up via workerProvs[idx].Merge below.
+			fmB := openFileMetricsBatch(sink)
+			defer fmB.Rollback()
 			for e := range fileCh {
-				c.processWalkFile(ctx, repo, root, sink, wp, wl, prog, e.absPath, e.relPosix, e.info)
+				c.processWalkFile(ctx, repo, root, sink, fmB, wp, wl, prog, e.absPath, e.relPosix, e.info)
 			}
+			commitBatch(fmB, wp, "file_metrics")
 		}(i)
 	}
 

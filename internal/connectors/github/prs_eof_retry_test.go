@@ -220,7 +220,9 @@ func TestPaginatePRReviewsOverflow_EOFRetry(t *testing.T) {
 	c := newTestConnector(t, srv)
 	sink := &memSink{}
 	prov := connector.NewProvenance(c.Name(), "kmcd/foo", standardWindow())
-	got := c.paginatePRReviewsOverflow(context.Background(), "kmcd", "foo", 1, "kmcd/foo", "c1", sink, &prov)
+	b := openReviewsBatch(sink)
+	got := c.paginatePRReviewsOverflow(context.Background(), "kmcd", "foo", 1, "kmcd/foo", "c1", b, &prov)
+	commitBatch(b, &prov, "reviews")
 	if got == nil {
 		t.Fatalf("expected non-nil first-submitted time after successful retry")
 	}

@@ -32,6 +32,19 @@ func (c *Connector) builds(
 		ListOptions: github.ListOptions{PerPage: 100},
 	}
 
+	// Hot-table batches for builds + build_jobs. Both are flushed once at
+	// the end of the workflow-run walk; jobsForRun receives the build_jobs
+	// handle and Adds to it without committing.
+	bB := openBuildsBatch(sink)
+	defer bB.Rollback()
+	bjB := openBuildJobsBatch(sink)
+	defer bjB.Rollback()
+
+	defer func() {
+		commitBatch(bB, prov, "builds")
+		commitBatch(bjB, prov, "build_jobs")
+	}()
+
 	for {
 		if err := ctx.Err(); err != nil {
 			prov.Errors["builds"] = err.Error()
@@ -63,13 +76,12 @@ func (c *Connector) builds(
 			if !window.Contains(b.CreatedAt) {
 				continue
 			}
-			if err := sink.InsertBuild(b); err != nil {
+			if err := bB.Add(b); err != nil {
 				prov.Errors["builds:"+b.ID] = err.Error()
 				continue
 			}
-			prov.RowsReturned["builds"]++
 
-			c.jobsForRun(ctx, owner, name, repo.Slug, run, sink, prov)
+			c.jobsForRun(ctx, owner, name, repo.Slug, run, bjB, prov)
 		}
 
 		if resp == nil || resp.NextPage == 0 {
@@ -81,11 +93,14 @@ func (c *Connector) builds(
 }
 
 // jobsForRun pages the jobs for a single workflow run and emits build_jobs.
+// bjB is the caller-owned build_jobs batch handle; jobsForRun Adds to it
+// but never Commits — the workflow-run walk's deferred commit flushes the
+// whole repo's worth of jobs in one shot.
 func (c *Connector) jobsForRun(
 	ctx context.Context,
 	owner, name, repoSlug string,
 	run *github.WorkflowRun,
-	sink connector.Sink,
+	bjB buildJobsBatch,
 	prov *connector.Provenance,
 ) {
 	runID := int64Of(run.ID)
@@ -120,11 +135,10 @@ func (c *Connector) jobsForRun(
 				continue
 			}
 			bj := mapBuildJob(j, runID, repoSlug, runAttempt(run))
-			if err := sink.InsertBuildJob(bj); err != nil {
+			if err := bjB.Add(bj); err != nil {
 				prov.Errors[fmt.Sprintf("build_jobs:%d:%s", runID, bj.Name)] = err.Error()
 				continue
 			}
-			prov.RowsReturned["build_jobs"]++
 		}
 		if resp == nil || resp.NextPage == 0 {
 			break

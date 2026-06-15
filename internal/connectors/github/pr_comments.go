@@ -13,7 +13,7 @@ import (
 // emitIssueCommentsInline emits issue_comment rows from the PR's inline
 // top-level Comments connection. Body strings are length-measured and
 // discarded — never persisted.
-func emitIssueCommentsInline(nodes []issueCommentGraph, prNum int, slug string, sink connector.Sink, prov *connector.Provenance) {
+func emitIssueCommentsInline(nodes []issueCommentGraph, prNum int, slug string, b prCommentsBatch, prov *connector.Provenance) {
 	for _, cm := range nodes {
 		login := string(cm.Author.Login)
 		row := model.PRComment{
@@ -25,12 +25,10 @@ func emitIssueCommentsInline(nodes []issueCommentGraph, prNum int, slug string, 
 			Kind:         "issue_comment",
 			BodyLength:   len(string(cm.Body)),
 		}
-		if err := sink.InsertPRComment(row); err != nil {
+		if err := b.Add(row); err != nil {
 			if prov.Errors["pr_comments"] == "" {
 				prov.Errors["pr_comments"] = err.Error()
 			}
-		} else {
-			prov.RowsReturned["pr_comments"]++
 		}
 	}
 }
@@ -38,15 +36,15 @@ func emitIssueCommentsInline(nodes []issueCommentGraph, prNum int, slug string, 
 // emitReviewThreadsInline emits review_comment rows from the PR's inline
 // ReviewThreads connection. Each thread contributes one or more comments;
 // the thread root has a nil replyTo, replies carry the parent's databaseId.
-func emitReviewThreadsInline(threads []reviewThreadGraph, prNum int, slug string, sink connector.Sink, prov *connector.Provenance) {
+func emitReviewThreadsInline(threads []reviewThreadGraph, prNum int, slug string, b prCommentsBatch, prov *connector.Provenance) {
 	for _, th := range threads {
-		emitReviewCommentNodes(th.Comments.Nodes, prNum, slug, sink, prov)
+		emitReviewCommentNodes(th.Comments.Nodes, prNum, slug, b, prov)
 	}
 }
 
 // emitReviewCommentNodes writes review-comment rows from a slice of
 // PullRequestReviewComment GraphQL nodes.
-func emitReviewCommentNodes(nodes []reviewCommentGraph, prNum int, slug string, sink connector.Sink, prov *connector.Provenance) {
+func emitReviewCommentNodes(nodes []reviewCommentGraph, prNum int, slug string, b prCommentsBatch, prov *connector.Provenance) {
 	for _, cm := range nodes {
 		login := string(cm.Author.Login)
 		row := model.PRComment{
@@ -63,19 +61,17 @@ func emitReviewCommentNodes(nodes []reviewCommentGraph, prNum int, slug string, 
 			v := cm.ReplyTo.DatabaseID
 			row.InReplyTo = &v
 		}
-		if err := sink.InsertPRComment(row); err != nil {
+		if err := b.Add(row); err != nil {
 			if prov.Errors["pr_comments"] == "" {
 				prov.Errors["pr_comments"] = err.Error()
 			}
-		} else {
-			prov.RowsReturned["pr_comments"]++
 		}
 	}
 }
 
 // paginatePRIssueCommentsOverflow drains additional issue-style comment
 // pages for a PR whose inline Comments.PageInfo.HasNextPage was true.
-func (c *Connector) paginatePRIssueCommentsOverflow(ctx context.Context, owner, name string, number int, slug, cursor string, sink connector.Sink, prov *connector.Provenance) {
+func (c *Connector) paginatePRIssueCommentsOverflow(ctx context.Context, owner, name string, number int, slug, cursor string, b prCommentsBatch, prov *connector.Provenance) {
 	for {
 		if ctx.Err() != nil {
 			prov.PaginationComplete = false
@@ -113,7 +109,7 @@ func (c *Connector) paginatePRIssueCommentsOverflow(ctx context.Context, owner, 
 			)
 			return
 		}
-		emitIssueCommentsInline(q.Repository.PullRequest.Comments.Nodes, number, slug, sink, prov)
+		emitIssueCommentsInline(q.Repository.PullRequest.Comments.Nodes, number, slug, b, prov)
 		if !bool(q.Repository.PullRequest.Comments.PageInfo.HasNextPage) {
 			return
 		}
@@ -126,7 +122,7 @@ func (c *Connector) paginatePRIssueCommentsOverflow(ctx context.Context, owner, 
 // Each thread's inner Comments connection is also walked at first=100;
 // threads with >100 inline comments are recovered via the per-thread
 // pagination loop in paginateReviewThreadComments.
-func (c *Connector) paginatePRReviewThreadsOverflow(ctx context.Context, owner, name string, number int, slug, cursor string, sink connector.Sink, prov *connector.Provenance) {
+func (c *Connector) paginatePRReviewThreadsOverflow(ctx context.Context, owner, name string, number int, slug, cursor string, b prCommentsBatch, prov *connector.Provenance) {
 	for {
 		if ctx.Err() != nil {
 			prov.PaginationComplete = false
@@ -164,7 +160,7 @@ func (c *Connector) paginatePRReviewThreadsOverflow(ctx context.Context, owner, 
 			)
 			return
 		}
-		emitReviewThreadsInline(q.Repository.PullRequest.ReviewThreads.Nodes, number, slug, sink, prov)
+		emitReviewThreadsInline(q.Repository.PullRequest.ReviewThreads.Nodes, number, slug, b, prov)
 		if !bool(q.Repository.PullRequest.ReviewThreads.PageInfo.HasNextPage) {
 			return
 		}

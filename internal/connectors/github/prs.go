@@ -420,6 +420,12 @@ func isTransientEOF(err error) bool {
 // Best-effort template fetch happens here because the template only feeds
 // the per-row emit; lifting it into fetchPRs would burn an extra REST
 // round-trip during the prefetch path with no upside.
+//
+// Hot-table batches (prs, pr_commits, pr_labels, reviews, pr_comments) are
+// opened once at the top and committed once at the bottom — every PR
+// contributes to the same five tx-bound buffers, so the per-PR overhead
+// of an explicit tx amortises across the whole batch. pr_review_requests
+// stays per-row (cold table).
 func (c *Connector) emitPRs(ctx context.Context, repo connector.Repo, nodes []prGraph, sink connector.Sink, prov *connector.Provenance) {
 	tpl, err := c.fetchTemplate(ctx, repo.Slug, prov)
 	if err != nil {
@@ -428,23 +434,44 @@ func (c *Connector) emitPRs(ctx context.Context, repo connector.Repo, nodes []pr
 			slog.String("error", err.Error()),
 		)
 	}
+
+	prsB := openPRsBatch(sink)
+	defer prsB.Rollback()
+	prcB := openPRCommitsBatch(sink)
+	defer prcB.Rollback()
+	prlB := openPRLabelsBatch(sink)
+	defer prlB.Rollback()
+	revB := openReviewsBatch(sink)
+	defer revB.Rollback()
+	cmtB := openPRCommentsBatch(sink)
+	defer cmtB.Rollback()
+
 	prog := newProgress(c.log, repo.Slug, "prs")
 	defer prog.done()
 	for _, p := range nodes {
 		if ctx.Err() != nil {
 			prov.PaginationComplete = false
-			return
+			break
 		}
-		c.emitPR(ctx, repo, p, tpl, sink, prov)
+		c.emitPR(ctx, repo, p, tpl, sink, prsB, prcB, prlB, revB, cmtB, prov)
 		prog.tick()
 	}
+
+	commitBatch(prsB, prov, "prs")
+	commitBatch(prcB, prov, "pr_commits")
+	commitBatch(prlB, prov, "pr_labels")
+	commitBatch(revB, prov, "reviews")
+	commitBatch(cmtB, prov, "pr_comments")
 }
 
 // emitPR writes the PR row + pr_commits + pr_labels for one PR. Reviews,
 // comments, and review-requests are emitted from the inline GraphQL data
 // included in prListQuery. Overflow paginators fire only when an inner
 // connection's pageInfo.HasNextPage is true.
-func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, tpl *template, sink connector.Sink, prov *connector.Provenance) {
+//
+// The five hot-table batch handles are owned by emitPRs; emitPR adds to them
+// and never Commits — the caller flushes after the whole nodes slice walks.
+func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, tpl *template, sink connector.Sink, prsB prsBatch, prcB prCommitsBatch, prlB prLabelsBatch, revB reviewsBatch, cmtB prCommentsBatch, prov *connector.Provenance) {
 	owner, name, _ := splitSlug(repo.Slug)
 	prNum := int(p.Number)
 
@@ -519,13 +546,13 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 	firstReviewAt := firstReviewAtTL
 
 	// Reviews from the inline GraphQL connection.
-	if t := emitReviewsInline(p.Reviews.Nodes, prNum, repo.Slug, sink, prov); t != nil {
+	if t := emitReviewsInline(p.Reviews.Nodes, prNum, repo.Slug, revB, prov); t != nil {
 		if firstReviewAt == nil || t.Before(*firstReviewAt) {
 			firstReviewAt = t
 		}
 	}
 	if bool(p.Reviews.PageInfo.HasNextPage) {
-		if t := c.paginatePRReviewsOverflow(ctx, owner, name, prNum, repo.Slug, string(p.Reviews.PageInfo.EndCursor), sink, prov); t != nil {
+		if t := c.paginatePRReviewsOverflow(ctx, owner, name, prNum, repo.Slug, string(p.Reviews.PageInfo.EndCursor), revB, prov); t != nil {
 			if firstReviewAt == nil || t.Before(*firstReviewAt) {
 				firstReviewAt = t
 			}
@@ -533,24 +560,22 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 	}
 
 	// PR comments: issue-style top-level and review-thread inline.
-	emitIssueCommentsInline(p.Comments.Nodes, prNum, repo.Slug, sink, prov)
+	emitIssueCommentsInline(p.Comments.Nodes, prNum, repo.Slug, cmtB, prov)
 	if bool(p.Comments.PageInfo.HasNextPage) {
-		c.paginatePRIssueCommentsOverflow(ctx, owner, name, prNum, repo.Slug, string(p.Comments.PageInfo.EndCursor), sink, prov)
+		c.paginatePRIssueCommentsOverflow(ctx, owner, name, prNum, repo.Slug, string(p.Comments.PageInfo.EndCursor), cmtB, prov)
 	}
-	emitReviewThreadsInline(p.ReviewThreads.Nodes, prNum, repo.Slug, sink, prov)
+	emitReviewThreadsInline(p.ReviewThreads.Nodes, prNum, repo.Slug, cmtB, prov)
 	if bool(p.ReviewThreads.PageInfo.HasNextPage) {
-		c.paginatePRReviewThreadsOverflow(ctx, owner, name, prNum, repo.Slug, string(p.ReviewThreads.PageInfo.EndCursor), sink, prov)
+		c.paginatePRReviewThreadsOverflow(ctx, owner, name, prNum, repo.Slug, string(p.ReviewThreads.PageInfo.EndCursor), cmtB, prov)
 	}
 
 	// pr_labels straight from GraphQL nodes; no extra round-trip.
 	for _, l := range p.Labels.Nodes {
 		row := model.PRLabel{PRNumber: prNum, Repo: repo.Slug, Label: string(l.Name)}
-		if err := sink.InsertPRLabel(row); err != nil {
+		if err := prlB.Add(row); err != nil {
 			if prov.Errors["pr_labels"] == "" {
 				prov.Errors["pr_labels"] = err.Error()
 			}
-		} else {
-			prov.RowsReturned["pr_labels"]++
 		}
 	}
 
@@ -558,18 +583,16 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 	headOids := prHeadOids(p)
 	for _, n := range p.Commits.Nodes {
 		row := model.PRCommit{PRNumber: prNum, Repo: repo.Slug, SHA: string(n.Commit.Oid)}
-		if err := sink.InsertPRCommit(row); err != nil {
+		if err := prcB.Add(row); err != nil {
 			if prov.Errors["pr_commits"] == "" {
 				prov.Errors["pr_commits"] = err.Error()
 			}
-		} else {
-			prov.RowsReturned["pr_commits"]++
 		}
 	}
 	// Paginate remaining commits if the PR has more than 25; collect overflow
 	// OIDs so resolveMergeMethod sees the full head-commit set.
 	if bool(p.Commits.PageInfo.HasNextPage) {
-		overflowOids := c.paginatePRCommits(ctx, owner, name, prNum, repo.Slug, string(p.Commits.PageInfo.EndCursor), sink, prov)
+		overflowOids := c.paginatePRCommits(ctx, owner, name, prNum, repo.Slug, string(p.Commits.PageInfo.EndCursor), prcB, prov)
 		headOids = append(headOids, overflowOids...)
 	}
 
@@ -611,12 +634,10 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 		row.ClosedAt = &t
 	}
 
-	if err := sink.InsertPR(row); err != nil {
+	if err := prsB.Add(row); err != nil {
 		if prov.Errors["prs"] == "" {
 			prov.Errors["prs"] = err.Error()
 		}
-	} else {
-		prov.RowsReturned["prs"]++
 	}
 
 	// Defect emission from PR title and body. opened_at is the PR's
@@ -633,7 +654,7 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 // caller can pass the full set to resolveMergeMethod. Best-effort; on
 // error the rows written so far are kept and the partial OID slice is
 // returned.
-func (c *Connector) paginatePRCommits(ctx context.Context, owner, name string, number int, slug, cursor string, sink connector.Sink, prov *connector.Provenance) []string {
+func (c *Connector) paginatePRCommits(ctx context.Context, owner, name string, number int, slug, cursor string, b prCommitsBatch, prov *connector.Provenance) []string {
 	var oids []string
 	for {
 		var q struct {
@@ -669,12 +690,10 @@ func (c *Connector) paginatePRCommits(ctx context.Context, owner, name string, n
 			oid := string(n.Commit.Oid)
 			oids = append(oids, oid)
 			row := model.PRCommit{PRNumber: number, Repo: slug, SHA: oid}
-			if err := sink.InsertPRCommit(row); err != nil {
+			if err := b.Add(row); err != nil {
 				if prov.Errors["pr_commits"] == "" {
 					prov.Errors["pr_commits"] = err.Error()
 				}
-			} else {
-				prov.RowsReturned["pr_commits"]++
 			}
 		}
 		if !bool(q.Repository.PullRequest.Commits.PageInfo.HasNextPage) {
