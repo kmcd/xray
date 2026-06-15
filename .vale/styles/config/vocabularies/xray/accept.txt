@@ -384,3 +384,8 @@ PEM
 SSL
 SSH
 (?i)org's
+(?i)syscall
+(?i)syscalls
+(?i)readdir
+(?i)autocommit
+(?i)tx
