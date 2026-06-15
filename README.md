@@ -12,7 +12,7 @@
 - **Captures**: commits, PRs, reviews, CI runs, deploys, incidents — structural data and declared configuration / tooling manifests, never application logic.
 - **Produces**: a single `.tar.gz` (SQLite + JSON manifest) — verifiable SHA256, no secrets.
 - **Touches**: GitHub, GitHub Actions, CircleCI, Sentry, Bugsnag, Honeycomb — read-only, even when tokens hold write scope.
-- **Doesn't do**: application-logic capture, per-individual rankings, daemon mode, built-in scheduler (use the [GitHub Actions template](docs/scheduled-extraction.md)).
+- **Doesn't do**: application-logic capture, per-individual rankings, daemon mode, scheduled runs.
 
 > [!IMPORTANT]
 > `xray` runs inside a customer environment against the customer's own
@@ -60,9 +60,6 @@ what a representative run actually looks like.
 - [`docs/engagement-guide.md`](docs/engagement-guide.md) — the
   consultant-side counterpart: what happens to the artifact after
   you send it. Public so the methodology stays auditable.
-- [`docs/scheduled-extraction.md`](docs/scheduled-extraction.md) — how
-  to set up a scheduled quarterly extraction via a GitHub Actions
-  workflow (no consultant infrastructure, no GitHub App).
 
 ## Install
 
