@@ -352,6 +352,126 @@ pr_window = "2026-01-01..2024-01-01"
 `,
 			want: []string{"end date precedes start date"},
 		},
+		{
+			name: "sparse sampling fully configured",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "x"
+pr_inflection = "2023-06-01"
+pr_bracket_window = "12m"
+pr_history_sample = "monthly:20"
+`,
+			wantOK: true,
+		},
+		{
+			name: "pr_inflection without pr_bracket_window",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "x"
+pr_inflection = "2023-06-01"
+`,
+			want: []string{"pr_inflection requires pr_bracket_window"},
+		},
+		{
+			name: "pr_bracket_window without pr_inflection",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "x"
+pr_bracket_window = "12m"
+`,
+			want: []string{"pr_bracket_window requires pr_inflection"},
+		},
+		{
+			name: "pr_history_sample without pr_inflection",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "x"
+pr_history_sample = "monthly:20"
+`,
+			want: []string{"pr_history_sample requires pr_inflection"},
+		},
+		{
+			name: "pr_window and pr_inflection mutually exclusive",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "x"
+pr_window = "2024-01-01..2026-06-15"
+pr_inflection = "2023-06-01"
+pr_bracket_window = "12m"
+`,
+			want: []string{"pr_inflection and pr_window are mutually exclusive"},
+		},
+		{
+			name: "pr_inflection outside global window",
+			toml: `window = "2024-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "x"
+pr_inflection = "2020-01-01"
+pr_bracket_window = "6m"
+`,
+			want: []string{"inflection date 2020-01-01 is outside global window"},
+		},
+		{
+			name: "pr_bracket_window covers entire window",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "x"
+pr_inflection = "2023-06-01"
+pr_bracket_window = "36m"
+`,
+			want: []string{"bracket start 2020-06-01 reaches or precedes global window start 2021-01-01"},
+		},
+		{
+			name: "pr_inflection malformed date",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "x"
+pr_inflection = "not-a-date"
+pr_bracket_window = "12m"
+`,
+			wantErr: true,
+		},
+		{
+			name: "pr_bracket_window malformed",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "x"
+pr_inflection = "2023-06-01"
+pr_bracket_window = "notavalid"
+`,
+			wantErr: true,
+		},
+		{
+			name: "pr_history_sample with random suffix",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "x"
+pr_inflection = "2023-06-01"
+pr_bracket_window = "12m"
+pr_history_sample = "monthly:20:random"
+`,
+			wantOK: true,
+		},
 	}
 
 	for _, tc := range cases {

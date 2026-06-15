@@ -142,6 +142,48 @@ func Validate(cfg *Config, meta *toml.MetaData, file string) []Diagnostic {
 		}
 	}
 
+	if c.GitHub != nil {
+		gh := c.GitHub
+		hasInflection := gh.PRInflection != nil
+		hasBracket := gh.PRBracketWindow != nil
+		hasSample := gh.PRHistorySample != nil
+
+		if hasInflection && !hasBracket {
+			emit("connectors.github.pr_inflection",
+				"pr_inflection requires pr_bracket_window to define the full-fidelity bracket size")
+		}
+		if hasBracket && !hasInflection {
+			emit("connectors.github.pr_bracket_window",
+				"pr_bracket_window requires pr_inflection to anchor the bracket")
+		}
+		if hasSample && !hasInflection {
+			emit("connectors.github.pr_history_sample",
+				"pr_history_sample requires pr_inflection (and pr_bracket_window) to be set")
+		}
+		if gh.PRWindow != nil && hasInflection {
+			emit("connectors.github.pr_inflection",
+				"pr_inflection and pr_window are mutually exclusive: pr_inflection drives its own bracket-based narrowing")
+		}
+
+		if hasInflection && hasBracket && cfg.Window.Raw != "" {
+			infl := *gh.PRInflection
+			bw := gh.PRBracketWindow
+			bracketStart := infl.AddDate(-bw.Years, -bw.Months, -bw.Days)
+
+			if infl.After(cfg.Window.End) || infl.Before(cfg.Window.Start) {
+				emit("connectors.github.pr_inflection",
+					fmt.Sprintf("inflection date %s is outside global window %s",
+						infl.Format("2006-01-02"), cfg.Window.Raw))
+			}
+			if !bracketStart.After(cfg.Window.Start) {
+				emit("connectors.github.pr_bracket_window",
+					fmt.Sprintf("bracket start %s reaches or precedes global window start %s; "+
+						"reduce pr_bracket_window or adjust pr_inflection",
+						bracketStart.Format("2006-01-02"), cfg.Window.Start.Format("2006-01-02")))
+			}
+		}
+	}
+
 	if c.GitHubActions != nil {
 		if c.GitHub == nil {
 			emit("connectors.github_actions",
