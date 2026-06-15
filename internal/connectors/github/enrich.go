@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"strings"
-	"time"
 )
 
 // enrichBatchSize is the maximum number of commits batched into a single
@@ -19,14 +18,11 @@ import (
 // during enrichment.
 const enrichBatchSize = 100
 
-// enrichBatchDelay is a small pause between consecutive batched GraphQL
-// POSTs. GitHub's GraphQL API has a *secondary* rate limit that triggers
-// on bursts and returns 403; the ratelimit transport recognises and
-// retries that case, but the delay still helps avoid tripping it in the
-// first place. Shrunk from 500ms to 250ms in #75 — the lighter query
-// (signature only) burns fewer points per request, so the inter-batch
-// gap can be tighter without re-tripping the secondary limit.
-const enrichBatchDelay = 250 * time.Millisecond
+// Inter-batch pacing is delegated to the ratelimit transport's adaptive
+// ladder (internal/ratelimit, #150/#151): secondary-RL detection triggers
+// reactive 500ms→5s pacing per token, decaying over 3 minutes. A static
+// pre-emptive delay here would double-throttle the happy path without
+// being correlated with actual rate-limit signal.
 
 // commitEnrichment is the per-SHA data the GraphQL batched query collects.
 // SignatureVerified is a pointer so callers can distinguish "not populated"
@@ -53,15 +49,6 @@ func (c *Connector) enrichCommits(ctx context.Context, owner, name string, shas 
 	for i := 0; i < len(shas); i += enrichBatchSize {
 		if ctx.Err() != nil {
 			return out, ctx.Err()
-		}
-		if i > 0 {
-			// Space batches to dodge GitHub's secondary (anti-burst) rate
-			// limit on the GraphQL endpoint.
-			select {
-			case <-time.After(enrichBatchDelay):
-			case <-ctx.Done():
-				return out, ctx.Err()
-			}
 		}
 		end := i + enrichBatchSize
 		if end > len(shas) {
