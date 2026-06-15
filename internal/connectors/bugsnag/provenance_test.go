@@ -206,6 +206,44 @@ func TestCappedWindow(t *testing.T) {
 	})
 }
 
+// TestExtract_MaxWindowDays_ConfigDepth verifies that max_window_days is
+// recorded in ConfigDepth when the cap actually narrows the global window,
+// and absent when the window fits within the cap.
+func TestExtract_MaxWindowDays_ConfigDepth(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/projects/p1/errors", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintln(w, `[]`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	end := time.Date(2026, 6, 12, 0, 0, 0, 0, time.UTC)
+	c := testConnector(t, srv.URL)
+	c.maxWindowDays = 60
+	c.projects = map[string]string{"p1": "kmcd/foo"}
+	sink := &stubSink{}
+
+	t.Run("cap narrows window: ConfigDepth written", func(t *testing.T) {
+		prov := c.Extract(context.Background(), connector.Repo{Slug: "kmcd/foo"}, connector.Window{
+			Start: end.Add(-365 * 24 * time.Hour), // 1y window exceeds 60d cap
+			End:   end,
+		}, sink)
+		if got := prov.ConfigDepth["max_window_days"]; got != "60" {
+			t.Errorf("ConfigDepth[max_window_days] = %q, want \"60\"", got)
+		}
+	})
+
+	t.Run("window within cap: ConfigDepth absent", func(t *testing.T) {
+		prov := c.Extract(context.Background(), connector.Repo{Slug: "kmcd/foo"}, connector.Window{
+			Start: end.Add(-7 * 24 * time.Hour), // 7d fits within 60d cap
+			End:   end,
+		}, sink)
+		if v, ok := prov.ConfigDepth["max_window_days"]; ok {
+			t.Errorf("ConfigDepth[max_window_days] = %q, want absent (window fits cap)", v)
+		}
+	})
+}
+
 // TestExtract_WindowIsCapped verifies that listErrors is called with a
 // capped window start when the global window exceeds maxWindowDays.
 func TestExtract_WindowIsCapped(t *testing.T) {

@@ -2,6 +2,7 @@ package bugsnag
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/kmcd/xray/internal/connector"
@@ -20,6 +21,14 @@ func (c *Connector) Extract(
 	ew := c.cappedWindow(window)
 	prov := connector.NewProvenance(c.Name(), repo.Slug, ew)
 	prov.RowsReturned["incidents"] = 0
+	// Record max_window_days in ConfigDepth when the cap actually narrowed the
+	// global window. The analyser reads this to interpret reduced incident row
+	// counts as "out of scope" rather than "no signal."
+	if ew.Start.After(window.Start) {
+		prov.ConfigDepth = map[string]string{
+			"max_window_days": strconv.Itoa(c.maxWindowDays),
+		}
+	}
 
 	for projectID, mappedSlug := range c.projects {
 		if mappedSlug != repo.Slug {
