@@ -228,8 +228,13 @@ func TestExtract_MaxWindowDays_ConfigDepth(t *testing.T) {
 			Start: end.Add(-365 * 24 * time.Hour), // 1y window exceeds 60d cap
 			End:   end,
 		}, sink)
-		if got := prov.ConfigDepth["max_window_days"]; got != "60" {
-			t.Errorf("ConfigDepth[max_window_days] = %q, want \"60\"", got)
+		// Value is the effective date range, not the day count, so the analyser
+		// has unambiguous coverage boundaries without recomputation.
+		wantStart := end.Add(-60 * 24 * time.Hour).Format("2006-01-02")
+		wantEnd := end.Format("2006-01-02")
+		want := wantStart + ".." + wantEnd
+		if got := prov.ConfigDepth["max_window_days"]; got != want {
+			t.Errorf("ConfigDepth[max_window_days] = %q, want %q", got, want)
 		}
 	})
 
