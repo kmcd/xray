@@ -134,10 +134,25 @@ func BuildPlan(cfg *config.Config, stats []RepoStat) Plan {
 		Connectors:  connectorNames(cfg),
 	}
 
+	// prScale adjusts the PR-cluster API-call estimate when pr_window narrows
+	// the extraction relative to the global window. Uniform-distribution
+	// assumption: PRs per day is constant across the window.
+	prScale := 1.0
+	if gh := cfg.Connectors.GitHub; gh != nil && gh.PRWindow != nil && p.WindowDays > 0 {
+		prStart := gh.PRWindow.Start
+		if prStart.Before(cfg.Window.Start) {
+			prStart = cfg.Window.Start
+		}
+		prDays := windowDays(prStart, gh.PRWindow.End)
+		if prDays < p.WindowDays {
+			prScale = float64(prDays) / float64(p.WindowDays)
+		}
+	}
+
 	for _, s := range stats {
 		p.CloneBytes += s.DiskUsageKB * CloneBytesPerKBDiskUsage
 		p.APICalls += APICallsPerRepoBase
-		p.APICalls += s.PullRequests * APICallsPerPR
+		p.APICalls += int(float64(s.PullRequests) * float64(APICallsPerPR) * prScale)
 		p.APICalls += s.Commits * APICallsPerCommit
 	}
 	// Repos for which we have no stat still contribute the per-repo

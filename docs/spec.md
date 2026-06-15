@@ -266,6 +266,11 @@ unassigned = ["kmcd/foo", "kmcd/bar", "kmcd/baz"]
 
 [connectors.github]
 token = "ghp_..."
+# pr_window narrows the PR-cluster extraction window without changing the
+# global window. Commits, complexity history, and file metrics always use
+# the global window. PR cluster (prs, reviews, pr_comments, pr_labels,
+# pr_commits) uses pr_window when set.
+# pr_window = "2024-06-15..2026-06-15"  # optional; omit to use full window
 
 [connectors.github_actions]
 # inherits token from [connectors.github] by default;
@@ -323,6 +328,20 @@ dataset = "production"
   `[connectors.github]` unless its own `token` is set. Requires
   `[connectors.github]` to be configured.
 - `honeycomb.dataset` is required when honeycomb is configured.
+- `github.pr_window` is optional. Format: `YYYY-MM-DD..YYYY-MM-DD`. When set,
+  narrows the PR-cluster extraction (prs, reviews, pr_comments, pr_labels,
+  pr_commits) to the declared sub-window without affecting commits, complexity
+  history, or file metrics. `pr_window.end` must not exceed `window.end`.
+  `pr_window.start` below `window.start` is clamped to `window.start` with a
+  warning. Omit to use the full global window (default — backward-compatible).
+  The effective `pr_window` is recorded in
+  `manifest.extraction_provenance[*].config_depth.pr_window` so the analyser
+  can distinguish reduced row counts from "no signal."
+  The PR walk orders by `updatedAt DESC` and stops when `updatedAt <
+  pr_window.start`, so a PR opened before `pr_window.start` but updated
+  (e.g. by a label edit) after that date is included. This is the "recent
+  activity" semantic; the alternative `createdAt`-based filter would miss
+  long-lived PRs that received recent attention.
 - `capture_harness_content` is optional, default `false`. When `true`,
   `harness_artifacts` rows include captured file content; when `false` or
   omitted, only metadata and git timeline are captured.
@@ -388,6 +407,9 @@ provenance for every repo x connector combination.
         "branch_protection": {"accessible": false, "reason": "token lacks admin permission on repo"},
         "pr_review_requests": {"accessible": true},
         "codeowners": {"accessible": true}
+      },
+      "config_depth": {
+        "pr_window": "2024-06-15..2025-06-30"
       }
     },
     {
@@ -412,6 +434,11 @@ membership, etc.) carries an `accessible` flag and a `reason` when not.
 Absence-because-inaccessible is interpreted as **unknown** rather than
 **no signal** — a critical distinction for any analysis that depends on
 the data being there to mean something.
+
+`config_depth` records operator-declared extraction-depth overrides.
+Currently: `pr_window` when set narrows the PR cluster — reduced PR row
+counts should be read as "out of scope" not "no signal." Absent keys mean
+the connector ran at full depth.
 
 ### `metrics.sqlite`
 

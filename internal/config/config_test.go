@@ -106,3 +106,45 @@ func TestLoadMissingFile(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestLoadPRWindow(t *testing.T) {
+	p := writeTempTOML(t, `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "ghp_x"
+pr_window = "2024-06-15..2026-06-15"
+`)
+	cfg, _, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Connectors.GitHub == nil {
+		t.Fatal("github connector is nil")
+	}
+	if cfg.Connectors.GitHub.PRWindow == nil {
+		t.Fatal("PRWindow is nil; expected non-nil")
+	}
+	if got := cfg.Connectors.GitHub.PRWindow.Start.Format("2006-01-02"); got != "2024-06-15" {
+		t.Errorf("PRWindow.Start = %s, want 2024-06-15", got)
+	}
+	if got := cfg.Connectors.GitHub.PRWindow.End.Format("2006-01-02"); got != "2026-06-15" {
+		t.Errorf("PRWindow.End = %s, want 2026-06-15", got)
+	}
+}
+
+func TestLoadPRWindowOmitted(t *testing.T) {
+	p := writeTempTOML(t, `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "ghp_x"
+`)
+	cfg, _, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Connectors.GitHub.PRWindow != nil {
+		t.Errorf("PRWindow should be nil when omitted, got %+v", cfg.Connectors.GitHub.PRWindow)
+	}
+}

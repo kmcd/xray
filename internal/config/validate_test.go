@@ -293,6 +293,65 @@ token = "x"
 `,
 			want: []string{`connectors.honeycomb.dataset: required when [connectors.honeycomb] is present`},
 		},
+		{
+			name: "pr_window valid within global window",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "x"
+pr_window = "2024-01-01..2026-06-15"
+`,
+			wantOK: true,
+		},
+		{
+			name: "pr_window end exceeds global window end",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "x"
+pr_window = "2024-01-01..2027-01-01"
+`,
+			want: []string{"end 2027-01-01 exceeds global window.end 2026-06-15"},
+		},
+		{
+			// pr_window.start before global window.start is silently clamped
+			// at runtime (logged as a warning by the connector, not a validation
+			// error — blocking the run would prevent the operator from using the
+			// config even though the connector handles it gracefully).
+			name: "pr_window start before global window start is not a validation error",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "x"
+pr_window = "2019-01-01..2026-06-15"
+`,
+			wantOK: true,
+		},
+		{
+			name: "pr_window malformed",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "x"
+pr_window = "not-a-window"
+`,
+			wantErr: true,
+		},
+		{
+			name: "pr_window inverted (end before start)",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "x"
+pr_window = "2026-01-01..2024-01-01"
+`,
+			want: []string{"end date precedes start date"},
+		},
 	}
 
 	for _, tc := range cases {

@@ -90,6 +90,42 @@ func TestBuildPlan_MissingStatsStillContributeBaseAPI(t *testing.T) {
 	}
 }
 
+func TestBuildPlan_PRWindowScaling(t *testing.T) {
+	// Global window: 2021-01-01..2022-12-31 = 730 days
+	// PR window:     2022-01-01..2022-12-31 = 365 days
+	// prScale = 365/730 = 0.5 exactly
+	prStart := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
+	prEnd := time.Date(2022, 12, 31, 0, 0, 0, 0, time.UTC)
+	cfg := &config.Config{
+		Window: config.Window{
+			Start: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC),
+			End:   time.Date(2022, 12, 31, 0, 0, 0, 0, time.UTC),
+		},
+		Teams: map[string][]string{"t": {"a/b"}},
+		Connectors: config.Connectors{
+			GitHub: &config.GitHubConn{
+				Token:    "x",
+				PRWindow: &config.Window{Start: prStart, End: prEnd},
+			},
+		},
+	}
+	stats := []RepoStat{{Slug: "a/b", PullRequests: 100, Commits: 1000}}
+	p := BuildPlan(cfg, stats)
+
+	// prScale = 365/730 = 0.5; PR contribution is halved.
+	wantAPI := APICallsPerRepoBase + int(float64(100)*float64(APICallsPerPR)*0.5) + 1000*APICallsPerCommit
+	if p.APICalls != wantAPI {
+		t.Errorf("APICalls = %d, want %d (with pr_window scaling)", p.APICalls, wantAPI)
+	}
+
+	// Without pr_window the estimate is larger.
+	cfgFull := *cfg
+	cfgFull.Connectors.GitHub = &config.GitHubConn{Token: "x"}
+	if p.APICalls >= BuildPlan(&cfgFull, stats).APICalls {
+		t.Errorf("pr_window scaling should reduce APICalls")
+	}
+}
+
 func TestWindowDays(t *testing.T) {
 	cases := []struct {
 		name       string

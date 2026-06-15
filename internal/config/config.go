@@ -28,7 +28,8 @@ type rawConnectors struct {
 }
 
 type rawGitHub struct {
-	Token string `toml:"token"`
+	Token    string `toml:"token"`
+	PRWindow string `toml:"pr_window"`
 }
 
 type rawGitHubActions struct {
@@ -84,7 +85,15 @@ func Load(path string) (*Config, *toml.MetaData, error) {
 	}
 
 	if rc := raw.Connectors.GitHub; rc != nil {
-		cfg.Connectors.GitHub = &GitHubConn{Token: rc.Token}
+		conn := &GitHubConn{Token: rc.Token}
+		if rc.PRWindow != "" {
+			w, err := parseWindow(rc.PRWindow)
+			if err != nil {
+				return nil, nil, fmt.Errorf("connectors.github.pr_window: %w", err)
+			}
+			conn.PRWindow = &w
+		}
+		cfg.Connectors.GitHub = conn
 	}
 	if rc := raw.Connectors.GitHubActions; rc != nil {
 		tok := rc.Token

@@ -29,7 +29,8 @@ type Connectors struct {
 }
 
 type GitHubConn struct {
-	Token string
+	Token    string
+	PRWindow *Window // nil → use global window for PR cluster extraction
 }
 
 type GitHubActionsConn struct {

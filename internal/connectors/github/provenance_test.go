@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/kmcd/xray/internal/config"
 	"github.com/kmcd/xray/internal/connector"
 	"github.com/kmcd/xray/internal/model"
 )
@@ -391,6 +395,69 @@ func TestExtractBranches_InvalidSlug_RecordsBranchProtectionInaccessible(t *test
 	}
 	if ep.Reason == "" {
 		t.Errorf("expected Reason populated on invalid slug; got empty")
+	}
+}
+
+// TestEffectivePRWindow_NilReturnGlobal verifies that when no pr_window is
+// configured, effectivePRWindow returns the global window unchanged.
+func TestEffectivePRWindow_NilReturnGlobal(t *testing.T) {
+	c := newTestConnector(t, httptest.NewServer(http.NewServeMux()))
+	global := standardWindow()
+	got := c.effectivePRWindow(global)
+	if got != global {
+		t.Errorf("effectivePRWindow (nil prWindow) = %+v, want %+v", got, global)
+	}
+}
+
+// TestEffectivePRWindow_ClampsEarlyStart verifies that pr_window.start is
+// clamped to global.start when the operator declares an earlier date.
+func TestEffectivePRWindow_ClampsEarlyStart(t *testing.T) {
+	srv := httptest.NewServer(http.NewServeMux())
+	c, err := New(config.GitHubConn{
+		Token: "test-token",
+		PRWindow: &config.Window{
+			Start: time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC), // before global
+			End:   time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := c.setBaseURL(srv.URL); err != nil {
+		t.Fatalf("setBaseURL: %v", err)
+	}
+	global := standardWindow() // starts 2025-01-01
+	got := c.effectivePRWindow(global)
+	if !got.Start.Equal(global.Start) {
+		t.Errorf("effectivePRWindow clamped Start = %s, want %s", got.Start.Format("2006-01-02"), global.Start.Format("2006-01-02"))
+	}
+}
+
+// TestEffectivePRWindow_NarrowsWindow verifies that a pr_window within the
+// global window is returned as-is (no clamping).
+func TestEffectivePRWindow_NarrowsWindow(t *testing.T) {
+	srv := httptest.NewServer(http.NewServeMux())
+	prStart := time.Date(2025, 4, 1, 0, 0, 0, 0, time.UTC)
+	prEnd := time.Date(2025, 6, 30, 0, 0, 0, 0, time.UTC)
+	c, err := New(config.GitHubConn{
+		Token: "test-token",
+		PRWindow: &config.Window{
+			Start: prStart,
+			End:   prEnd,
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := c.setBaseURL(srv.URL); err != nil {
+		t.Fatalf("setBaseURL: %v", err)
+	}
+	global := standardWindow() // 2025-01-01..2025-06-30
+	got := c.effectivePRWindow(global)
+	if !got.Start.Equal(prStart) || !got.End.Equal(prEnd) {
+		t.Errorf("effectivePRWindow = {%s..%s}, want {%s..%s}",
+			got.Start.Format("2006-01-02"), got.End.Format("2006-01-02"),
+			prStart.Format("2006-01-02"), prEnd.Format("2006-01-02"))
 	}
 }
 

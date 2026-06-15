@@ -49,6 +49,18 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 	extractStartUsed := c.gqlPointsUsed
 	c.gqlMu.Unlock()
 
+	// Record pr_window in provenance when a narrower PR-cluster window is
+	// in effect. Must run before the parallel block so the main provenance
+	// carries the value regardless of which fragment the API-bound goroutine
+	// writes to.
+	if c.prWindow != nil {
+		eff := c.effectivePRWindow(window)
+		if prov.ConfigDepth == nil {
+			prov.ConfigDepth = make(map[string]string)
+		}
+		prov.ConfigDepth["pr_window"] = eff.Start.Format("2006-01-02") + ".." + eff.End.Format("2006-01-02")
+	}
+
 	// --- Phase 1: sync prelude --------------------------------------------
 
 	// Read the repo's .mailmap once per extraction. Failure modes:
@@ -102,9 +114,11 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 	}()
 
 	// Goroutine B: API-bound PR stage. Uses prefetch cache when present.
+	// The effective PR window may be narrower than the global window when
+	// pr_window is configured (#166).
 	go func() {
 		defer wg.Done()
-		c.extractPRs(ctx, repo, window, sink, &provB)
+		c.extractPRs(ctx, repo, c.effectivePRWindow(window), sink, &provB)
 	}()
 
 	wg.Wait()

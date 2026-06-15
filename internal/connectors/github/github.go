@@ -74,6 +74,11 @@ type Connector struct {
 	prefetchReleasesData map[string]*releasePrefetchResult // slug -> result
 
 	extractShards int
+
+	// prWindow, when non-nil, narrows the PR-cluster extraction to a window
+	// narrower than the global run window. Nil means use the global window.
+	// Set from config.GitHubConn.PRWindow in New().
+	prWindow *connector.Window
 }
 
 // prPrefetchResult holds the eventually-available output of a single
@@ -254,6 +259,10 @@ func New(cfg config.GitHubConn, log *slog.Logger) (*Connector, error) {
 		prefetchReleasesData: map[string]*releasePrefetchResult{},
 		rl:                   rl,
 	}
+	if cfg.PRWindow != nil {
+		w := connector.Window{Start: cfg.PRWindow.Start, End: cfg.PRWindow.End}
+		c.prWindow = &w
+	}
 
 	// Wrap the outermost transport with the costInterceptor so every GraphQL
 	// response updates the connector's running point totals. The wrap goes
@@ -297,7 +306,7 @@ func (c *Connector) Prefetch(ctx context.Context, slug string, window connector.
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		prErr = c.prefetchPRs(ctx, slug, window)
+		prErr = c.prefetchPRs(ctx, slug, c.effectivePRWindow(window))
 	}()
 	go func() {
 		defer wg.Done()
@@ -404,6 +413,25 @@ func (c *Connector) consumeReleasesPrefetch(ctx context.Context, slug string) ([
 	case <-ctx.Done():
 		return nil, true, ctx.Err()
 	}
+}
+
+// effectivePRWindow returns the window to use for PR-cluster extraction.
+// When c.prWindow is set it is returned (possibly with Start clamped to
+// global.Start when the operator declared an earlier start). When nil the
+// global window is returned unchanged — preserving the pre-#166 behaviour.
+func (c *Connector) effectivePRWindow(global connector.Window) connector.Window {
+	if c.prWindow == nil {
+		return global
+	}
+	w := *c.prWindow
+	if w.Start.Before(global.Start) {
+		c.log.Warn("github: pr_window.start predates global window.start; clamping",
+			slog.String("pr_window_start", w.Start.Format("2006-01-02")),
+			slog.String("window_start", global.Start.Format("2006-01-02")),
+		)
+		w.Start = global.Start
+	}
+	return w
 }
 
 // setBaseURL retargets the underlying REST and GraphQL clients at the

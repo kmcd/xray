@@ -50,6 +50,13 @@ type Provenance struct {
 	// GraphQLPointsRemaining is the remaining GitHub GraphQL rate-limit budget
 	// as of the last observed response. Zero when no GraphQL calls were made.
 	GraphQLPointsRemaining int `json:"graphql_points_remaining,omitempty"`
+
+	// ConfigDepth records operator-declared extraction-depth overrides that
+	// narrow what data was captured. Absent keys mean the connector ran at
+	// full depth. The analyser reads this to interpret reduced row counts as
+	// "out of scope" rather than "no signal". Currently used by the github
+	// connector for "pr_window".
+	ConfigDepth map[string]string `json:"config_depth,omitempty"`
 }
 
 func NewProvenance(name, repo string, w Window) Provenance {
@@ -117,6 +124,14 @@ func (p *Provenance) Merge(other Provenance) {
 	if other.GraphQLPointsRemaining > 0 {
 		if p.GraphQLPointsRemaining == 0 || other.GraphQLPointsRemaining < p.GraphQLPointsRemaining {
 			p.GraphQLPointsRemaining = other.GraphQLPointsRemaining
+		}
+	}
+	if len(other.ConfigDepth) > 0 && p.ConfigDepth == nil {
+		p.ConfigDepth = make(map[string]string)
+	}
+	for k, v := range other.ConfigDepth {
+		if _, ok := p.ConfigDepth[k]; !ok {
+			p.ConfigDepth[k] = v
 		}
 	}
 }

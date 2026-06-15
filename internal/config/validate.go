@@ -127,6 +127,21 @@ func Validate(cfg *Config, meta *toml.MetaData, file string) []Diagnostic {
 	// github: token is the sole required field. An empty token means the block
 	// is pre-staged (all-empty); no diagnostic is emitted in that case.
 
+	if c.GitHub != nil && c.GitHub.PRWindow != nil && cfg.Window.Raw != "" {
+		pr := c.GitHub.PRWindow
+		// pr_window.start before global window.start is allowed — the connector
+		// clamps it at runtime and logs a warning. Only the end-exceeds-global
+		// case and inverted range are hard errors.
+		if pr.End.Before(pr.Start) {
+			emit("connectors.github.pr_window", "end date precedes start date")
+		}
+		if pr.End.After(cfg.Window.End) {
+			emit("connectors.github.pr_window",
+				fmt.Sprintf("end %s exceeds global window.end %s",
+					pr.End.Format("2006-01-02"), cfg.Window.End.Format("2006-01-02")))
+		}
+	}
+
 	if c.GitHubActions != nil {
 		if c.GitHub == nil {
 			emit("connectors.github_actions",
