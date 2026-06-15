@@ -389,3 +389,4 @@ SSH
 (?i)readdir
 (?i)autocommit
 (?i)tx
+(?i)uncomment
