@@ -79,6 +79,20 @@ type Connector struct {
 	// narrower than the global run window. Nil means use the global window.
 	// Set from config.GitHubConn.PRWindow in New().
 	prWindow *connector.Window
+
+	// bracketStart is the computed start of the full-fidelity slice in
+	// sparse-historical mode: pr_inflection minus pr_bracket_window. Nil when
+	// sparse mode is disabled. The full-fidelity walk covers [bracketStart,
+	// window.End]; the pre-bracket sparse slice covers [window.Start, bracketStart).
+	bracketStart *time.Time
+	// sampleSpec holds the parsed pr_history_sample config, retained for use
+	// in extractSparsePRs. Nil when pre-bracket extraction is disabled.
+	sampleSpec *config.HistorySampleSpec
+	// inflection is the operator-supplied pr_inflection date, retained for
+	// writing into SamplingProvenance. Nil when sparse mode is disabled.
+	inflection *time.Time
+	// bracketSpec is the parsed pr_bracket_window, retained for provenance.
+	bracketSpec *config.DurationSpec
 }
 
 // prPrefetchResult holds the eventually-available output of a single
@@ -263,6 +277,16 @@ func New(cfg config.GitHubConn, log *slog.Logger) (*Connector, error) {
 		w := connector.Window{Start: cfg.PRWindow.Start, End: cfg.PRWindow.End}
 		c.prWindow = &w
 	}
+	if cfg.PRInflection != nil && cfg.PRBracketWindow != nil {
+		bw := cfg.PRBracketWindow
+		bs := cfg.PRInflection.AddDate(-bw.Years, -bw.Months, -bw.Days)
+		c.bracketStart = &bs
+		c.inflection = cfg.PRInflection
+		c.bracketSpec = cfg.PRBracketWindow
+	}
+	if cfg.PRHistorySample != nil {
+		c.sampleSpec = cfg.PRHistorySample
+	}
 
 	// Wrap the outermost transport with the costInterceptor so every GraphQL
 	// response updates the connector's running point totals. The wrap goes
@@ -415,23 +439,34 @@ func (c *Connector) consumeReleasesPrefetch(ctx context.Context, slug string) ([
 	}
 }
 
-// effectivePRWindow returns the window to use for PR-cluster extraction.
-// When c.prWindow is set it is returned (possibly with Start clamped to
-// global.Start when the operator declared an earlier start). When nil the
-// global window is returned unchanged — preserving the pre-#166 behaviour.
+// effectivePRWindow returns the window to use for the full-fidelity PR-cluster
+// extraction. Precedence (highest to lowest):
+//  1. c.prWindow — explicit pr_window override (#166).
+//  2. c.bracketStart — sparse-historical mode (#167): the full-fidelity slice
+//     starts at bracketStart (pr_inflection - pr_bracket_window) and runs to
+//     window.End. The pre-bracket sparse slice is handled separately by
+//     extractSparsePRs.
+//  3. global — no override; the full window is used (default behaviour).
 func (c *Connector) effectivePRWindow(global connector.Window) connector.Window {
-	if c.prWindow == nil {
-		return global
+	if c.prWindow != nil {
+		w := *c.prWindow
+		if w.Start.Before(global.Start) {
+			c.log.Warn("github: pr_window.start predates global window.start; clamping",
+				slog.String("pr_window_start", w.Start.Format("2006-01-02")),
+				slog.String("window_start", global.Start.Format("2006-01-02")),
+			)
+			w.Start = global.Start
+		}
+		return w
 	}
-	w := *c.prWindow
-	if w.Start.Before(global.Start) {
-		c.log.Warn("github: pr_window.start predates global window.start; clamping",
-			slog.String("pr_window_start", w.Start.Format("2006-01-02")),
-			slog.String("window_start", global.Start.Format("2006-01-02")),
-		)
-		w.Start = global.Start
+	if c.bracketStart != nil {
+		bs := *c.bracketStart
+		if bs.Before(global.Start) {
+			bs = global.Start
+		}
+		return connector.Window{Start: bs, End: global.End}
 	}
-	return w
+	return global
 }
 
 // setBaseURL retargets the underlying REST and GraphQL clients at the

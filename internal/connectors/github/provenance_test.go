@@ -461,6 +461,68 @@ func TestEffectivePRWindow_NarrowsWindow(t *testing.T) {
 	}
 }
 
+// TestEffectivePRWindow_BracketModeNarrows verifies that when bracketStart is
+// set (sparse-historical mode), effectivePRWindow returns [bracketStart,
+// global.End] — the full-fidelity bracket+recent slice.
+func TestEffectivePRWindow_BracketModeNarrows(t *testing.T) {
+	srv := httptest.NewServer(http.NewServeMux())
+	inflection := time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC)
+	c, err := New(config.GitHubConn{
+		Token:           "test-token",
+		PRInflection:    &inflection,
+		PRBracketWindow: &config.DurationSpec{Months: 12, Raw: "12m"},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := c.setBaseURL(srv.URL); err != nil {
+		t.Fatalf("setBaseURL: %v", err)
+	}
+	// bracketStart = 2023-06-01 minus 12m = 2022-06-01
+	wantStart := time.Date(2022, 6, 1, 0, 0, 0, 0, time.UTC)
+	global := connector.Window{
+		Start: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC),
+		End:   time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+	}
+	got := c.effectivePRWindow(global)
+	if !got.Start.Equal(wantStart) {
+		t.Errorf("effectivePRWindow Start = %s, want %s",
+			got.Start.Format("2006-01-02"), wantStart.Format("2006-01-02"))
+	}
+	if !got.End.Equal(global.End) {
+		t.Errorf("effectivePRWindow End = %s, want %s",
+			got.End.Format("2006-01-02"), global.End.Format("2006-01-02"))
+	}
+}
+
+// TestEffectivePRWindow_BracketModeClampsEarlyStart verifies that
+// bracketStart is clamped to global.Start when the bracket extends past it.
+func TestEffectivePRWindow_BracketModeClampsEarlyStart(t *testing.T) {
+	srv := httptest.NewServer(http.NewServeMux())
+	inflection := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
+	c, err := New(config.GitHubConn{
+		Token:           "test-token",
+		PRInflection:    &inflection,
+		PRBracketWindow: &config.DurationSpec{Months: 24, Raw: "24m"},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := c.setBaseURL(srv.URL); err != nil {
+		t.Fatalf("setBaseURL: %v", err)
+	}
+	// bracketStart = 2022-01-01 - 24m = 2020-01-01 (before global.Start 2021-01-01)
+	global := connector.Window{
+		Start: time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC),
+		End:   time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC),
+	}
+	got := c.effectivePRWindow(global)
+	if !got.Start.Equal(global.Start) {
+		t.Errorf("effectivePRWindow clamped Start = %s, want %s",
+			got.Start.Format("2006-01-02"), global.Start.Format("2006-01-02"))
+	}
+}
+
 // TestExtractPRs_PrefetchError_RecordsProvErrors covers the prefetch
 // failure-recording path in extract_prs.go's switch — when consumePRPrefetch
 // returns err != nil with a resume cursor, the err is captured in
