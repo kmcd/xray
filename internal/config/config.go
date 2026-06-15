@@ -89,34 +89,9 @@ func Load(path string) (*Config, *toml.MetaData, error) {
 	}
 
 	if rc := raw.Connectors.GitHub; rc != nil {
-		conn := &GitHubConn{Token: rc.Token}
-		if rc.PRWindow != "" {
-			w, err := parseWindow(rc.PRWindow)
-			if err != nil {
-				return nil, nil, fmt.Errorf("connectors.github.pr_window: %w", err)
-			}
-			conn.PRWindow = &w
-		}
-		if rc.PRInflection != "" {
-			t, err := parseInflectionDate(rc.PRInflection)
-			if err != nil {
-				return nil, nil, fmt.Errorf("connectors.github.pr_inflection: %w", err)
-			}
-			conn.PRInflection = &t
-		}
-		if rc.PRBracketWindow != "" {
-			d, err := parseDurationSpec(rc.PRBracketWindow)
-			if err != nil {
-				return nil, nil, fmt.Errorf("connectors.github.pr_bracket_window: %w", err)
-			}
-			conn.PRBracketWindow = &d
-		}
-		if rc.PRHistorySample != "" {
-			s, err := parseHistorySample(rc.PRHistorySample)
-			if err != nil {
-				return nil, nil, fmt.Errorf("connectors.github.pr_history_sample: %w", err)
-			}
-			conn.PRHistorySample = &s
+		conn, err := parseGitHubConn(rc)
+		if err != nil {
+			return nil, nil, err
 		}
 		cfg.Connectors.GitHub = conn
 	}
@@ -152,6 +127,41 @@ func Load(path string) (*Config, *toml.MetaData, error) {
 	}
 
 	return cfg, &meta, nil
+}
+
+// parseGitHubConn converts a rawGitHub struct into a GitHubConn, parsing all
+// optional PR-sampling fields. Returns an error if any field is malformed.
+func parseGitHubConn(rc *rawGitHub) (*GitHubConn, error) {
+	conn := &GitHubConn{Token: rc.Token}
+	if rc.PRWindow != "" {
+		w, err := parseWindow(rc.PRWindow)
+		if err != nil {
+			return nil, fmt.Errorf("connectors.github.pr_window: %w", err)
+		}
+		conn.PRWindow = &w
+	}
+	if rc.PRInflection != "" {
+		t, err := parseInflectionDate(rc.PRInflection)
+		if err != nil {
+			return nil, fmt.Errorf("connectors.github.pr_inflection: %w", err)
+		}
+		conn.PRInflection = &t
+	}
+	if rc.PRBracketWindow != "" {
+		d, err := parseDurationSpec(rc.PRBracketWindow)
+		if err != nil {
+			return nil, fmt.Errorf("connectors.github.pr_bracket_window: %w", err)
+		}
+		conn.PRBracketWindow = &d
+	}
+	if rc.PRHistorySample != "" {
+		s, err := parseHistorySample(rc.PRHistorySample)
+		if err != nil {
+			return nil, fmt.Errorf("connectors.github.pr_history_sample: %w", err)
+		}
+		conn.PRHistorySample = &s
+	}
+	return conn, nil
 }
 
 // parseInflectionDate accepts "YYYY-MM-DD" and returns a UTC midnight time.
@@ -206,7 +216,7 @@ func parseHistorySample(s string) (HistorySampleSpec, error) {
 	}
 	n, err := strconv.Atoi(parts[1])
 	if err != nil || n < 1 || n > 100 {
-		return HistorySampleSpec{}, fmt.Errorf("N in %q must be an integer in [1, 100]", s)
+		return HistorySampleSpec{}, fmt.Errorf("n in %q must be in [1, 100]", s)
 	}
 	spec := HistorySampleSpec{Strategy: "monthly", N: n, Raw: s}
 	if len(parts) == 3 {

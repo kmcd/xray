@@ -272,6 +272,15 @@ token = "ghp_..."
 # pr_commits) uses pr_window when set.
 # pr_window = "2024-06-15..2026-06-15"  # optional; omit to use full window
 
+# Sparse-historical PR sampling (pr_inflection mode) — mutually exclusive with pr_window.
+# Splits PR extraction into:
+#   - Full fidelity: (pr_inflection - pr_bracket_window) to window.end
+#   - Statistical sample: window.start to (pr_inflection - pr_bracket_window)
+# pr_inflection    = "2023-06-01"  # operator-supplied inflection date (from CTO interview)
+# pr_bracket_window = "12m"        # ±12 months full fidelity; units: y/m/w/d
+# pr_history_sample = "monthly:20" # N PRs/month before bracket; omit to skip pre-bracket
+#                                  # append ":random" for deterministic random sample
+
 [connectors.github_actions]
 # inherits token from [connectors.github] by default;
 # set `token = "..."` here to override with a separate PAT.
@@ -342,6 +351,28 @@ dataset = "production"
   (e.g. by a label edit) after that date is included. This is the "recent
   activity" semantic; the alternative `createdAt`-based filter would miss
   long-lived PRs that received recent attention.
+- `github.pr_inflection`, `github.pr_bracket_window`, `github.pr_history_sample`
+  enable sparse-historical PR sampling (issue #167) for bracketed-rollout
+  engagements. **Mutually exclusive with `pr_window`.** All three settings
+  interact:
+  - `pr_inflection` (required for sparse mode): operator-supplied inflection
+    date `YYYY-MM-DD`. Not inferred by xray — sourced from the CTO interview.
+  - `pr_bracket_window` (required with `pr_inflection`): duration string `Nu`
+    where `u ∈ {y, m, w, d}`. Defines how many calendar months/weeks/days of
+    full fidelity to extract on each side of `pr_inflection`. Example: `"12m"`.
+    Full-fidelity slice = `(pr_inflection - pr_bracket_window)` to `window.end`.
+  - `pr_history_sample` (optional): `"monthly:N"` or `"monthly:N:random"`.
+    When set, extracts N PRs per calendar-month bucket in the pre-bracket
+    slice (`window.start` to `pr_inflection - pr_bracket_window`). When
+    omitted, the pre-bracket period is not extracted. `N` must be in [1, 100].
+    Default strategy (`search_default_relevance`) uses GitHub's relevance
+    ordering. Append `:random` for a deterministic random sample seeded from
+    `(repo_slug, bucket_month)` — stable across quarterly re-extractions.
+  - When `totalCount > 1000` for a month bucket (GitHub search cap), the
+    bucket is auto-split into weekly sub-buckets. `truncated=true` is set in
+    provenance for the parent record.
+  - Provenance is written to `manifest.extraction_provenance[*].sampling`
+    (structured) and `config_depth.pr_history_sample` (short summary string).
 - `capture_harness_content` is optional, default `false`. When `true`,
   `harness_artifacts` rows include captured file content; when `false` or
   omitted, only metadata and git timeline are captured.
@@ -409,7 +440,21 @@ provenance for every repo x connector combination.
         "codeowners": {"accessible": true}
       },
       "config_depth": {
-        "pr_window": "2024-06-15..2025-06-30"
+        "pr_window": "2022-06-01..2025-06-30",
+        "pr_history_sample": "monthly:20"
+      },
+      "sampling": {
+        "inflection_date": "2023-06-01",
+        "bracket_window": "12m",
+        "bracket_start": "2022-06-01",
+        "bracket_end": "2025-06-30",
+        "strategy": "search_default_relevance",
+        "buckets": [
+          {"month": "2021-01", "target": 20, "actual": 20, "total": 47},
+          {"month": "2021-02", "target": 20, "actual": 18, "total": 18},
+          {"month": "2022-01", "target": 20, "actual": 20, "total": 1500, "truncated": true},
+          {"month": "2022-01-W1", "target": 5, "actual": 5, "total": 420}
+        ]
       }
     },
     {
@@ -435,10 +480,21 @@ Absence-because-inaccessible is interpreted as **unknown** rather than
 **no signal** — a critical distinction for any analysis that depends on
 the data being there to mean something.
 
-`config_depth` records operator-declared extraction-depth overrides.
-Currently: `pr_window` when set narrows the PR cluster — reduced PR row
-counts should be read as "out of scope" not "no signal." Absent keys mean
-the connector ran at full depth.
+`config_depth` records operator-declared extraction-depth overrides. Absent
+keys mean the connector ran at full depth. Keys in use:
+
+- `pr_window`: when set (via `pr_window` or `pr_inflection` + `pr_bracket_window`),
+  records the full-fidelity PR-cluster window. Reduced PR row counts from the
+  bracket+recent slice should be read as "out of scope" not "no signal."
+- `pr_history_sample`: when set (via `pr_history_sample`), records the sampling
+  strategy string (e.g. `"monthly:20"`). The per-bucket counts are in `sampling`.
+
+`sampling` (present only when `pr_inflection` is configured) provides per-bucket
+target/actual/total counts for the pre-bracket sparse slice. The analyser uses
+`actual / total` per bucket to compute per-month inclusion rates and propagate
+confidence intervals on metrics derived from sparse data. Pre-bracket buckets
+with `actual == total` degenerate to full-fidelity (sample frame exceeded the
+population); the analyser treats these as point estimates, not CIs.
 
 ### `metrics.sqlite`
 

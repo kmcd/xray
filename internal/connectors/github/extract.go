@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	gh "github.com/google/go-github/v66/github"
 
@@ -49,16 +50,35 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 	extractStartUsed := c.gqlPointsUsed
 	c.gqlMu.Unlock()
 
-	// Record pr_window in provenance when a narrower PR-cluster window is
-	// in effect. Must run before the parallel block so the main provenance
-	// carries the value regardless of which fragment the API-bound goroutine
-	// writes to.
+	// Record pr_window or sparse-historical sampling config in provenance.
+	// Must run before the parallel block so the main provenance carries the
+	// value regardless of which fragment the API-bound goroutine writes to.
 	if c.prWindow != nil {
 		eff := c.effectivePRWindow(window)
 		if prov.ConfigDepth == nil {
 			prov.ConfigDepth = make(map[string]string)
 		}
 		prov.ConfigDepth["pr_window"] = eff.Start.Format("2006-01-02") + ".." + eff.End.Format("2006-01-02")
+	} else if c.bracketStart != nil {
+		if prov.ConfigDepth == nil {
+			prov.ConfigDepth = make(map[string]string)
+		}
+		eff := c.effectivePRWindow(window)
+		prov.ConfigDepth["pr_window"] = eff.Start.Format("2006-01-02") + ".." + eff.End.Format("2006-01-02")
+		if c.sampleSpec != nil {
+			prov.ConfigDepth["pr_history_sample"] = c.sampleSpec.Raw
+		}
+		strategy := "search_default_relevance"
+		if c.sampleSpec != nil && c.sampleSpec.Random {
+			strategy = "random"
+		}
+		prov.Sampling = &connector.SamplingProvenance{
+			InflectionDate: c.inflection.Format("2006-01-02"),
+			BracketWindow:  c.bracketSpec.Raw,
+			BracketStart:   c.bracketStart.Format("2006-01-02"),
+			BracketEnd:     window.End.Format("2006-01-02"),
+			Strategy:       strategy,
+		}
 	}
 
 	// --- Phase 1: sync prelude --------------------------------------------
@@ -114,11 +134,24 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 	}()
 
 	// Goroutine B: API-bound PR stage. Uses prefetch cache when present.
-	// The effective PR window may be narrower than the global window when
-	// pr_window is configured (#166).
+	// The effective PR window covers the bracket+recent slice (pr_window or
+	// bracketStart when sparse mode is active, else the full global window).
+	// The sparse pre-bracket slice runs sequentially after the bracket walk
+	// so the two emitters do not race on emitPR batch handles (#167).
 	go func() {
 		defer wg.Done()
-		c.extractPRs(ctx, repo, c.effectivePRWindow(window), sink, &provB)
+		bracketAndRecent := c.effectivePRWindow(window)
+		c.extractPRs(ctx, repo, bracketAndRecent, sink, &provB)
+
+		if c.sampleSpec != nil && c.bracketStart != nil {
+			sparseSlice := connector.Window{
+				Start: window.Start,
+				End:   bracketAndRecent.Start.Add(-time.Second),
+			}
+			if sparseSlice.End.After(sparseSlice.Start) {
+				c.extractSparsePRs(ctx, repo, sparseSlice, c.sampleSpec, sink, &provB)
+			}
+		}
 	}()
 
 	wg.Wait()

@@ -115,7 +115,7 @@ func randomPickN(nodes []prGraph, n int, seed uint64) []prGraph {
 	}
 	picked := make([]prGraph, len(nodes))
 	copy(picked, nodes)
-	// #nosec G404 -- deterministic seed; not used for security purposes.
+	// #nosec G404 G115 -- deterministic seed; uint64→int64 bit-reinterpretation is intentional.
 	rng := rand.New(rand.NewSource(int64(seed)))
 	rng.Shuffle(len(picked), func(i, j int) { picked[i], picked[j] = picked[j], picked[i] })
 	return picked[:n]
