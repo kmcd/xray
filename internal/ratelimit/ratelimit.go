@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -50,6 +51,30 @@ func DefaultPolicy() Policy {
 		MaxAttempts:              3,
 		CumulativeBudget:         60 * time.Second,
 		SecondaryRateLimitBudget: 600 * time.Second,
+	}
+}
+
+// NewHTTPTransport returns a fresh *http.Transport for connector use.
+// It mirrors http.DefaultTransport but raises MaxIdleConnsPerHost from
+// the stdlib default of 2 to 16. The default under-pools when 4+ workers
+// concurrently hit a single API host: requests beyond the second open a
+// fresh TCP+TLS connection and drop it on response, adding ~50-100ms per
+// cold request. IdleConnTimeout is 60s (below GitHub's ~90s server-side
+// close) to avoid reusing a connection the server has already torn down.
+// All other DefaultTransport values are preserved. Issue #161.
+func NewHTTPTransport() *http.Transport {
+	return &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   16,
+		IdleConnTimeout:       60 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
 	}
 }
 

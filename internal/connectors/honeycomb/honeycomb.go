@@ -48,7 +48,7 @@ func New(cfg config.HoneycombConn, log *slog.Logger, noCache bool) (*Connector, 
 		log = slog.Default()
 	}
 	rl := &ratelimit.Transport{
-		Base:   http.DefaultTransport,
+		Base:   ratelimit.NewHTTPTransport(),
 		Policy: ratelimit.DefaultPolicy(),
 		Log:    log,
 	}

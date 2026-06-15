@@ -141,7 +141,7 @@ func runProbe(cmd *cobra.Command, opts initOpts) error {
 	sentryToken := os.Getenv("SENTRY_AUTH_TOKEN")
 
 	rl := &ratelimit.Transport{
-		Base:   http.DefaultTransport,
+		Base:   ratelimit.NewHTTPTransport(),
 		Policy: ratelimit.DefaultPolicy(),
 		Log:    slog.Default(),
 	}

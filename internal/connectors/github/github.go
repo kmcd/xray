@@ -233,7 +233,10 @@ func New(cfg config.GitHubConn, log *slog.Logger) (*Connector, error) {
 	// after the token has been attached.
 	rl := &ratelimit.Transport{Policy: ratelimit.DefaultPolicy(), Log: log}
 	if tr, ok := httpClient.Transport.(*oauth2.Transport); ok {
-		rl.Base = tr.Base
+		// oauth2.NewClient leaves tr.Base nil (→ http.DefaultTransport at
+		// RoundTrip time). Install our tuned transport explicitly so the
+		// idle-conn pool is sized for the worker pool (#161).
+		rl.Base = ratelimit.NewHTTPTransport()
 		tr.Base = rl
 	} else {
 		rl.Base = httpClient.Transport

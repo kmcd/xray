@@ -36,7 +36,7 @@ func New(cfg config.CircleCIConn, log *slog.Logger) (*Connector, error) {
 		log = slog.Default()
 	}
 	rl := &ratelimit.Transport{
-		Base:   http.DefaultTransport,
+		Base:   ratelimit.NewHTTPTransport(),
 		Policy: ratelimit.DefaultPolicy(),
 		Log:    log,
 	}

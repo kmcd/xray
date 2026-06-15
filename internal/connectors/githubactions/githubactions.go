@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"net/http"
 
 	"github.com/google/go-github/v66/github"
 	"golang.org/x/oauth2"
@@ -39,11 +38,7 @@ func New(cfg config.GitHubActionsConn, log *slog.Logger) (*Connector, error) {
 	// Wrap the underlying transport with the shared rate-limit/retry helper.
 	rl := &ratelimit.Transport{Policy: ratelimit.DefaultPolicy(), Log: log}
 	if t, ok := base.Transport.(*oauth2.Transport); ok {
-		if t.Base != nil {
-			rl.Base = t.Base
-		} else {
-			rl.Base = http.DefaultTransport
-		}
+		rl.Base = ratelimit.NewHTTPTransport()
 		t.Base = rl
 	} else {
 		rl.Base = base.Transport
