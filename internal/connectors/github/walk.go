@@ -227,32 +227,45 @@ const (
 	walkRootErr                     // fatal root error — return the error to Walk
 )
 
-// filterWalkEntry is shared by the serial and parallel Walk callbacks. It
+// filterWalkEntry is shared by the serial and parallel WalkDir callbacks. It
 // handles walk error classification, .git/ pruning, and non-regular-file
 // filtering. Context cancellation is handled by the callers before this call
 // (returning ctx.Err() directly so prov.Errors keys are not set on clean
 // shutdown, matching the pre-refactor behaviour).
-func filterWalkEntry(root, absPath string, info fs.FileInfo, walkErr error) (relPosix string, dec walkDecision, rootErr error) {
+//
+// info is returned only when dec == walkProcess; it is populated via a single
+// d.Info() call on the regular-file candidate. Directory entries, .git/
+// children, and non-regular entries (symlinks, devices) skip Stat entirely —
+// the per-entry stat(2) saving on a 10k-file tree is the whole point of using
+// WalkDir over Walk.
+func filterWalkEntry(root, absPath string, d fs.DirEntry, walkErr error) (relPosix string, info fs.FileInfo, dec walkDecision, rootErr error) {
 	if walkErr != nil {
 		if absPath == root {
-			return "", walkRootErr, walkErr
+			return "", nil, walkRootErr, walkErr
 		}
-		return "", walkSkip, nil
+		return "", nil, walkSkip, nil
 	}
 	rel, relErr := filepath.Rel(root, absPath)
 	if relErr != nil {
-		return "", walkSkip, nil
+		return "", nil, walkSkip, nil
 	}
 	if rel == ".git" || strings.HasPrefix(rel, ".git"+string(filepath.Separator)) {
-		if info.IsDir() {
-			return "", walkSkipDir, nil
+		if d.IsDir() {
+			return "", nil, walkSkipDir, nil
 		}
-		return "", walkSkip, nil
+		return "", nil, walkSkip, nil
 	}
-	if info.IsDir() || !info.Mode().IsRegular() {
-		return "", walkSkip, nil
+	if d.IsDir() {
+		return "", nil, walkSkip, nil
 	}
-	return filepath.ToSlash(rel), walkProcess, nil
+	// Non-directory: we need FileInfo to check regularity and (later) read Size.
+	// This is the only Stat in the walk path; types other than regular files
+	// (symlinks, devices, sockets) are filtered out below.
+	fi, statErr := d.Info()
+	if statErr != nil || !fi.Mode().IsRegular() {
+		return "", nil, walkSkip, nil
+	}
+	return filepath.ToSlash(rel), fi, walkProcess, nil
 }
 
 // extractWorkingTree replaces three separate filepath.Walk passes
@@ -291,11 +304,11 @@ func (c *Connector) extractWorkingTreeSerial(ctx context.Context, repo connector
 	fmB := openFileMetricsBatch(sink)
 	defer fmB.Rollback()
 
-	_ = filepath.Walk(root, func(path string, info fs.FileInfo, err error) error {
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		relPosix, dec, rootErr := filterWalkEntry(root, path, info, err)
+		relPosix, info, dec, rootErr := filterWalkEntry(root, path, d, err)
 		switch dec {
 		case walkRootErr:
 			msg := rootErr.Error()
@@ -330,11 +343,11 @@ func (c *Connector) extractWorkingTreeParallel(ctx context.Context, repo connect
 	go func() {
 		defer producerWg.Done()
 		defer close(fileCh)
-		_ = filepath.Walk(root, func(path string, info fs.FileInfo, err error) error {
+		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			relPosix, dec, rootErr := filterWalkEntry(root, path, info, err)
+			relPosix, info, dec, rootErr := filterWalkEntry(root, path, d, err)
 			switch dec {
 			case walkRootErr:
 				rootWalkErr = rootErr
