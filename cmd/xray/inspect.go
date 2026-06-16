@@ -72,16 +72,23 @@ Exit codes:
 //
 //	PASS  tar_integrity      512 members, 1.2 MB read
 //	FAIL  row_counts         table=commits manifest=4218 db=4200
+//	SKIP  manifest_shape     skipped: tar integrity failed
 //	...
 //	PASS
 //	  — or —
-//	FAIL (2 checks failed)
+//	FAIL (1 check failed, 2 skipped)
 func renderHumanReport(w io.Writer, r *inspect.Report) {
 	const nameWidth = 18
-	failed := 0
+	failed, skipped := 0, 0
 	for _, c := range r.Checks {
-		status := "PASS"
-		if !c.Pass {
+		var status string
+		switch {
+		case c.Pass:
+			status = "PASS"
+		case c.Skipped:
+			status = "SKIP"
+			skipped++
+		default:
 			status = "FAIL"
 			failed++
 		}
@@ -95,7 +102,14 @@ func renderHumanReport(w io.Writer, r *inspect.Report) {
 	if r.OK {
 		fmt.Fprintln(w, "PASS")
 	} else {
-		fmt.Fprintf(w, "FAIL (%d check(s) failed)\n", failed)
+		switch {
+		case failed > 0 && skipped > 0:
+			fmt.Fprintf(w, "FAIL (%d check(s) failed, %d skipped)\n", failed, skipped)
+		case skipped > 0:
+			fmt.Fprintf(w, "FAIL (%d skipped)\n", skipped)
+		default:
+			fmt.Fprintf(w, "FAIL (%d check(s) failed)\n", failed)
+		}
 	}
 }
 

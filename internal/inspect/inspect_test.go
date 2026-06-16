@@ -167,6 +167,9 @@ func TestInspect_CorruptTar(t *testing.T) {
 		if r.Checks[i].Pass {
 			t.Errorf("check[%d] %s should not pass when tar_integrity failed", i, r.Checks[i].Name)
 		}
+		if !r.Checks[i].Skipped {
+			t.Errorf("check[%d] %s should be marked Skipped when tar_integrity failed", i, r.Checks[i].Name)
+		}
 	}
 }
 

@@ -36,6 +36,10 @@ type Report struct {
 type Check struct {
 	Name   string `json:"name"`
 	Pass   bool   `json:"pass"`
+	// Skipped is true when the check was not run because an earlier check failed.
+	// A skipped check always has Pass=false; Skipped distinguishes "did not run"
+	// from "ran and failed" for automated consumers.
+	Skipped bool `json:"skipped,omitempty"`
 	// Detail is a human-readable summary; empty is allowed on pass.
 	Detail string `json:"detail"`
 	// Mismatches is populated only by the row_counts check.
@@ -433,9 +437,9 @@ func failCheck(name, detail string) Check {
 	return Check{Name: name, Pass: false, Detail: detail}
 }
 
-// skipCheck constructs a Check that is skipped due to an earlier failure.
+// skipCheck constructs a Check that was not run because an earlier check failed.
 func skipCheck(name, detail string) Check {
-	return Check{Name: name, Pass: false, Detail: detail}
+	return Check{Name: name, Pass: false, Skipped: true, Detail: detail}
 }
 
 // allPass reports whether every check in the slice passed.
