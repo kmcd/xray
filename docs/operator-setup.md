@@ -191,7 +191,78 @@ an empty token field. Set the token and re-run `xray init --probe` (with
 
 ## 4. Edit the draft config
 
-Open `xray.toml` in an editor. The minimum edits before running:
+Open `xray.toml` in an editor.
+
+### Bracketed config
+
+TOML uses `[section]` headers to group related settings. Each header names a
+table; every key-value pair that follows belongs to that table until the next
+header.
+
+In `xray.toml` there are three kinds of headers:
+
+**`[teams]`** — a single table whose keys are team names and whose values are
+lists of repo slugs.
+
+```toml
+[teams]
+platform = ["acme-corp/api", "acme-corp/workers"]
+product  = ["acme-corp/web"]
+```
+
+**`[connectors.X]`** — one table per connector you want to enable. Replace `X`
+with the connector name (`github`, `circleci`, `bugsnag`, `honeycomb`, `sentry`,
+or `github_actions`). Settings inside the block configure that connector's token
+and behaviour.
+
+```toml
+[connectors.github]
+token = "ghp_..."
+
+[connectors.bugsnag]
+token = "abc123..."
+max_window_days = 60
+```
+
+**`[connectors.X.projects]`** — a sub-table mapping connector-specific project
+identifiers to repo slugs. For `bugsnag`, the keys are 24-character hex project
+IDs. For `circleci`, the keys are `gh/<org>/<repo>` slugs. For `sentry`, the
+keys are Sentry project slugs.
+
+```toml
+[connectors.bugsnag.projects]
+"5d5a8b9c0e1f2a3b4c5d6e7f" = "acme-corp/api"
+
+[connectors.circleci.projects]
+"gh/acme-corp/api" = "acme-corp/api"
+```
+
+A minimal two-connector config looks like this:
+
+```toml
+window = "2022-01-01..2026-06-01"
+
+[teams]
+platform = ["acme-corp/api", "acme-corp/web"]
+
+[connectors.github]
+token = "ghp_..."
+
+[connectors.bugsnag]
+token = "your-bugsnag-auth-token"
+max_window_days = 60
+
+[connectors.bugsnag.projects]
+"5d5a8b9c0e1f2a3b4c5d6e7f" = "acme-corp/api"
+"5e7e9c1d2e3f4a5b6c7d8e90" = "acme-corp/web"
+```
+
+Note that `[connectors.bugsnag]` and `[connectors.bugsnag.projects]` are two
+separate headers. Settings under `[connectors.bugsnag]` apply to the connector
+itself; `[connectors.bugsnag.projects]` holds the project mapping. Both must
+be present when Bugsnag is configured.
+
+### Minimum edits before running
 
 1. **Review the window.** The scaffold sets `window = "2021-01-01..<today>"`. The 2021
    start captures the pre-AI baseline (~18 months before Copilot GA in June 2022).
