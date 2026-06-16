@@ -71,6 +71,7 @@ contains no source code and no secrets.`,
 		newInitCmd(),
 		newCheckCmd(),
 		newRunCmd(),
+		newInspectCmd(),
 	)
 	return root
 }
