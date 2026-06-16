@@ -1,0 +1,14 @@
+# xray config — goreleaser/goreleaser specimen extraction
+# Used by examples/specimen-artifact/Makefile to regenerate specimen.tar.gz.
+# Replace the token placeholder with a real GitHub PAT before running.
+
+window = "2026-03-18..2026-06-16"
+
+[teams]
+specimen = ["goreleaser/goreleaser"]
+
+[connectors.github]
+token = "YOUR_GITHUB_TOKEN_HERE"
+
+[connectors.github_actions]
+# inherits token from [connectors.github]
