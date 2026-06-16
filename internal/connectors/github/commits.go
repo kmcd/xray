@@ -148,15 +148,20 @@ func (c *Connector) extractCommits(ctx context.Context, repo connector.Repo, win
 			}
 		}
 
-		// Coauthor rows.
+		// Coauthor rows. Track trailer handles so committerDistinctCoauthor
+		// doesn't emit a duplicate PK when the committer is also listed as a
+		// Co-authored-by trailer (same handle, different source → OR REPLACE
+		// would silently drop one and inflate the manifest count).
+		trailerHandles := map[string]bool{}
 		for _, ca := range trailerCoauthors(rec, repo.Slug, mm) {
+			trailerHandles[ca.Handle] = true
 			if err := ccb.Add(ca); err != nil {
 				if prov.Errors["commit_coauthors"] == "" {
 					prov.Errors["commit_coauthors"] = err.Error()
 				}
 			}
 		}
-		if ca, ok := committerDistinctCoauthor(rec, repo.Slug, mm); ok {
+		if ca, ok := committerDistinctCoauthor(rec, repo.Slug, mm); ok && !trailerHandles[ca.Handle] {
 			if err := ccb.Add(ca); err != nil {
 				if prov.Errors["commit_coauthors"] == "" {
 					prov.Errors["commit_coauthors"] = err.Error()

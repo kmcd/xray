@@ -29,6 +29,34 @@ func TestTrailerCoauthorsNone(t *testing.T) {
 	}
 }
 
+// TestCoauthorDedupHandlesMatch is a regression test for the PK-collision that
+// caused a manifest/DB row-count mismatch: when a committer is also listed as
+// a Co-authored-by trailer, both code paths must hash to the same handle so
+// the trailerHandles guard in extractCommits correctly suppresses the duplicate.
+func TestCoauthorDedupHandlesMatch(t *testing.T) {
+	mm := &gitcli.Mailmap{}
+	rec := gitcli.CommitRecord{
+		SHA:             "deadbeef",
+		AuthorHandle:    "alice",
+		AuthorEmail:     "alice@example.com",
+		CommitterHandle: "bob",
+		CommitterEmail:  "bob@example.com",
+		Body:            "Fix.\n\nCo-authored-by: bob <bob@example.com>\n",
+	}
+	trailers := trailerCoauthors(rec, "test/repo", mm)
+	if len(trailers) != 1 {
+		t.Fatalf("want 1 trailer row, got %d", len(trailers))
+	}
+	committer, ok := committerDistinctCoauthor(rec, "test/repo", mm)
+	if !ok {
+		t.Fatal("want distinct committer coauthor, got ok=false")
+	}
+	if trailers[0].Handle != committer.Handle {
+		t.Errorf("handle mismatch: trailer=%q api=%q — dedup guard in extractCommits would not fire for this identity",
+			trailers[0].Handle, committer.Handle)
+	}
+}
+
 func TestCommitterDistinctCoauthor(t *testing.T) {
 	t.Run("distinct", func(t *testing.T) {
 		rec := gitcli.CommitRecord{
