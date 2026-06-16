@@ -6,6 +6,24 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+## [0.4.10] — 2026-06-16
+
+v0.4.10 adds `xray inspect` — five-check post-extraction integrity validation before an artifact leaves the client environment — alongside a specimen artifact for first-run trust verification and expanded operator docs (TOML config reference, sparse-mode run-log decoder, extended SECURITY.md).
+
+### CLI
+
+- **`xray inspect`: validate artifact integrity before sending to the consultant.** New read-only command runs five checks against a `.tar.gz` produced by `xray run`: end-to-end gzip/tar CRC validation, `manifest.json` shape, `PRAGMA integrity_check` on the embedded SQLite, row-count reconciliation against `manifest.counts`, and `schema_version` compatibility lookup against an embedded compatibility table. Default output is human-readable (one line per check); `--json` emits a structured `Report`. Exit codes: `0` all checks pass, `1` one or more failed, `2` usage error. Skipped checks (when an earlier check cannot run because a prior check failed) are distinguished from genuine failures in both the human summary line and via a `"skipped": true` field in the JSON output. ([#170])
+
+### Docs
+
+- **`examples/specimen-artifact`: pre-built artifact for trust verification.** New `examples/specimen-artifact/` directory ships a specimen `.tar.gz` from `git-chglog/git-chglog` (a public repo) alongside a `README.md`, a `Makefile` with `regen` and `inspect` targets, and a `config.toml` template targeting `goreleaser/goreleaser`. Engineers can run `xray inspect examples/specimen-artifact/specimen.tar.gz` before letting the binary touch their org. ([#172])
+
+- **`docs/operator-setup.md`: bracketed TOML config section.** New section explains `[section]` headers and `[[array-of-tables]]` syntax as they apply to `xray.toml`, with a minimal two-connector example. ([#169])
+
+- **`docs/sparse-mode-run-log.md`: run-log decoder for sparse-historical PR sampling mode.** New reference document decodes each category of log line emitted when `pr_inflection` + `pr_history_sample` are active: full-fidelity vs pre-bracket slice, per-bucket sampling decisions, overflow-to-weekly sub-bucket splits, rate-limit messages, pagination status, and final stats. ([#169])
+
+- **`SECURITY.md`: network behaviour, body discipline, artifact contents, and cosign verification.** Expanded from 51 to 147 lines with four new sections: the read-only HTTP guarantee (no `POST`/`PATCH`/`PUT`/`DELETE` anywhere in the binary), body discipline (PR/commit/review bodies parsed at extract time, raw text never persisted), what the `.tar.gz` contains and what it does not, and step-by-step cosign + SLSA provenance verification. ([#171])
+
 ## [0.4.9] — 2026-06-16
 
 v0.4.9 adds sparse-historical PR sampling for bracketed-rollout engagements (≥40% API cost reduction on long-window targets) and cuts wall-clock time across the stack via streaming per-repo extraction, batched SQLite inserts, and a tuned HTTP connection pool.
