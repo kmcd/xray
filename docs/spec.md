@@ -222,6 +222,44 @@ schema.
 
 Prints version and exits.
 
+### `xray inspect`
+
+Post-hoc artifact validator. Runs five checks against a `.tar.gz` artifact
+produced by `xray run` and reports whether it is structurally intact and
+internally consistent.
+
+```
+xray inspect <artifact.tar.gz> [--json]
+```
+
+**Checks (run in order a→e):**
+
+| # | Name               | What it validates |
+|---|--------------------|-------------------|
+| a | `tar_integrity`    | End-to-end gzip+tar CRC validation of every member; extracts `manifest.json` and `metrics.sqlite` in one streaming pass. |
+| b | `manifest_shape`   | `manifest.json` parses as JSON; `tool_version`, `schema_version`, and `run_id` are non-zero. |
+| c | `sqlite_integrity` | `PRAGMA integrity_check` returns `"ok"`. |
+| d | `row_counts`       | Every table named in `manifest.counts` has a matching `COUNT(*)` in the DB. |
+| e | `schema_version`   | `_schema.schema_version` matches `manifest.schema_version` and appears in the binary compatibility table (see README.md#compatibility). |
+
+If check (a) fails, checks (c)–(e) cannot proceed and are emitted with
+`pass=false` and `detail="skipped: tar integrity failed"` so the JSON shape
+stays stable.
+
+**Flags:**
+
+- `--json` — emit an indented JSON `Report` object on stdout instead of the
+  human-readable format. Independent of `--output` (which controls live
+  run-time progress events; `inspect` is post-hoc).
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| 0    | All five checks pass. |
+| 1    | One or more checks failed (report still rendered to stdout). |
+| 2    | Usage error: missing argument or artifact path does not exist. |
+
 ### Caching
 
 `xray run` maintains a local disk cache for connector data that cannot be
@@ -369,7 +407,7 @@ dataset = "production"
     ordering. Append `:random` for a deterministic random sample seeded from
     `(repo_slug, bucket_month)` — stable across quarterly re-extractions.
   - When `totalCount > 1000` for a month bucket (GitHub search cap), the
-    bucket is auto-split into weekly sub-buckets. `truncated=true` is set in
+    connector splits the bucket into weekly sub-buckets. `truncated=true` is set in
     provenance for the parent record.
   - Provenance is written to `manifest.extraction_provenance[*].sampling`
     (structured) and `config_depth.pr_history_sample` (short summary string).

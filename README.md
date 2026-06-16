@@ -204,7 +204,34 @@ Exit codes: `0` clean, `1` config / pre-flight error, `2` partial run
 (artifact produced, connector error recorded in manifest), `3` fatal.
 See [`docs/spec.md`](./docs/spec.md) → `xray run` → "Exit codes".
 
-### 4. Export
+### 4. Inspect (optional)
+
+Before sending the artifact, verify it is structurally intact:
+
+```bash
+xray inspect xray-export-<UTC-timestamp>.tar.gz
+```
+
+This runs five checks: end-to-end tar/gzip CRC, manifest shape, SQLite
+integrity, row-count reconciliation, and schema-version compatibility. All
+five must pass before the artifact is accepted by the analyser.
+
+```
+PASS  tar_integrity       2 members, 48.3 MB read
+PASS  manifest_shape      tool_version=0.4.8 schema_version=2 run_id=...
+PASS  sqlite_integrity
+PASS  row_counts          12 tables reconciled
+PASS  schema_version      schema_version=2 (xray 0.3.0, 0.4.0, ...)
+
+PASS
+```
+
+For machine-readable output: `xray inspect <artifact> --json`.
+
+Exit codes: `0` all checks pass, `1` one or more failed, `2` usage error.
+Full check descriptions: [`docs/spec.md`](./docs/spec.md) → `xray inspect`.
+
+### 5. Export
 
 The run produces two files in the working directory:
 
@@ -244,6 +271,7 @@ Pre-1.0, the schema is unstable; minor version bumps may introduce breaking sche
 | 0.4.6        | 2              |
 | 0.4.7        | 2              |
 | 0.4.8        | 2              |
+| 0.4.9        | 2              |
 
 `0.3.0` is the first release at `schema_version = 2`. Analysers pinned to `schema_version = 1` will refuse to load `0.3.0+` artifacts — see the [CHANGELOG](./CHANGELOG.md#030--2026-06-08) for the author-handle semantics shift driving the bump.
 
@@ -253,7 +281,7 @@ Verify the cosign signature on `checksums.txt`, then verify the archive
 against the checksum.
 
 ```bash
-VERSION=0.4.8
+VERSION=0.4.9
 OS=linux           # or darwin, windows
 ARCH=amd64         # or arm64 (not available on windows)
 

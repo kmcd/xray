@@ -6,6 +6,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+## [0.4.9] — 2026-06-16
+
+v0.4.9 adds sparse-historical PR sampling for bracketed-rollout engagements (≥40% API cost reduction on long-window targets) and cuts wall-clock time across the stack via streaming per-repo extraction, batched SQLite inserts, and a tuned HTTP connection pool.
+
 ### Connectors
 
 - **GitHub: sparse-historical PR sampling (`pr_inflection` mode) — bracketed extraction at reduced API cost.** Three new optional fields under `[connectors.github]` enable a two-region extraction strategy for bracketed-rollout engagements. `pr_inflection = "YYYY-MM-DD"` sets an operator-supplied inflection date (from a CTO interview — xray does not infer it). `pr_bracket_window = "Nu"` (units: `y`/`m`/`w`/`d`) defines the full-fidelity bracket: `(pr_inflection - pr_bracket_window)` to `window.end` is extracted via the standard cursor-paginated walk. `pr_history_sample = "monthly:N"` (or `monthly:N:random`) enables a sparse statistical sample of the pre-bracket slice using one GraphQL `search()` call per calendar-month bucket returning up to N PRs. Default strategy is relevance-ordered; `:random` uses a deterministic seed derived from `(repo_slug, bucket_month)` for stable quarterly re-extractions. When a month bucket's `totalCount > 1000` (GitHub search cap), it auto-splits to weekly sub-buckets and sets `truncated=true` in provenance. Provenance records the inflection date, bracket window, per-bucket target/actual/total/truncated counts in `manifest.extraction_provenance[*].sampling` so the analyser can compute per-month inclusion rates and propagate confidence intervals on pre-bracket metrics. `pr_inflection` is mutually exclusive with `pr_window`; `pr_history_sample` requires `pr_inflection`. Estimated API cost reduction ≥40% vs a full-window walk on 5y × 13-repo customer scenarios. ([#167])

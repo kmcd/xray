@@ -1,4 +1,4 @@
-# 0031 — Sparse-historical PR sampling design decisions
+# 0031 — sparse-historical PR sampling design decisions
 
 **Status:** Accepted
 **Context:** Issue #167 — bracketed extraction at reduced API cost

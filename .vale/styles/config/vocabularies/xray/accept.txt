@@ -390,3 +390,9 @@ SSH
 (?i)autocommit
 (?i)tx
 (?i)uncomment
+(?i)pr_commits
+(?i)pr_comments
+(?i)pr_labels
+(?i)extraction_provenance
+CIs
+(?i)mutex
