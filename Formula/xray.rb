@@ -2,28 +2,28 @@
 class Xray < Formula
   desc "Read-only extractor for engineering metrics — git, GitHub, CI, observability — into a portable .tar.gz"
   homepage "https://github.com/kmcd/xray"
-  version "0.4.10"
+  version "0.4.11"
   license "Apache-2.0"
 
   on_macos do
     on_intel do
       url "https://github.com/kmcd/xray/releases/download/v#{version}/xray_#{version}_darwin_amd64.tar.gz"
-      sha256 "524e8802c0ec63c1e4e26e3e6f096fa90d3202cddd47aaa40465c91d310403c7"
+      sha256 "58b8d33bd4d1c37a4e4d534bf0af303fab3cf2cb657bc8a54edf141c7fd6489b"
     end
     on_arm do
       url "https://github.com/kmcd/xray/releases/download/v#{version}/xray_#{version}_darwin_arm64.tar.gz"
-      sha256 "4124ea29061a783c4f4daaf98d3431c13fb4ef1f4f7adae2a127e5ce432b169b"
+      sha256 "d04f9147fbf571dbfd83f3acc1b2d31646d9b5737c0032a2520d9a5000e904c2"
     end
   end
 
   on_linux do
     on_intel do
       url "https://github.com/kmcd/xray/releases/download/v#{version}/xray_#{version}_linux_amd64.tar.gz"
-      sha256 "59ac029738bef4e80e0a5975935683ca763329b8dc006d9bb5bda876b74889be"
+      sha256 "50ab789e7cb71781e777b474365a270e23614df55b96db345d7ad27e7632e91f"
     end
     on_arm do
       url "https://github.com/kmcd/xray/releases/download/v#{version}/xray_#{version}_linux_arm64.tar.gz"
-      sha256 "a22c763c5810f7eebd1b8d3ca41290c536b86fa454127ad93fad064c82a30d9d"
+      sha256 "64e6c164221e259e8c16b81c36d5a2f6549d39ed562e019e6001e2065201d19c"
     end
   end
 
