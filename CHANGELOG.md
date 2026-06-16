@@ -6,6 +6,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+## [0.4.11] — 2026-06-16
+
+v0.4.11 adds a rate-limit warning to `xray check`: when the extraction window exceeds two years and no PR-narrowing option is set, the Plan output now prints a WARNING block pointing operators at sparse-historical sampling before they hit the PAT primary cap.
+
 ### CLI
 
 - **`xray check`: warn when a long window will hit the PAT primary rate-limit.** When the extraction window exceeds two years, the GitHub connector is active, and no sparse-mode fields (`pr_inflection`, `pr_window`) are set, `xray check` now prints a WARNING block after the Plan summary advising the operator to configure sparse-historical sampling. The warning fires even when `--no-cost-preview` is set (config-only check, no network probe). Zero behaviour change to extractions; `--json` output gains a `suggest_sparse_mode` field on the `plan` object. ([#173])
