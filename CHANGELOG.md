@@ -6,6 +6,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+### CLI
+
+- **`xray check`: warn when a long window will hit the PAT primary rate-limit.** When the extraction window exceeds two years, the GitHub connector is active, and no sparse-mode fields (`pr_inflection`, `pr_window`) are set, `xray check` now prints a WARNING block after the Plan summary advising the operator to configure sparse-historical sampling. The warning fires even when `--no-cost-preview` is set (config-only check, no network probe). Zero behaviour change to extractions; `--json` output gains a `suggest_sparse_mode` field on the `plan` object. ([#173])
+
 ## [0.4.10] — 2026-06-16
 
 v0.4.10 adds `xray inspect` — five-check post-extraction integrity validation before an artifact leaves the client environment — alongside a specimen artifact for first-run trust verification and expanded operator docs (TOML config reference, sparse-mode run-log decoder, extended SECURITY.md).

@@ -97,15 +97,16 @@ const (
 
 // Plan is the cost-preview output for a configured run.
 type Plan struct {
-	Repos          int
-	Teams          int
-	WindowStart    time.Time
-	WindowEnd      time.Time
-	WindowDays     int
-	Connectors     []string
-	CloneBytes     int64
-	APICalls       int
-	WallClockSecs  int
+	Repos              int
+	Teams              int
+	WindowStart        time.Time
+	WindowEnd          time.Time
+	WindowDays         int
+	Connectors         []string
+	CloneBytes         int64
+	APICalls           int
+	WallClockSecs      int
+	SuggestSparseMode  bool // true when window >2y, github active, no sparse-mode fields set
 }
 
 // RepoStat is a per-repo cheap-aggregate snapshot used to feed the cost
@@ -132,6 +133,14 @@ func BuildPlan(cfg *config.Config, stats []RepoStat) Plan {
 		WindowEnd:   cfg.Window.End,
 		WindowDays:  windowDays(cfg.Window.Start, cfg.Window.End),
 		Connectors:  connectorNames(cfg),
+	}
+
+	// SuggestSparseMode fires when the operator is on the expensive full-
+	// enumeration path and hasn't configured any PR-narrowing option. The
+	// 730-day threshold matches the 2-year heuristic used in the issue.
+	if gh := cfg.Connectors.GitHub; gh != nil && p.WindowDays > 730 &&
+		gh.PRInflection == nil && gh.PRWindow == nil {
+		p.SuggestSparseMode = true
 	}
 
 	// prScale adjusts the PR-cluster API-call estimate when the extraction

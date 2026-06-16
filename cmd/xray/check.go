@@ -66,6 +66,7 @@ type checkPlan struct {
 	EstimatedCloneBytes       int64    `json:"estimated_clone_bytes"`
 	EstimatedAPICalls         int      `json:"estimated_api_calls"`
 	EstimatedWallClockSeconds int      `json:"estimated_wall_clock_seconds"`
+	SuggestSparseMode         bool     `json:"suggest_sparse_mode,omitempty"`
 }
 
 type checkInaccessibleEnd struct {
@@ -175,6 +176,13 @@ func runCheck(cmd *cobra.Command, path string, opts checkOpts) error {
 		}
 		printPlan(mode, out, plan)
 		res.Plan = planToCheckPlan(plan)
+	} else {
+		// Even when skipping the full cost preview, surface the sparse-mode
+		// warning — it depends only on config, not on the network probe.
+		plan := preflight.BuildPlan(cfg, nil)
+		if plan.SuggestSparseMode {
+			printSparseWarning(mode, out)
+		}
 	}
 
 	// Block 3: inaccessible endpoint probe (always on).
@@ -268,6 +276,23 @@ func printPlan(mode Mode, w io.Writer, p preflight.Plan) {
 		humanCount(p.APICalls),
 		humanSeconds(p.WallClockSecs),
 	)
+	if p.SuggestSparseMode {
+		printSparseWarning(mode, w)
+	}
+}
+
+func printSparseWarning(mode Mode, w io.Writer) {
+	if mode == ModeQuiet || mode == ModeJSON {
+		return
+	}
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "WARNING: PR enumeration on this window will hit GitHub's PAT primary rate-limit")
+	fmt.Fprintln(w, "repeatedly. Consider sparse-historical sampling:")
+	fmt.Fprintln(w, "  [connectors.github]")
+	fmt.Fprintln(w, `  pr_inflection    = "YYYY-MM-DD"   # rollout/inflection date`)
+	fmt.Fprintln(w, `  pr_bracket_window = "12m"`)
+	fmt.Fprintln(w, `  pr_history_sample = "monthly:20:random"`)
+	fmt.Fprintln(w, "See docs/spec.md §Sparse-historical PR sampling.")
 }
 
 func printInaccessible(mode Mode, w io.Writer, entries []preflight.InaccessibleEndpoint) {
@@ -292,6 +317,7 @@ func planToCheckPlan(p preflight.Plan) *checkPlan {
 		EstimatedCloneBytes:       p.CloneBytes,
 		EstimatedAPICalls:         p.APICalls,
 		EstimatedWallClockSeconds: p.WallClockSecs,
+		SuggestSparseMode:         p.SuggestSparseMode,
 	}
 }
 

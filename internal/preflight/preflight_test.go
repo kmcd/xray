@@ -212,6 +212,81 @@ func TestBuildPlan_SparseHistoricalClampedBracketNoSparseCalls(t *testing.T) {
 	}
 }
 
+func TestBuildPlan_SuggestSparseMode(t *testing.T) {
+	longStart := time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)
+	longEnd := time.Date(2026, 6, 16, 0, 0, 0, 0, time.UTC) // >730 days
+	shortEnd := time.Date(2021, 12, 31, 0, 0, 0, 0, time.UTC) // <730 days
+	inflection := time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC)
+	prWinEnd := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name string
+		cfg  *config.Config
+		want bool
+	}{
+		{
+			"long window no sparse fields → warn",
+			&config.Config{
+				Window:     config.Window{Start: longStart, End: longEnd},
+				Teams:      map[string][]string{"t": {"a/b"}},
+				Connectors: config.Connectors{GitHub: &config.GitHubConn{Token: "x"}},
+			},
+			true,
+		},
+		{
+			"short window → no warn",
+			&config.Config{
+				Window:     config.Window{Start: longStart, End: shortEnd},
+				Teams:      map[string][]string{"t": {"a/b"}},
+				Connectors: config.Connectors{GitHub: &config.GitHubConn{Token: "x"}},
+			},
+			false,
+		},
+		{
+			"long window pr_inflection set → no warn",
+			&config.Config{
+				Window: config.Window{Start: longStart, End: longEnd},
+				Teams:  map[string][]string{"t": {"a/b"}},
+				Connectors: config.Connectors{GitHub: &config.GitHubConn{
+					Token:           "x",
+					PRInflection:    &inflection,
+					PRBracketWindow: &config.DurationSpec{Months: 12, Raw: "12m"},
+				}},
+			},
+			false,
+		},
+		{
+			"long window pr_window set → no warn",
+			&config.Config{
+				Window: config.Window{Start: longStart, End: longEnd},
+				Teams:  map[string][]string{"t": {"a/b"}},
+				Connectors: config.Connectors{GitHub: &config.GitHubConn{
+					Token:    "x",
+					PRWindow: &config.Window{Start: longStart, End: prWinEnd},
+				}},
+			},
+			false,
+		},
+		{
+			"long window no github connector → no warn",
+			&config.Config{
+				Window:     config.Window{Start: longStart, End: longEnd},
+				Teams:      map[string][]string{"t": {"a/b"}},
+				Connectors: config.Connectors{},
+			},
+			false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := BuildPlan(tc.cfg, nil)
+			if p.SuggestSparseMode != tc.want {
+				t.Errorf("SuggestSparseMode = %v, want %v", p.SuggestSparseMode, tc.want)
+			}
+		})
+	}
+}
+
 func TestWindowDays(t *testing.T) {
 	cases := []struct {
 		name       string
