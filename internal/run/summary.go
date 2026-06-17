@@ -77,6 +77,7 @@ type SummaryProvenance struct {
 	RateLimitWaits        int `json:"rate_limit_waits"`
 	RateLimitWaitSeconds  int `json:"rate_limit_wait_seconds"`
 	PartialPaginations    int `json:"partial_paginations"`
+	StreamCancelRetries   int `json:"stream_cancel_retries,omitempty"`
 }
 
 // Summarize renders the post-run summary block. Pure: no filesystem, no DB,
@@ -307,6 +308,9 @@ func writeProvenanceBlock(b *strings.Builder, p SummaryProvenance) {
 	fmt.Fprintf(b, "  rate-limit waits:      %d%s\n", p.RateLimitWaits, rlNote)
 	fmt.Fprintf(b, "  rate-limit truncated:  %d\n", p.RateLimitTruncated)
 	fmt.Fprintf(b, "  partial paginations:   %d\n", p.PartialPaginations)
+	if p.StreamCancelRetries > 0 {
+		fmt.Fprintf(b, "  stream cancel retries: %d\n", p.StreamCancelRetries)
+	}
 }
 
 func summarizeProvenance(provs []connector.Provenance) SummaryProvenance {
@@ -327,6 +331,7 @@ func summarizeProvenance(provs []connector.Provenance) SummaryProvenance {
 		if !p.PaginationComplete {
 			out.PartialPaginations++
 		}
+		out.StreamCancelRetries += p.StreamCancelRetries
 	}
 	return out
 }

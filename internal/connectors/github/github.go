@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	gh "github.com/google/go-github/v66/github"
@@ -54,6 +55,11 @@ type Connector struct {
 	gqlMu              sync.Mutex
 	gqlPointsUsed      int
 	gqlPointsRemaining int
+
+	// streamCancelRetries counts HTTP/2 stream CANCEL frames received from
+	// GitHub and retried by queryWithEOFRetry. Per-extraction delta is
+	// snapshotted in Extract (like gqlPointsUsed) and stored in provenance.
+	streamCancelRetries atomic.Int64
 
 	// prefetchMu guards prefetchData. Prefetch is called from run.go's
 	// clone phase (one goroutine per repo) and consumePRPrefetch is called

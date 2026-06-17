@@ -591,9 +591,13 @@ func anyEndpointInaccessible(p connector.Provenance) bool {
 	return false
 }
 
+// hasErrors returns true when any connector provenance recorded an extraction
+// error (non-empty Errors map) or incomplete pagination. Both conditions cause
+// Run to return ErrPartial so the process exits non-zero and callers can
+// distinguish a clean run from one with partial or truncated data.
 func hasErrors(provs []connector.Provenance) bool {
 	for _, p := range provs {
-		if len(p.Errors) > 0 {
+		if len(p.Errors) > 0 || !p.PaginationComplete {
 			return true
 		}
 	}

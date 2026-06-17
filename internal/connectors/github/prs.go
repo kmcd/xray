@@ -311,52 +311,100 @@ func (c *Connector) fetchPRs(ctx context.Context, repo connector.Repo, window co
 	}
 }
 
-// queryWithEOFRetry runs c.gql.Query with bounded retries when the error is
-// a transient network failure: mid-response body truncation
-// (io.ErrUnexpectedEOF, io.EOF, "unexpected EOF") or a stale-connection TCP
-// reset ("connection reset by peer") that occurs after long idle periods
-// such as primary-rate-limit waits. The GraphQL cursor in vars is unchanged
-// across attempts — GitHub cursors hold for minutes, longer than our retry
-// budget. Non-transient errors return immediately.
+// queryWithEOFRetry runs c.gql.Query with bounded retries on two classes of
+// transient error, each with its own backoff policy. The GraphQL cursor in
+// vars is unchanged across attempts — GitHub cursors hold for minutes, longer
+// than either retry budget. Non-transient errors return immediately.
+//
+//   - EOF / connection-reset (isTransientEOF): fast policy — 3 attempts,
+//     500ms→10s exponential, 60s total budget. Network blips; reconnect is
+//     fast.
+//
+//   - HTTP/2 stream CANCEL (isStreamCancel): slow policy — 6 attempts,
+//     30s→5min exponential, ~16min total budget. GitHub closes the stream
+//     when a resolver exceeds its server-side CPU/time budget. The budget
+//     resets on the GitHub side after ~30s; retrying immediately would cancel
+//     again. Increments prov.StreamCancelRetries on each wait so the manifest
+//     records how many retries a successful run required.
 //
 // The ratelimit.Transport already retries HTTP-level transient errors
-// (429/5xx/secondary-RL), but body-read failures and TCP resets inside the
-// outer costInterceptor surface as transport errors *above* ratelimit and
-// bypass that layer. This helper closes that gap for the PR-list walk.
+// (429/5xx/secondary-RL), but body-read failures and TCP resets surface as
+// transport errors *above* ratelimit and bypass that layer. This helper
+// closes that gap for all GraphQL walks in the connector.
 func (c *Connector) queryWithEOFRetry(ctx context.Context, q any, vars map[string]any) error {
-	const maxAttempts = 3
-	const budget = 60 * time.Second
-	var spent time.Duration
-	bo := backoff.NewExponentialBackOff()
-	bo.InitialInterval = 500 * time.Millisecond
-	bo.MaxInterval = 10 * time.Second
-	bo.MaxElapsedTime = 0
-	bo.Reset()
+	eofBO := backoff.NewExponentialBackOff()
+	eofBO.InitialInterval = 500 * time.Millisecond
+	eofBO.MaxInterval = 10 * time.Second
+	eofBO.MaxElapsedTime = 0
+	eofBO.Reset()
 
-	for attempt := 1; ; attempt++ {
+	cancelBO := backoff.NewExponentialBackOff()
+	cancelBO.InitialInterval = 30 * time.Second
+	cancelBO.MaxInterval = 5 * time.Minute
+	cancelBO.MaxElapsedTime = 0
+	cancelBO.Reset()
+
+	const eofMaxAttempts = 3
+	const eofBudget = 60 * time.Second
+	const cancelMaxAttempts = 6
+	const cancelBudget = 16 * time.Minute
+
+	var eofSpent, cancelSpent time.Duration
+	var eofAttempts, cancelAttempts int
+
+	for {
 		err := c.gql.Query(ctx, q, vars)
 		if err == nil {
 			return nil
 		}
-		if attempt >= maxAttempts || !isTransientEOF(err) {
+		switch {
+		case isStreamCancel(err):
+			cancelAttempts++
+			if cancelAttempts >= cancelMaxAttempts {
+				return err
+			}
+			wait := cancelBO.NextBackOff()
+			if cancelSpent+wait > cancelBudget {
+				return err
+			}
+			cancelSpent += wait
+			t := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return ctx.Err()
+			case <-t.C:
+			}
+			c.streamCancelRetries.Add(1)
+			c.log.Warn("github: gql query stream CANCEL, retrying after backoff",
+				slog.Int("attempt", cancelAttempts),
+				slog.Duration("wait", wait),
+				slog.String("error", err.Error()),
+			)
+		case isTransientEOF(err):
+			eofAttempts++
+			if eofAttempts >= eofMaxAttempts {
+				return err
+			}
+			wait := eofBO.NextBackOff()
+			if eofSpent+wait > eofBudget {
+				return err
+			}
+			eofSpent += wait
+			c.log.Warn("github: gql query transient network error, retrying",
+				slog.Int("attempt", eofAttempts),
+				slog.Duration("wait", wait),
+				slog.String("error", err.Error()),
+			)
+			t := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return ctx.Err()
+			case <-t.C:
+			}
+		default:
 			return err
-		}
-		wait := bo.NextBackOff()
-		if spent+wait > budget {
-			return err
-		}
-		spent += wait
-		c.log.Warn("github: gql query transient network error, retrying",
-			slog.Int("attempt", attempt),
-			slog.Duration("wait", wait),
-			slog.String("error", err.Error()),
-		)
-		t := time.NewTimer(wait)
-		select {
-		case <-ctx.Done():
-			t.Stop()
-			return ctx.Err()
-		case <-t.C:
 		}
 	}
 }
@@ -426,6 +474,24 @@ func isTransientEOF(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "unexpected eof") ||
 		strings.Contains(msg, "connection reset by peer")
+}
+
+// isStreamCancel reports whether err is an HTTP/2 stream CANCEL received from
+// GitHub's GraphQL endpoint. GitHub emits CANCEL when a resolver exceeds its
+// server-side CPU/time budget — typically on deep pagination walks over long
+// windows. Unlike transient network errors (isTransientEOF), CANCEL requires a
+// long backoff so the resolver budget resets before retrying the same cursor.
+//
+// Matched by substring because golang.org/x/net/http2 is not a project
+// dependency (see go.mod). The target string is the Go HTTP/2 transport's
+// canonical rendering: "stream error: stream ID N; CANCEL; received from peer".
+// golang.org/x/net has kept this format stable across versions. Context
+// cancellation ("context canceled") is deliberately excluded.
+func isStreamCancel(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "; cancel; received from peer")
 }
 
 // emitPRs walks the supplied prGraph nodes and emits all PR-side rows

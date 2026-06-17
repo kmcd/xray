@@ -51,6 +51,13 @@ type Provenance struct {
 	// as of the last observed response. Zero when no GraphQL calls were made.
 	GraphQLPointsRemaining int `json:"graphql_points_remaining,omitempty"`
 
+	// StreamCancelRetries counts the number of HTTP/2 stream CANCEL frames
+	// received from GitHub during this extraction and retried. Non-zero means
+	// at least one GraphQL walk hit GitHub's server-side CPU/time budget and
+	// had to back off. A successful run with retries > 0 is distinguishable
+	// from a clean run; a truncated run also has PaginationComplete = false.
+	StreamCancelRetries int `json:"stream_cancel_retries,omitempty"`
+
 	// ConfigDepth records operator-declared extraction-depth overrides that
 	// narrow what data was captured. Absent keys mean the connector ran at
 	// full depth. The analyser reads this to interpret reduced row counts as
@@ -148,6 +155,7 @@ func (p *Provenance) Merge(other Provenance) {
 	if other.RateLimitTruncated {
 		p.RateLimitTruncated = true
 	}
+	p.StreamCancelRetries += other.StreamCancelRetries
 	p.GraphQLPointsUsed += other.GraphQLPointsUsed
 	if other.GraphQLPointsRemaining > 0 {
 		if p.GraphQLPointsRemaining == 0 || other.GraphQLPointsRemaining < p.GraphQLPointsRemaining {

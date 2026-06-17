@@ -261,6 +261,29 @@ func TestIsTransientEOF_ConnReset(t *testing.T) {
 	}
 }
 
+// TestIsStreamCancel verifies the classification of HTTP/2 stream CANCEL errors.
+func TestIsStreamCancel(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"canonical CANCEL", errors.New(`Post "https://api.github.com/graphql": http2: stream error: stream ID 135; CANCEL; received from peer`), true},
+		{"CANCEL mixed case", errors.New(`Post "https://api.github.com/graphql": HTTP2: Stream Error: Stream ID 7; CANCEL; Received From Peer`), true},
+		{"context cancelled", errors.New("context canceled"), false},
+		{"io.EOF", io.EOF, false},
+		{"connection reset", errors.New("connection reset by peer"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isStreamCancel(tc.err); got != tc.want {
+				t.Errorf("isStreamCancel(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
 // truncateMidBody hijacks the connection, writes headers declaring a large
 // Content-Length, flushes only a few bytes, then closes the connection.
 // The client's io.ReadAll returns io.ErrUnexpectedEOF.
@@ -278,4 +301,3 @@ func truncateMidBody(t *testing.T, w http.ResponseWriter) {
 	_, _ = io.WriteString(conn, "HTTP/1.1 200 OK\r\nContent-Length: 4096\r\nContent-Type: application/json\r\n\r\n")
 	_, _ = io.WriteString(conn, `{"data":{`)
 }
-
