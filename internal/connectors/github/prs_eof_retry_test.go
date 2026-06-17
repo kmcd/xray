@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -231,6 +232,32 @@ func TestPaginatePRReviewsOverflow_EOFRetry(t *testing.T) {
 	}
 	if v, ok := prov.Errors["reviews"]; ok && v != "" {
 		t.Errorf("prov.Errors[reviews] should be empty after retry succeeded; got %q", v)
+	}
+}
+
+// TestIsTransientEOF_ConnReset verifies that connection reset by peer errors
+// (surfaced after long idle periods when GitHub closes pooled connections
+// server-side) are classified as transient so queryWithEOFRetry retries.
+func TestIsTransientEOF_ConnReset(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"io.EOF", io.EOF, true},
+		{"unexpected EOF sentinel", io.ErrUnexpectedEOF, true},
+		{"unexpected EOF string", errors.New("unexpected EOF"), true},
+		{"connection reset by peer", errors.New(`Post "https://api.github.com/graphql": read tcp 1.2.3.4:56789->140.82.113.22:443: read: connection reset by peer`), true},
+		{"Connection reset mixed case", errors.New("Connection reset by peer"), true},
+		{"other error", errors.New("server returned HTTP 500"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isTransientEOF(tc.err); got != tc.want {
+				t.Errorf("isTransientEOF(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 

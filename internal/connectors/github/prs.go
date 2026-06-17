@@ -312,14 +312,16 @@ func (c *Connector) fetchPRs(ctx context.Context, repo connector.Repo, window co
 }
 
 // queryWithEOFRetry runs c.gql.Query with bounded retries when the error is
-// a transient mid-response truncation (io.ErrUnexpectedEOF, io.EOF, or a
-// JSON-decoder "unexpected EOF" surface). The GraphQL cursor in vars is
-// unchanged across attempts — GitHub cursors hold for minutes, longer than
-// our retry budget. Non-transient errors return immediately.
+// a transient network failure: mid-response body truncation
+// (io.ErrUnexpectedEOF, io.EOF, "unexpected EOF") or a stale-connection TCP
+// reset ("connection reset by peer") that occurs after long idle periods
+// such as primary-rate-limit waits. The GraphQL cursor in vars is unchanged
+// across attempts — GitHub cursors hold for minutes, longer than our retry
+// budget. Non-transient errors return immediately.
 //
 // The ratelimit.Transport already retries HTTP-level transient errors
-// (429/5xx/secondary-RL), but body-read failures inside the outer
-// costInterceptor surface as transport errors *above* ratelimit and
+// (429/5xx/secondary-RL), but body-read failures and TCP resets inside the
+// outer costInterceptor surface as transport errors *above* ratelimit and
 // bypass that layer. This helper closes that gap for the PR-list walk.
 func (c *Connector) queryWithEOFRetry(ctx context.Context, q any, vars map[string]any) error {
 	const maxAttempts = 3
@@ -344,7 +346,7 @@ func (c *Connector) queryWithEOFRetry(ctx context.Context, q any, vars map[strin
 			return err
 		}
 		spent += wait
-		c.log.Warn("github: gql query transient EOF, retrying",
+		c.log.Warn("github: gql query transient network error, retrying",
 			slog.Int("attempt", attempt),
 			slog.Duration("wait", wait),
 			slog.String("error", err.Error()),
@@ -394,7 +396,7 @@ func (c *Connector) doJSONPOSTWithEOFRetry(ctx context.Context, url string, body
 			return nil, err
 		}
 		spent += wait
-		c.log.Warn("github: http POST transient EOF, retrying",
+		c.log.Warn("github: http POST transient network error, retrying",
 			slog.Int("attempt", attempt),
 			slog.Duration("wait", wait),
 			slog.String("error", err.Error()),
@@ -409,6 +411,11 @@ func (c *Connector) doJSONPOSTWithEOFRetry(ctx context.Context, url string, body
 	}
 }
 
+// isTransientEOF reports whether err is a transient network failure that is
+// safe to retry with the same GraphQL cursor: body-read truncations
+// (io.ErrUnexpectedEOF, io.EOF, "unexpected EOF") and stale-connection TCP
+// resets ("connection reset by peer") that occur after long idle periods.
+// See isTransientProbeError in scopes.go for the analogous probe-path check.
 func isTransientEOF(err error) bool {
 	if err == nil {
 		return false
@@ -416,7 +423,9 @@ func isTransientEOF(err error) bool {
 	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
 		return true
 	}
-	return strings.Contains(err.Error(), "unexpected EOF")
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unexpected eof") ||
+		strings.Contains(msg, "connection reset by peer")
 }
 
 // emitPRs walks the supplied prGraph nodes and emits all PR-side rows
