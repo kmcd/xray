@@ -6,6 +6,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+### Connectors
+
+- **`github`: `pull_request_order` config flag for historical-window PR enumeration.** Add `pull_request_order = "created_asc"` to `[connectors.github]` to walk PRs forward from the oldest PR instead of backwards from the most-recently-updated. `"created_asc"` is efficient for longitudinal windows (>1 year): the walk stops as soon as `createdAt` passes `window.end` rather than having to traverse all post-window PRs ordered by update time. `"updated_desc"` (default) preserves the existing behaviour for engagement-style windows up to ~1 year. Unknown values are rejected at config-load time. ([#178])
+
 ## [0.4.11] — 2026-06-16
 
 v0.4.11 adds a rate-limit warning to `xray check`: when the extraction window exceeds two years and no PR-narrowing option is set, the Plan output now prints a WARNING block pointing operators at sparse-historical sampling before they hit the PAT primary cap.

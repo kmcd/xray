@@ -30,6 +30,7 @@ type Connectors struct {
 
 type GitHubConn struct {
 	Token           string
+	PROrder         string            // "updated_desc" (default) or "created_asc"
 	PRWindow        *Window           // nil → use global window for PR cluster extraction
 	PRInflection    *time.Time        // operator-supplied inflection date (UTC midnight); nil = no sparse mode
 	PRBracketWindow *DurationSpec     // ±N months/weeks/days full fidelity; nil = no sparse mode

@@ -304,6 +304,11 @@ unassigned = ["kmcd/foo", "kmcd/bar", "kmcd/baz"]
 
 [connectors.github]
 token = "ghp_..."
+# PR walk order (optional; default "updated_desc"):
+#   "updated_desc" — ordered by updatedAt DESC; efficient for ≤1-year windows.
+#   "created_asc"  — ordered by createdAt ASC; efficient for multi-year historical windows.
+# pull_request_order = "updated_desc"
+
 # pr_window narrows the PR-cluster extraction window without changing the
 # global window. Commits, complexity history, and file metrics always use
 # the global window. PR cluster (prs, reviews, pr_comments, pr_labels,
@@ -375,6 +380,20 @@ dataset = "production"
   `[connectors.github]` unless its own `token` is set. Requires
   `[connectors.github]` to be configured.
 - `honeycomb.dataset` is required when honeycomb is configured.
+- `github.pull_request_order` is optional. Controls the GraphQL `orderBy`
+  direction for PR enumeration. Two values:
+  - `"updated_desc"` (default): orders by `updatedAt DESC`. Efficient for
+    engagement-style windows up to ~1 year: stops walking when `updatedAt <
+    window.Start`. Degrades on long historical windows because all recently-
+    updated PRs must be traversed before reaching old-window PRs.
+  - `"created_asc"`: orders by `createdAt ASC`. Efficient for longitudinal
+    windows beyond 1 year: walks forward from the first PR ever created and
+    stops when `createdAt > window.End`. GitHub's endpoint cannot be told to
+    start at `window.Start`, so pre-window PRs are still traversed; the stop
+    condition is hitting the window end rather than walking the entire
+    post-window history. Use `updated_desc` for engagement-style windows up
+    to ~1 year; use `created_asc` for longitudinal windows beyond that.
+  Unknown values are rejected at config-load time.
 - `github.pr_window` is optional. Format: `YYYY-MM-DD..YYYY-MM-DD`. When set,
   narrows the PR-cluster extraction (prs, reviews, pr_comments, pr_labels,
   pr_commits) to the declared sub-window without affecting commits, complexity

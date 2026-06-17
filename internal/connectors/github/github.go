@@ -81,6 +81,13 @@ type Connector struct {
 
 	extractShards int
 
+	// prOrder controls the GraphQL orderBy direction for PR enumeration.
+	// "updated_desc" (default) orders by updatedAt DESC — stops early for
+	// recent windows but degrades on long historical windows. "created_asc"
+	// orders by createdAt ASC — efficient for longitudinal windows; stops
+	// when createdAt exceeds window.End.
+	prOrder string
+
 	// prWindow, when non-nil, narrows the PR-cluster extraction to a window
 	// narrower than the global run window. Nil means use the global window.
 	// Set from config.GitHubConn.PRWindow in New().
@@ -278,6 +285,11 @@ func New(cfg config.GitHubConn, log *slog.Logger) (*Connector, error) {
 		prefetchData:         map[string]*prPrefetchResult{},
 		prefetchReleasesData: map[string]*releasePrefetchResult{},
 		rl:                   rl,
+	}
+	if cfg.PROrder != "" {
+		c.prOrder = cfg.PROrder
+	} else {
+		c.prOrder = "updated_desc"
 	}
 	if cfg.PRWindow != nil {
 		w := connector.Window{Start: cfg.PRWindow.Start, End: cfg.PRWindow.End}

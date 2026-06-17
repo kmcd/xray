@@ -296,3 +296,39 @@ func TestParseHistorySample(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadPullRequestOrder(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		want    string
+		wantErr bool
+	}{
+		{"created_asc", "created_asc", "created_asc", false},
+		{"updated_desc", "updated_desc", "updated_desc", false},
+		{"omitted defaults to empty", "", "", false},
+		{"unknown value", "newest_first", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			toml := "window = \"2025-01-01..2025-12-31\"\n[teams]\nt = [\"a/b\"]\n[connectors.github]\ntoken = \"x\"\n"
+			if tt.value != "" {
+				toml += "pull_request_order = \"" + tt.value + "\"\n"
+			}
+			p := writeTempTOML(t, toml)
+			cfg, _, err := Load(p)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("Load: expected error for pull_request_order=%q, got nil", tt.value)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got := cfg.Connectors.GitHub.PROrder; got != tt.want {
+				t.Errorf("PROrder = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

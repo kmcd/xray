@@ -30,6 +30,7 @@ type rawConnectors struct {
 
 type rawGitHub struct {
 	Token           string `toml:"token"`
+	PROrder         string `toml:"pull_request_order"`
 	PRWindow        string `toml:"pr_window"`
 	PRInflection    string `toml:"pr_inflection"`
 	PRBracketWindow string `toml:"pr_bracket_window"`
@@ -133,6 +134,12 @@ func Load(path string) (*Config, *toml.MetaData, error) {
 // optional PR-sampling fields. Returns an error if any field is malformed.
 func parseGitHubConn(rc *rawGitHub) (*GitHubConn, error) {
 	conn := &GitHubConn{Token: rc.Token}
+	if rc.PROrder != "" {
+		if rc.PROrder != "updated_desc" && rc.PROrder != "created_asc" {
+			return nil, fmt.Errorf("connectors.github.pull_request_order: unknown value %q: must be \"updated_desc\" or \"created_asc\"", rc.PROrder)
+		}
+		conn.PROrder = rc.PROrder
+	}
 	if rc.PRWindow != "" {
 		w, err := parseWindow(rc.PRWindow)
 		if err != nil {

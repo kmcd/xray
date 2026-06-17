@@ -138,8 +138,10 @@ func BuildPlan(cfg *config.Config, stats []RepoStat) Plan {
 	// SuggestSparseMode fires when the operator is on the expensive full-
 	// enumeration path and hasn't configured any PR-narrowing option. The
 	// 730-day threshold matches the 2-year heuristic used in the issue.
+	// pull_request_order = "created_asc" handles long historical windows
+	// efficiently on its own, so suppress the suggestion when it is set.
 	if gh := cfg.Connectors.GitHub; gh != nil && p.WindowDays > 730 &&
-		gh.PRInflection == nil && gh.PRWindow == nil {
+		gh.PRInflection == nil && gh.PRWindow == nil && gh.PROrder != "created_asc" {
 		p.SuggestSparseMode = true
 	}
 

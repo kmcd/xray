@@ -33,6 +33,23 @@ type prListQuery struct {
 	} `graphql:"repository(owner: $owner, name: $name)"`
 }
 
+// prListQueryCreatedAsc pages PRs ordered by created-at ascending, used when
+// pull_request_order = "created_asc". Walking forward from the oldest PR
+// avoids the deep-traversal problem on long historical windows: the walk
+// terminates as soon as createdAt exceeds window.End rather than having to
+// traverse all more-recently-updated PRs before reaching old-window PRs.
+type prListQueryCreatedAsc struct {
+	Repository struct {
+		PullRequests struct {
+			PageInfo struct {
+				EndCursor   githubv4.String
+				HasNextPage githubv4.Boolean
+			}
+			Nodes []prGraph
+		} `graphql:"pullRequests(first: $first, after: $after, orderBy: {field: CREATED_AT, direction: ASC})"`
+	} `graphql:"repository(owner: $owner, name: $name)"`
+}
+
 type prGraph struct {
 	Number       githubv4.Int
 	Title        githubv4.String
@@ -249,10 +266,9 @@ func (c *Connector) extractPRs(ctx context.Context, repo connector.Repo, window 
 	c.emitPRs(ctx, repo, nodes, sink, prov)
 }
 
-// fetchPRs walks prListQuery pages and returns in-window PR nodes. No row
-// emission happens here. Same window-filter rules: stop paging when
-// UpdatedAt < window.Start (PRs are ordered UPDATED_AT desc); skip PRs
-// that opened after window.End; skip PRs that closed before window.Start.
+// fetchPRs walks PR pages and returns in-window PR nodes. No row emission
+// happens here. Dispatches to the updatedAt-DESC or createdAt-ASC walk
+// based on c.prOrder.
 //
 // startCursor is the GraphQL cursor to begin the walk at; empty means
 // page 1. Returns (collected nodes, resumeCursor, err): resumeCursor is
@@ -262,6 +278,16 @@ func (c *Connector) extractPRs(ctx context.Context, repo connector.Repo, window 
 // come back; resumeCursor lets `extractPRs` continue the walk live when
 // Prefetch errored mid-stream.
 func (c *Connector) fetchPRs(ctx context.Context, repo connector.Repo, window connector.Window, startCursor string) ([]prGraph, string, error) {
+	if c.prOrder == "created_asc" {
+		return c.fetchPRsCreatedAsc(ctx, repo, window, startCursor)
+	}
+	return c.fetchPRsUpdatedDesc(ctx, repo, window, startCursor)
+}
+
+// fetchPRsUpdatedDesc walks prListQuery pages (UPDATED_AT DESC) and returns
+// in-window PR nodes. Stops paging when UpdatedAt < window.Start; skips PRs
+// that opened after window.End or closed before window.Start.
+func (c *Connector) fetchPRsUpdatedDesc(ctx context.Context, repo connector.Repo, window connector.Window, startCursor string) ([]prGraph, string, error) {
 	owner, name, ok := splitSlug(repo.Slug)
 	if !ok {
 		return nil, "", nil
@@ -297,6 +323,60 @@ func (c *Connector) fetchPRs(ctx context.Context, repo connector.Repo, window co
 				break
 			}
 			if created.After(window.End) {
+				continue
+			}
+			if p.ClosedAt != nil && p.ClosedAt.Before(window.Start) {
+				continue
+			}
+			nodes = append(nodes, p)
+		}
+		if stopPaging || !bool(q.Repository.PullRequests.PageInfo.HasNextPage) {
+			return nodes, "", nil
+		}
+		cursor = string(q.Repository.PullRequests.PageInfo.EndCursor)
+	}
+}
+
+// fetchPRsCreatedAsc walks prListQueryCreatedAsc pages (CREATED_AT ASC) and
+// returns in-window PR nodes. Stops paging when createdAt exceeds window.End;
+// skips PRs that closed before window.Start. Efficient for longitudinal
+// windows: the walk terminates as soon as the frontier passes window.End
+// rather than traversing the full reverse-chronological history.
+func (c *Connector) fetchPRsCreatedAsc(ctx context.Context, repo connector.Repo, window connector.Window, startCursor string) ([]prGraph, string, error) {
+	owner, name, ok := splitSlug(repo.Slug)
+	if !ok {
+		return nil, "", nil
+	}
+
+	cursor := startCursor
+	vars := map[string]any{
+		"owner": githubv4.String(owner),
+		"name":  githubv4.String(name),
+		"first": githubv4.Int(50),
+		"after": (*githubv4.String)(nil),
+	}
+
+	var nodes []prGraph
+	for {
+		if ctx.Err() != nil {
+			return nodes, cursor, ctx.Err()
+		}
+		if cursor == "" {
+			vars["after"] = (*githubv4.String)(nil)
+		} else {
+			vars["after"] = githubv4.NewString(githubv4.String(cursor))
+		}
+		var q prListQueryCreatedAsc
+		if err := c.queryWithEOFRetry(ctx, &q, vars); err != nil {
+			return nodes, cursor, err
+		}
+		stopPaging := false
+		for _, p := range q.Repository.PullRequests.Nodes {
+			if p.CreatedAt.UTC().After(window.End) {
+				stopPaging = true
+				break
+			}
+			if p.UpdatedAt.Before(window.Start) {
 				continue
 			}
 			if p.ClosedAt != nil && p.ClosedAt.Before(window.Start) {
