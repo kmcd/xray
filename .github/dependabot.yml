@@ -27,3 +27,9 @@ updates:
     labels:
       - dependencies
       - github-actions
+    ignore:
+      # cosign-installer v4 defaults to cosign v3, whose sign-blob requires --bundle.
+      # .goreleaser.yaml + scripts/install.sh expect the v2 separate-sig-and-cert flow.
+      # Hold on v3.x until a deliberate migration to cosign v3.
+      - dependency-name: "sigstore/cosign-installer"
+        update-types: ["version-update:semver-major"]
