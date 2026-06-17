@@ -6,9 +6,19 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+## [0.4.12] — 2026-06-17
+
+v0.4.12 hardens the GitHub connector against long-window extraction failures: stream CANCEL retries resume from cursor rather than truncating, connection-reset errors recover in all GraphQL stages (not only prefetch), a `commit_coauthors` duplicate-row fix closes an edge case when the committer appears in a `Co-authored-by` trailer, and a new `pull_request_order` config flag lets historical-window runs walk PRs forward from the oldest PR to avoid deep traversal of post-window updates.
+
 ### Connectors
 
 - **`github`: `pull_request_order` config flag for historical-window PR enumeration.** Add `pull_request_order = "created_asc"` to `[connectors.github]` to walk PRs forward from the oldest PR instead of backwards from the most-recently-updated. `"created_asc"` is efficient for longitudinal windows (>1 year): the walk stops as soon as `createdAt` passes `window.end` rather than having to traverse all post-window PRs ordered by update time. `"updated_desc"` (default) preserves the existing behaviour for engagement-style windows up to ~1 year. Unknown values are rejected at config-load time. ([#178])
+
+- **`github`: stream CANCEL slow-path retry and non-zero exit on partial pagination.** GraphQL pages that return an HTTP/2 stream CANCEL frame mid-walk now trigger a backoff retry from the last successful cursor rather than finalising a truncated artifact. The run exits non-zero when any pagination walk completes with `PaginationComplete = false`, making partial extractions visible to callers and CI scripts that previously saw a zero exit even when the artifact contained only the head of a long window. ([#176])
+
+- **`github`: retry connection-reset-by-peer errors in all GraphQL stages.** After a long primary-rate-limit wait, idle HTTP connections are closed server-side; the next request returns `read: connection reset by peer`. Previously only the prefetch stage recovered via cursor-resume; all other GraphQL stages raised `phase_error` and exited. The fix catches `ECONNRESET` / `io.EOF` errors in every GraphQL stage, forces a new connection, and retries the failed page — symmetric to the existing prefetch behaviour. ([#177])
+
+- **`github`: deduplicate `commit_coauthors` when committer appears in `Co-authored-by` trailer.** When a commit's committer login matches a handle in the `Co-authored-by` trailer, xray previously inserted a duplicate row in `commit_coauthors` (one from the API, one from the trailer parse). The committer is now excluded from the trailer walk before insert, keeping one row per co-author per commit.
 
 ## [0.4.11] — 2026-06-16
 

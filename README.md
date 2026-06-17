@@ -258,7 +258,7 @@ Pre-1.0, the schema is unstable; minor version bumps may introduce breaking sche
 | schema_version | xray binary versions | notes |
 | -------------- | -------------------- | ----- |
 | 1              | 0.1.0 – 0.2.2        | Author handles are raw git idents / GitHub logins. |
-| 2              | 0.3.0 – 0.4.11       | Author handles are opaque `h_<15 digits>` tokens ([ADR 023](docs/adr/0023-author-handles-hashed-at-boundary.md)). Analysers built for `schema_version = 1` must be updated. |
+| 2              | 0.3.0 – 0.4.12       | Author handles are opaque `h_<15 digits>` tokens ([ADR 023](docs/adr/0023-author-handles-hashed-at-boundary.md)). Analysers built for `schema_version = 1` must be updated. |
 
 `0.3.0` is the first release at `schema_version = 2`. Analysers pinned to `schema_version = 1` will refuse to load `0.3.0+` artifacts — see the [CHANGELOG](./CHANGELOG.md#030--2026-06-08) for the author-handle semantics shift driving the bump.
 
@@ -268,7 +268,7 @@ Verify the cosign signature on `checksums.txt`, then verify the archive
 against the checksum.
 
 ```bash
-VERSION=0.4.11
+VERSION=0.4.12
 OS=linux           # or darwin, windows
 ARCH=amd64         # or arm64 (not available on windows)
 
