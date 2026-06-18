@@ -6,6 +6,16 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+### Connectors
+
+- **`github_actions`: resolve non-terminal deploy statuses via workflow run fallback.** Deployments whose latest status is `in_progress`, `queued`, `pending`, or `waiting` now trigger a `ListRepositoryWorkflowRuns` lookup (HEAD SHA, `status=completed`, one result). If a completed run is found, its conclusion is used to determine the terminal status. The endpoint is marked inaccessible after the first 403 and skipped for the remainder of the page; provenance is recorded in `prov.Endpoints["deploy_run_resolve"]`. `startup_failure` and `action_required` workflow conclusions now map to `failed` (previously fell through to `in_progress`). ([#180])
+
+- **`github`: `deploys.is_prerelease` flag from GitHub Releases.** New non-breaking column `is_prerelease INTEGER NOT NULL DEFAULT 0` on the `deploys` table. Set from `GetPrerelease()` for `source=github` deploy rows; defaults to `0` for `source=github_actions` and `source=honeycomb` where no prerelease signal is available. ([#180])
+
+### Schema / docs
+
+- **Canonical `deploys.status` vocabulary: `{success, failed, in_progress}`.** `rolled_back` is the existing boolean column, not a status value. DORA terminal counts: `success` counts as deployment; `in_progress` is excluded; CFR denominator is `success + failed`. ADR 0033 records the decision. ([#180])
+
 ## [0.4.12] — 2026-06-17
 
 v0.4.12 hardens the GitHub connector against long-window extraction failures: stream CANCEL retries resume from cursor rather than truncating, connection-reset errors recover in all GraphQL stages (not only prefetch), a `commit_coauthors` duplicate-row fix closes an edge case when the committer appears in a `Co-authored-by` trailer, and a new `pull_request_order` config flag lets historical-window runs walk PRs forward from the oldest PR to avoid deep traversal of post-window updates.
