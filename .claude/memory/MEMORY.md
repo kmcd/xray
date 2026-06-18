@@ -1,0 +1,19 @@
+- [Release intro auto-accept](feedback_release_intro.md) — skip the intro-paragraph confirmation in /release; draft and insert without prompting.
+- [Ready before commit](feedback_ready_before_commit.md) — /ready must pass before every commit, no exceptions; always use /commit skill (not raw git commit); order is /ready → /commit → push.
+- [Commit style](feedback_commit_style.md) — no Claude co-author trailer; concise English imperative subjects.
+- [Push without asking](feedback_push_without_asking.md) — when asked to commit, also push; don't defer the push back to the user.
+- [Close after smoke](feedback_close_after_smoke.md) — for perf / behavioural issues, smoke must validate before `gh issue close`; gates + push alone are not enough.
+- [Never defer bugs](feedback_never_defer_bugs.md) — any bug surfaced during `/ready` (own, adjacent, or pre-existing) gets fixed in-session; only genuine scope additions (new features, capabilities) become issues.
+- [Same-class scan](feedback_same_class_scan.md) — before fixing, articulate the abstract shape and grep for siblings; the class is the unit of work, not the instance.
+- [Gates pattern](feedback_gates_pattern.md) — `make gates` / `bin/ship` / `/ready` hierarchy; mirror gauge_intelligence.
+- [Prose preload](feedback_prose_preload.md) — for any .md edit, read AntiLLM.yml + Hedging.yml + docs/style-guide.md BEFORE drafting; reactive `make prose` is the backstop, not the primary check.
+- [Clean-clone check](feedback_clean_clone_check.md) — local `make gates` ≠ HEAD builds; pathspec commits can pick up foreign working-tree hunks. Verify via clean clone before declaring done.
+- [Multi-session shared index](feedback_multi_session_shared_index.md) — sessions share `.git/index`; `git commit -- <paths>` reads the working tree (ignores the index); mixed files need temporary-revert-stage-restore.
+- [Schema vs semver](feedback_schema_vs_semver.md) — `schema_version` is the analyser contract; semver is the binary contract; don't conflate.
+- [Release tooling smoke](feedback_release_tooling_smoke.md) — run new release/publish/install scripts end-to-end against a real artifact before declaring shipped; static checks don't catch the bugs that matter.
+- [xray v0.4.1 baseline](project_xray_baseline.md) — what shipped, load-bearing contracts, the `/release` + `/publish-tap` flow, install paths per OS.
+- [One-shot idempotent design](project_one_shot_idempotent.md) — xray runs are self-contained; no cross-run clone reuse / persistent caches as perf levers.
+- [Complexity history is load-bearing](project_complexity_history_load_bearing.md) — `file_complexity_history` is signal, not optional; no opt-out flag, no sampling, no coverage narrowing.
+- [Repo artifacts](reference_xray_artifacts.md) — where the spec, ADR, schema doc, changelog, and `.claude/` infra live.
+- [GitHub bot bypass: personal-repo constraint](reference_github_bot_bypass_personal_repo.md) — `github-actions[bot]` can't be added as Ruleset bypass on a personal-account repo; PAT or out-of-band publish are the workarounds.
+- [Changelog discipline](feedback_changelog.md) — always add a CHANGELOG [Unreleased] entry for user-visible changes (new column, connector behaviour, CLI flag); check it in /ready Step 5 alongside schema.md/spec.md.
