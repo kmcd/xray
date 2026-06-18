@@ -14,6 +14,8 @@ import (
 // deploys pages the Deployments API and emits one model.Deploy per
 // deployment. The deploy's status is taken from the latest deployment
 // status, mapped onto the canonical {success, failed, in_progress} set.
+// For non-terminal deployments, the associated workflow run conclusion is
+// used as a fallback to resolve a terminal status.
 func (c *Connector) deploys(
 	ctx context.Context,
 	owner, name string,
@@ -31,6 +33,10 @@ func (c *Connector) deploys(
 	// all (no deployments in window → no status calls → no entry).
 	var triedStatuses, statusesAccessible bool
 	statusesAccessible = true
+	// triedRunResolve gates whether we record Endpoints["deploy_run_resolve"].
+	// Only set when at least one in-flight deployment triggers a workflow-run lookup.
+	var triedRunResolve, runResolveAccessible bool
+	runResolveAccessible = true
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -78,6 +84,24 @@ func (c *Connector) deploys(
 				// Continue with empty status mapped to in_progress.
 			}
 
+			// For non-terminal deployments, fall back to the associated
+			// workflow run's conclusion to resolve a terminal status.
+			// Skip once the endpoint has been marked inaccessible.
+			if runResolveAccessible && isNonTerminalState(state) && stringOf(d.SHA) != "" {
+				triedRunResolve = true
+				if resolved, err := c.resolveStateFromRun(ctx, owner, name, stringOf(d.SHA)); err != nil {
+					if runResolveAccessible {
+						runResolveAccessible = false
+						prov.Endpoints["deploy_run_resolve"] = connector.EndpointStatus{
+							Accessible: false,
+							Reason:     err.Error(),
+						}
+					}
+				} else if resolved != "" {
+					state = resolved
+				}
+			}
+
 			dep := mapDeploy(d, state, repo.Slug, createdAt)
 			if err := sink.InsertDeploy(dep); err != nil {
 				prov.Errors["deploys:"+dep.ID] = err.Error()
@@ -94,6 +118,9 @@ func (c *Connector) deploys(
 	prov.Endpoints["deployments"] = connector.EndpointStatus{Accessible: true}
 	if triedStatuses && statusesAccessible {
 		prov.Endpoints["deploy_statuses"] = connector.EndpointStatus{Accessible: true}
+	}
+	if triedRunResolve && runResolveAccessible {
+		prov.Endpoints["deploy_run_resolve"] = connector.EndpointStatus{Accessible: true}
 	}
 }
 
@@ -137,23 +164,57 @@ func mapDeploy(d *github.Deployment, rawState, repoSlug string, createdAt time.T
 	}
 }
 
-// mapDeployStatus maps a GitHub deployment-status state onto the canonical
-// deploys.status set per the spec.
+// mapDeployStatus maps a GitHub deployment-status state or workflow-run
+// conclusion onto the canonical deploys.status set {success, failed, in_progress}.
 //
-//	success    -> success
-//	failure    -> failed
-//	error      -> failed   (treated as a failed deploy)
+//	success                               -> success
+//	failure, error                        -> failed   (deployment status)
+//	cancelled, timed_out,                 -> failed   (workflow run conclusion)
+//	startup_failure, action_required
 //	in_progress, queued, pending, waiting -> in_progress
-//	unknown / empty -> in_progress
+//	unknown / empty                       -> in_progress
 func mapDeployStatus(raw string) string {
 	switch raw {
 	case "success":
 		return "success"
-	case "failure", "error":
+	case "failure", "error", "cancelled", "timed_out", "startup_failure", "action_required":
 		return "failed"
 	case "in_progress", "queued", "pending", "waiting":
 		return "in_progress"
 	default:
 		return "in_progress"
 	}
+}
+
+// isNonTerminalState reports whether raw is an in-flight GitHub
+// deployment-status state, indicating a terminal status may be available
+// from the associated workflow run.
+func isNonTerminalState(state string) bool {
+	switch state {
+	case "in_progress", "queued", "pending", "waiting", "":
+		return true
+	default:
+		return false
+	}
+}
+
+// resolveStateFromRun returns the GitHub workflow-run conclusion for the
+// most recent completed run matching sha (first page, one result). Returns
+// ("", nil) when no completed run is found. The caller uses the raw
+// conclusion as input to mapDeployStatus.
+func (c *Connector) resolveStateFromRun(ctx context.Context, owner, name, sha string) (string, error) {
+	runs, _, err := c.client.Actions.ListRepositoryWorkflowRuns(ctx, owner, name,
+		&github.ListWorkflowRunsOptions{
+			HeadSHA:     sha,
+			Status:      "completed",
+			ListOptions: github.ListOptions{PerPage: 1},
+		},
+	)
+	if err != nil {
+		return "", err
+	}
+	if runs == nil || len(runs.WorkflowRuns) == 0 || runs.WorkflowRuns[0] == nil {
+		return "", nil
+	}
+	return stringOf(runs.WorkflowRuns[0].Conclusion), nil
 }

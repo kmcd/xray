@@ -169,7 +169,7 @@ func (s *Store) prepare() error {
 		{&s.stmt.prLabel, `INSERT OR IGNORE INTO pr_labels (pr_number, repo, label) VALUES (?,?,?)`},
 		{&s.stmt.build, `INSERT OR REPLACE INTO builds (id, repo, source, pipeline, status, conclusion, started_at, completed_at, duration_seconds, commit_sha, branch, event, attempt, rerun_of_id, created_at, pr_number) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`},
 		{&s.stmt.buildJob, `INSERT INTO build_jobs (build_id, repo, name, status, conclusion, duration_seconds, attempt) VALUES (?,?,?,?,?,?,?)`},
-		{&s.stmt.deploy, `INSERT OR REPLACE INTO deploys (id, repo, environment, deployed_at, commit_sha, source, status, supersedes_deploy_id, rolled_back, trigger, release_tag, version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`},
+		{&s.stmt.deploy, `INSERT OR REPLACE INTO deploys (id, repo, environment, deployed_at, commit_sha, source, status, supersedes_deploy_id, rolled_back, trigger, release_tag, version, is_prerelease) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`},
 		{&s.stmt.release, `INSERT OR REPLACE INTO releases (repo, tag, name, created_at, sha, is_prerelease) VALUES (?,?,?,?,?,?)`},
 		{&s.stmt.incident, `INSERT OR REPLACE INTO incidents (id, repo, source, opened_at, resolved_at, severity, occurrences, release_ref, deploy_id, commit_sha, acknowledged_at, is_regression, culprit_ref) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`},
 		{&s.stmt.defect, `INSERT OR REPLACE INTO defects (id, repo, ticket_ref, source, opened_at, closed_at) VALUES (?,?,?,?,?,?)`},
@@ -409,7 +409,7 @@ func (s *Store) InsertDeploy(d model.Deploy) error {
 	_, err := s.stmt.deploy.Exec(
 		d.ID, d.Repo, nstr(d.Environment), rfc(d.DeployedAt), nstr(d.CommitSHA),
 		d.Source, nstr(d.Status), nstr(d.SupersedesDeployID), b2i(d.RolledBack),
-		nstr(d.Trigger), nstr(d.ReleaseTag), nstr(d.Version),
+		nstr(d.Trigger), nstr(d.ReleaseTag), nstr(d.Version), b2i(d.IsPrerelease),
 	)
 	return err
 }

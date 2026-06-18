@@ -514,26 +514,28 @@ func TestDDL_RowRoundTrip(t *testing.T) {
 	t.Run("deploys", func(t *testing.T) {
 		db := openMemDB(t)
 		mustExec(t, db,
-			`INSERT INTO deploys (id, repo, environment, deployed_at, commit_sha, source, status, supersedes_deploy_id, rolled_back, trigger, release_tag, version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+			`INSERT INTO deploys (id, repo, environment, deployed_at, commit_sha, source, status, supersedes_deploy_id, rolled_back, trigger, release_tag, version, is_prerelease) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			"dep-1", "kmcd/repo-1", "production", nowStr, "sha-c", "github",
-			"success", "dep-0", 1, "manual", "v1.0.0", "build-42",
+			"success", "dep-0", 1, "manual", "v1.0.0", "build-42", 1,
 		)
 		var got model.Deploy
 		var ts string
-		var rolled int
-		if err := db.QueryRow(`SELECT id, repo, environment, deployed_at, commit_sha, source, status, supersedes_deploy_id, rolled_back, trigger, release_tag, version FROM deploys`).Scan(
+		var rolled, pre int
+		if err := db.QueryRow(`SELECT id, repo, environment, deployed_at, commit_sha, source, status, supersedes_deploy_id, rolled_back, trigger, release_tag, version, is_prerelease FROM deploys`).Scan(
 			&got.ID, &got.Repo, &got.Environment, &ts, &got.CommitSHA, &got.Source,
-			&got.Status, &got.SupersedesDeployID, &rolled, &got.Trigger, &got.ReleaseTag, &got.Version,
+			&got.Status, &got.SupersedesDeployID, &rolled, &got.Trigger, &got.ReleaseTag, &got.Version, &pre,
 		); err != nil {
 			t.Fatalf("scan: %v", err)
 		}
 		got.DeployedAt = mustParseTime(t, ts)
 		got.RolledBack = rolled == 1
+		got.IsPrerelease = pre == 1
 		want := model.Deploy{
 			ID: "dep-1", Repo: "kmcd/repo-1", Environment: "production",
 			DeployedAt: got.DeployedAt, CommitSHA: "sha-c", Source: "github",
 			Status: "success", SupersedesDeployID: "dep-0", RolledBack: true,
 			Trigger: "manual", ReleaseTag: "v1.0.0", Version: "build-42",
+			IsPrerelease: true,
 		}
 		if got != want {
 			t.Errorf("got %+v want %+v", got, want)

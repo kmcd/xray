@@ -213,6 +213,7 @@ type Deploy struct {
 	Trigger            string
 	ReleaseTag         string
 	Version            string
+	IsPrerelease       bool
 }
 
 type Release struct {

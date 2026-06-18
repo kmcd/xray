@@ -262,12 +262,13 @@ Indexed on `(repo, build_id)`.
 | `deployed_at`           | TEXT    | |
 | `commit_sha`            | TEXT    | |
 | `source`                | TEXT    | |
-| `status`                | TEXT    | `success` / `failed` / `rolled_back` / `in_progress` |
+| `status`                | TEXT    | `success` / `failed` / `in_progress` (terminal: `success`/`failed`; non-terminal: `in_progress`) |
 | `supersedes_deploy_id`  | TEXT    | the deploy this one rolls back to |
 | `rolled_back`           | INTEGER | true on the deploy *being* superseded by a rollback |
 | `trigger`               | TEXT    | |
 | `release_tag`           | TEXT    | |
 | `version`               | TEXT    | |
+| `is_prerelease`         | INTEGER | 1 when the release is a prerelease (beta/rc/alpha). Populated for `source=github` only; 0 for `github_actions` and `honeycomb`. |
 
 Indexed on `(repo, environment, deployed_at)`. Rollback heuristic: in chronological order per `(repo, environment)`, a deploy whose `commit_sha` matches `commit_sha[i-2]` and differs from `commit_sha[i-1]` is treated as a rollback. Documented in `internal/postprocess`.
 

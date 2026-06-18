@@ -217,6 +217,7 @@ func TestMapDeployStatus(t *testing.T) {
 	cases := []struct {
 		in, want string
 	}{
+		// deployment status states
 		{"success", "success"},
 		{"failure", "failed"},
 		{"error", "failed"},
@@ -226,6 +227,15 @@ func TestMapDeployStatus(t *testing.T) {
 		{"waiting", "in_progress"},
 		{"", "in_progress"},
 		{"weird-unknown", "in_progress"},
+		// workflow run conclusions (used for non-terminal fallback resolution)
+		{"cancelled", "failed"},
+		{"timed_out", "failed"},
+		{"startup_failure", "failed"},
+		{"action_required", "failed"},
+		// ambiguous conclusions: neutral/skipped/stale → in_progress (unknown deploy outcome)
+		{"neutral", "in_progress"},
+		{"skipped", "in_progress"},
+		{"stale", "in_progress"},
 	}
 	for _, c := range cases {
 		if got := mapDeployStatus(c.in); got != c.want {

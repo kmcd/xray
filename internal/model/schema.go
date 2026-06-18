@@ -233,6 +233,7 @@ CREATE TABLE IF NOT EXISTS deploys (
     trigger TEXT,
     release_tag TEXT,
     version TEXT,
+    is_prerelease INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (repo, source, id)
 );
 CREATE INDEX IF NOT EXISTS idx_deploys_repo_env ON deploys (repo, environment, deployed_at);

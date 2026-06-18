@@ -627,12 +627,14 @@ the database itself is flat.
   entry; `started_at - created_at` is queue delay.
 - `build_jobs(build_id, repo, name, status, conclusion, duration_seconds, attempt)`
   — Per-job rows for parallel CI. Enables job-level bottleneck analysis.
-- `deploys(id, repo, environment, deployed_at, commit_sha, source, status, supersedes_deploy_id, rolled_back, trigger, release_tag, version)`
+- `deploys(id, repo, environment, deployed_at, commit_sha, source, status, supersedes_deploy_id, rolled_back, trigger, release_tag, version, is_prerelease)`
   — `source`: `github` for releases, `honeycomb` for markers,
   `github_actions` for Deployments API, etc. `status`: `success` / `failed`
-  / `rolled_back` / `in_progress`. `supersedes_deploy_id` is a foreign key
-  to the prior deploy in the same env that this one rolls back;
-  `rolled_back` is set true on the deploy *being* superseded by a rollback.
+  / `in_progress`. Rollback is the `rolled_back` boolean column, not a
+  status value. `supersedes_deploy_id` is a foreign key to the prior deploy
+  in the same env that this one rolls back; `rolled_back` is set true on
+  the deploy *being* superseded by a rollback.
+  `is_prerelease` is 1 for prerelease releases (`source=github` only).
   This linkage enables proper change-failure-rate measurement.
 - `releases(repo, tag, name, created_at, sha, is_prerelease)`
 

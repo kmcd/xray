@@ -164,14 +164,15 @@ func (c *Connector) emitReleases(ctx context.Context, repo connector.Repo, windo
 		}
 
 		deployRow := model.Deploy{
-			ID:         fmt.Sprintf("release:%s", tag),
-			Repo:       repo.Slug,
-			DeployedAt: createdAt,
-			CommitSHA:  sha,
-			Source:     "github",
-			Status:     "success",
-			ReleaseTag: tag,
-			Version:    r.GetName(),
+			ID:           fmt.Sprintf("release:%s", tag),
+			Repo:         repo.Slug,
+			DeployedAt:   createdAt,
+			CommitSHA:    sha,
+			Source:       "github",
+			Status:       "success",
+			ReleaseTag:   tag,
+			Version:      r.GetName(),
+			IsPrerelease: r.GetPrerelease(),
 		}
 		if err := sink.InsertDeploy(deployRow); err != nil {
 			if prov.Errors["deploys"] == "" {
