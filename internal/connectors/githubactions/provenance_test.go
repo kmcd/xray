@@ -116,6 +116,50 @@ func TestBuilds_Success_RecordsAccessibleTrue(t *testing.T) {
 	}
 }
 
+// TestBuilds_ContextInterrupt_DoesNotMarkInaccessible verifies the
+// truncation path deterministically: a context interruption (here a cancel,
+// which the connector treats identically to the per-repo deadline) firing
+// *during* the workflow_runs API call must NOT mark the endpoint inaccessible
+// — a truncated fetch is "unknown", not "no signal" (Accessible=false). The
+// error is recorded and PaginationComplete flips to false instead.
+//
+// Determinism: the handler closes `started` once the request is in flight,
+// then blocks on the request context. The test cancels only after observing
+// `started`, which guarantees the cancellation surfaces from the API call
+// itself (the API-error branch), not from the top-of-loop ctx.Err() check.
+func TestBuilds_ContextInterrupt_DoesNotMarkInaccessible(t *testing.T) {
+	started := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/kmcd/foo/actions/runs", func(_ http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done() // unblocks when the client cancels the request
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := newTestConnector(t, srv)
+	sink := &failingSink{}
+	prov := connector.NewProvenance(c.Name(), "kmcd/foo", testWindow)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-started
+		cancel()
+	}()
+
+	c.builds(ctx, "kmcd", "foo", connector.Repo{Slug: "kmcd/foo"}, testWindow, sink, &prov)
+
+	if ep, ok := prov.Endpoints["workflow_runs"]; ok && !ep.Accessible {
+		t.Errorf("interruption must not mark workflow_runs inaccessible; got %+v", ep)
+	}
+	if prov.PaginationComplete {
+		t.Error("expected PaginationComplete=false after interruption")
+	}
+	if prov.Errors["builds"] == "" {
+		t.Error("expected prov.Errors[builds] to record the interruption error")
+	}
+}
+
 // TestJobsForRun_Forbidden_RecordsEndpoint covers builds.go:100 — 403 on
 // workflow-jobs list must set Endpoints["workflow_jobs"]={Accessible:false}.
 func TestJobsForRun_Forbidden_RecordsEndpoint(t *testing.T) {

@@ -47,19 +47,13 @@ func (c *Connector) builds(
 
 	for {
 		if err := ctx.Err(); err != nil {
-			prov.Errors["builds"] = err.Error()
-			prov.PaginationComplete = false
+			c.recordPaginatorError(ctx, prov, "builds", "workflow_runs", repo.Slug, err)
 			return
 		}
 
 		runs, resp, err := c.client.Actions.ListRepositoryWorkflowRuns(ctx, owner, name, opts)
 		if err != nil {
-			prov.Errors["builds"] = err.Error()
-			prov.Endpoints["workflow_runs"] = connector.EndpointStatus{
-				Accessible: false,
-				Reason:     err.Error(),
-			}
-			prov.PaginationComplete = false
+			c.recordPaginatorError(ctx, prov, "builds", "workflow_runs", repo.Slug, err)
 			return
 		}
 		if runs == nil {
@@ -113,18 +107,12 @@ func (c *Connector) jobsForRun(
 	}
 	for {
 		if err := ctx.Err(); err != nil {
-			prov.Errors["build_jobs"] = err.Error()
-			prov.PaginationComplete = false
+			c.recordPaginatorError(ctx, prov, "build_jobs", "workflow_jobs", repoSlug, err)
 			return
 		}
 		jobs, resp, err := c.client.Actions.ListWorkflowJobs(ctx, owner, name, runID, jOpts)
 		if err != nil {
-			prov.Errors["build_jobs"] = err.Error()
-			prov.Endpoints["workflow_jobs"] = connector.EndpointStatus{
-				Accessible: false,
-				Reason:     err.Error(),
-			}
-			prov.PaginationComplete = false
+			c.recordPaginatorError(ctx, prov, "build_jobs", "workflow_jobs", repoSlug, err)
 			return
 		}
 		if jobs == nil {

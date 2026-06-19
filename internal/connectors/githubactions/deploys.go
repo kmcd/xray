@@ -40,25 +40,27 @@ func (c *Connector) deploys(
 
 	for {
 		if err := ctx.Err(); err != nil {
-			prov.Errors["deploys"] = err.Error()
-			prov.PaginationComplete = false
+			c.recordPaginatorError(ctx, prov, "deploys", "deployments", repo.Slug, err)
 			return
 		}
 
 		deployments, resp, err := c.client.Repositories.ListDeployments(ctx, owner, name, opts)
 		if err != nil {
-			prov.Errors["deploys"] = err.Error()
-			prov.Endpoints["deployments"] = connector.EndpointStatus{
-				Accessible: false,
-				Reason:     err.Error(),
-			}
-			prov.PaginationComplete = false
+			c.recordPaginatorError(ctx, prov, "deploys", "deployments", repo.Slug, err)
 			return
 		}
 
 		for _, d := range deployments {
 			if d == nil {
 				continue
+			}
+			// Context interrupted mid-page (deadline or parent cancel): stop
+			// cleanly rather than emitting the remaining deployments with
+			// unresolved (in_progress) status. recordPaginatorError records
+			// the truncation and leaves the endpoint unmarked.
+			if ctx.Err() != nil {
+				c.recordPaginatorError(ctx, prov, "deploys", "deployments", repo.Slug, ctx.Err())
+				return
 			}
 			createdAt := time.Time{}
 			if d.CreatedAt != nil {
@@ -74,7 +76,11 @@ func (c *Connector) deploys(
 				if prov.Errors["deploy_statuses"] == "" {
 					prov.Errors["deploy_statuses"] = statusErr.Error()
 				}
-				if statusesAccessible {
+				// A context interruption is truncation, not a permission
+				// denial: leave the endpoint unmarked so the analyser doesn't
+				// read it as "no signal". The mid-page check returns on the
+				// next iteration.
+				if statusesAccessible && ctx.Err() == nil {
 					statusesAccessible = false
 					prov.Endpoints["deploy_statuses"] = connector.EndpointStatus{
 						Accessible: false,
@@ -90,7 +96,9 @@ func (c *Connector) deploys(
 			if runResolveAccessible && isNonTerminalState(state) && stringOf(d.SHA) != "" {
 				triedRunResolve = true
 				if resolved, err := c.resolveStateFromRun(ctx, owner, name, stringOf(d.SHA)); err != nil {
-					if runResolveAccessible {
+					// As above: a context interruption is truncation, not
+					// inaccessibility.
+					if runResolveAccessible && ctx.Err() == nil {
 						runResolveAccessible = false
 						prov.Endpoints["deploy_run_resolve"] = connector.EndpointStatus{
 							Accessible: false,
