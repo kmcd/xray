@@ -44,14 +44,17 @@ func (c *Connector) extractProject(ctx context.Context, projSlug, repoSlug strin
 	if err != nil {
 		prov.Errors[endpointKey] = err.Error()
 		prov.PaginationComplete = false
-		if errors.Is(projCtx.Err(), context.DeadlineExceeded) {
-			// Timeout during initial fetch: truncation, not a permission
-			// denial. Do not mark the endpoint inaccessible — the analyser
-			// treats Accessible=false as "no signal", which would be wrong.
-			c.log.Warn("circleci: project extraction timed out",
-				slog.String("project", projSlug),
-				slog.Duration("timeout", maxProjectDuration),
-			)
+		if projCtx.Err() != nil {
+			// Context interrupted during initial fetch (deadline or parent
+			// cancel): truncation, not a permission denial. Do not mark the
+			// endpoint inaccessible — the analyser treats Accessible=false as
+			// "no signal", which would be wrong for a truncated fetch.
+			if errors.Is(projCtx.Err(), context.DeadlineExceeded) {
+				c.log.Warn("circleci: project extraction timed out",
+					slog.String("project", projSlug),
+					slog.Duration("timeout", maxProjectDuration),
+				)
+			}
 		} else {
 			// 404 / 401-style failures most often mean the token can't see
 			// this project; surface that distinctly in the manifest.
