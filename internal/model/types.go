@@ -228,7 +228,7 @@ type Release struct {
 type Incident struct {
 	ID             string
 	Repo           string
-	Source         string // "sentry" | "bugsnag" | "honeycomb"
+	Source         string // "sentry" | "bugsnag" | "honeycomb" | "github_issues"
 	OpenedAt       time.Time
 	ResolvedAt     *time.Time
 	Severity       string
@@ -245,7 +245,7 @@ type Defect struct {
 	ID        string
 	Repo      string
 	TicketRef string
-	Source    string // "pr_title" | "pr_body" | "commit_message"
+	Source    string // "pr_title" | "pr_body" | "commit_message" | "github_issues"
 	OpenedAt  time.Time
 	ClosedAt  *time.Time
 }

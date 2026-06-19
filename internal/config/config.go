@@ -35,6 +35,10 @@ type rawGitHub struct {
 	PRInflection    string `toml:"pr_inflection"`
 	PRBracketWindow string `toml:"pr_bracket_window"`
 	PRHistorySample string `toml:"pr_history_sample"`
+
+	IssueBugLabels        []string          `toml:"issue_bug_labels"`
+	IssueRegressionLabels []string          `toml:"issue_regression_labels"`
+	IssueSeverityLabels   map[string]string `toml:"issue_severity_labels"`
 }
 
 type rawGitHubActions struct {
@@ -168,6 +172,11 @@ func parseGitHubConn(rc *rawGitHub) (*GitHubConn, error) {
 		}
 		conn.PRHistorySample = &s
 	}
+	// Issue label-sets are plain strings/maps: echo them through verbatim.
+	// Defaults and case-folding are applied connector-side in github.New().
+	conn.IssueBugLabels = rc.IssueBugLabels
+	conn.IssueRegressionLabels = rc.IssueRegressionLabels
+	conn.IssueSeverityLabels = rc.IssueSeverityLabels
 	return conn, nil
 }
 

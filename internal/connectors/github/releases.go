@@ -56,11 +56,20 @@ func (c *Connector) emitReleasesLive(ctx context.Context, repo connector.Repo, w
 	rels, err := c.fetchAllReleases(ctx, repo.Slug, window)
 	if err != nil {
 		prov.Errors["releases"] = err.Error()
+		prov.PaginationComplete = false
+		if ctx.Err() != nil {
+			// Context cancelled or deadline exceeded mid-walk: truncation,
+			// not a permission denial. Leave the endpoint accessible — the
+			// analyser reads Accessible=false as "no signal", which is wrong
+			// for an interrupted fetch. Mirrors the circleci cancellation
+			// handling (commit 8222a84).
+			prov.Endpoints["releases"] = connector.EndpointStatus{Accessible: true}
+			return
+		}
 		prov.Endpoints["releases"] = connector.EndpointStatus{
 			Accessible: false,
 			Reason:     err.Error(),
 		}
-		prov.PaginationComplete = false
 		c.log.Warn("github: list releases",
 			slog.String("repo", repo.Slug),
 			slog.String("error", err.Error()),

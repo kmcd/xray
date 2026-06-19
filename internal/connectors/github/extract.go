@@ -30,7 +30,8 @@ import (
 //     A) clone-bound: languages, branches, codeowners, releases, commits,
 //     file_metrics, harness_artifacts. Writes to provA.
 //     B) API-bound:   PRs (prefers prefetch cache when populated by
-//     run.go's clone-phase prefetch goroutine). Writes to provB.
+//     run.go's clone-phase prefetch goroutine) then issues
+//     (incidents/defects). Writes to provB.
 //  3. Sync postlude — merge provA + provB into prov.
 //
 // The store (sink) is already mutex-guarded for concurrent inserts, so the
@@ -138,6 +139,13 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 		defer wg.Done()
 		bracketAndRecent := c.effectivePRWindow(window)
 		c.extractPRs(ctx, repo, bracketAndRecent, sink, &provB)
+
+		// Issues → incidents/defects (#184). API-bound, so it lives in
+		// goroutine B; run sequentially after extractPRs so the two emitters
+		// do not race on shared sink batch handles. Uses the full global
+		// window (not the PR-sampling window): the bug-report stream is
+		// independent of PR-fidelity sampling.
+		c.extractIssues(ctx, repo, window, sink, &provB)
 
 		if c.bracketStart != nil {
 			strategy := "search_default_relevance"

@@ -149,6 +149,57 @@ token = "ghp_x"
 	}
 }
 
+func TestLoadIssueLabels(t *testing.T) {
+	p := writeTempTOML(t, `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "ghp_x"
+issue_bug_labels = ["bug", "type:bug"]
+issue_regression_labels = ["regression", "regressed"]
+[connectors.github.issue_severity_labels]
+sev1 = "critical"
+sev2 = "high"
+`)
+	cfg, _, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	gh := cfg.Connectors.GitHub
+	if gh == nil {
+		t.Fatal("github connector is nil")
+	}
+	if len(gh.IssueBugLabels) != 2 || gh.IssueBugLabels[0] != "bug" {
+		t.Errorf("IssueBugLabels = %+v", gh.IssueBugLabels)
+	}
+	if len(gh.IssueRegressionLabels) != 2 || gh.IssueRegressionLabels[1] != "regressed" {
+		t.Errorf("IssueRegressionLabels = %+v", gh.IssueRegressionLabels)
+	}
+	if gh.IssueSeverityLabels["sev1"] != "critical" || gh.IssueSeverityLabels["sev2"] != "high" {
+		t.Errorf("IssueSeverityLabels = %+v", gh.IssueSeverityLabels)
+	}
+}
+
+func TestLoadIssueLabelsOmitted(t *testing.T) {
+	p := writeTempTOML(t, `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.github]
+token = "ghp_x"
+`)
+	cfg, _, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	gh := cfg.Connectors.GitHub
+	// Defaults are applied connector-side (github.New), not in the parser:
+	// the parsed config echoes empty fields verbatim.
+	if gh.IssueBugLabels != nil || gh.IssueRegressionLabels != nil || gh.IssueSeverityLabels != nil {
+		t.Errorf("expected nil issue-label fields when omitted, got bug=%+v reg=%+v sev=%+v",
+			gh.IssueBugLabels, gh.IssueRegressionLabels, gh.IssueSeverityLabels)
+	}
+}
+
 func TestLoadSparseHistoricalConfig(t *testing.T) {
 	p := writeTempTOML(t, `window = "2021-01-01..2026-06-15"
 [teams]

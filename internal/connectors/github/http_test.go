@@ -64,21 +64,23 @@ type memSink struct {
 	prLabels         []model.PRLabel
 	branches         []model.Branch
 	branchProtection []model.BranchProtection
+	incidents        []model.Incident
+	defects          []model.Defect
 }
 
-func (s *memSink) InsertRepo(model.Repo) error                       { return nil }
-func (s *memSink) InsertTeamRepo(string, string) error               { return nil }
-func (s *memSink) InsertRepoLanguage(model.RepoLanguage) error       { return nil }
-func (s *memSink) InsertBranch(b model.Branch) error                 { s.branches = append(s.branches, b); return nil }
+func (s *memSink) InsertRepo(model.Repo) error                 { return nil }
+func (s *memSink) InsertTeamRepo(string, string) error         { return nil }
+func (s *memSink) InsertRepoLanguage(model.RepoLanguage) error { return nil }
+func (s *memSink) InsertBranch(b model.Branch) error           { s.branches = append(s.branches, b); return nil }
 func (s *memSink) InsertBranchProtection(b model.BranchProtection) error {
 	s.branchProtection = append(s.branchProtection, b)
 	return nil
 }
-func (s *memSink) InsertCodeowner(model.Codeowner) error             { return nil }
-func (s *memSink) InsertCommit(model.Commit) error                   { return nil }
-func (s *memSink) InsertCommitFile(model.CommitFile) error           { return nil }
-func (s *memSink) InsertCommitCoauthor(model.CommitCoauthor) error   { return nil }
-func (s *memSink) InsertPR(p model.PR) error                         { s.prs = append(s.prs, p); return nil }
+func (s *memSink) InsertCodeowner(model.Codeowner) error           { return nil }
+func (s *memSink) InsertCommit(model.Commit) error                 { return nil }
+func (s *memSink) InsertCommitFile(model.CommitFile) error         { return nil }
+func (s *memSink) InsertCommitCoauthor(model.CommitCoauthor) error { return nil }
+func (s *memSink) InsertPR(p model.PR) error                       { s.prs = append(s.prs, p); return nil }
 func (s *memSink) InsertPRCommit(p model.PRCommit) error {
 	s.prCommits = append(s.prCommits, p)
 	return nil
@@ -86,13 +88,19 @@ func (s *memSink) InsertPRCommit(p model.PRCommit) error {
 func (s *memSink) InsertReview(model.Review) error                   { return nil }
 func (s *memSink) InsertPRComment(model.PRComment) error             { return nil }
 func (s *memSink) InsertPRReviewRequest(model.PRReviewRequest) error { return nil }
-func (s *memSink) InsertPRLabel(p model.PRLabel) error               { s.prLabels = append(s.prLabels, p); return nil }
-func (s *memSink) InsertBuild(model.Build) error                     { return nil }
-func (s *memSink) InsertBuildJob(model.BuildJob) error               { return nil }
-func (s *memSink) InsertDeploy(model.Deploy) error                   { return nil }
-func (s *memSink) InsertRelease(model.Release) error                 { return nil }
-func (s *memSink) InsertIncident(model.Incident) error               { return nil }
-func (s *memSink) InsertDefect(model.Defect) error                   { return nil }
+func (s *memSink) InsertPRLabel(p model.PRLabel) error {
+	s.prLabels = append(s.prLabels, p)
+	return nil
+}
+func (s *memSink) InsertBuild(model.Build) error       { return nil }
+func (s *memSink) InsertBuildJob(model.BuildJob) error { return nil }
+func (s *memSink) InsertDeploy(model.Deploy) error     { return nil }
+func (s *memSink) InsertRelease(model.Release) error   { return nil }
+func (s *memSink) InsertIncident(i model.Incident) error {
+	s.incidents = append(s.incidents, i)
+	return nil
+}
+func (s *memSink) InsertDefect(d model.Defect) error                 { s.defects = append(s.defects, d); return nil }
 func (s *memSink) InsertFileMetric(model.FileMetric) error           { return nil }
 func (s *memSink) InsertHarnessArtifact(model.HarnessArtifact) error { return nil }
 func (s *memSink) InsertFileComplexityHistory(model.FileComplexityHistory) error {

@@ -35,6 +35,13 @@ type GitHubConn struct {
 	PRInflection    *time.Time        // operator-supplied inflection date (UTC midnight); nil = no sparse mode
 	PRBracketWindow *DurationSpec     // ±N months/weeks/days full fidelity; nil = no sparse mode
 	PRHistorySample *HistorySampleSpec // nil = skip pre-bracket extraction
+
+	// Issue label-set classification for the Issues → incidents/defects
+	// stream (#184). Empty slices/map fall back to connector defaults in
+	// New(); matching is case-insensitive.
+	IssueBugLabels        []string          // bug-population labels; empty → bug,type:bug,kind/bug
+	IssueRegressionLabels []string          // regression-population labels; empty → regression
+	IssueSeverityLabels   map[string]string // label → severity verdict; empty → no severity
 }
 
 // DurationSpec is a parsed duration string of the form Nu where u ∈ {y,m,w,d}.

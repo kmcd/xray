@@ -333,6 +333,16 @@ token = "ghp_..."
 # pr_history_sample = "monthly:20" # N PRs/month before bracket; omit to skip pre-bracket
 #                                  # append ":random" for deterministic random sample
 
+# Issue capture (optional). Bug-labeled issues populate `defects`;
+# regression-labeled issues populate `incidents` with is_regression=1. Label
+# matching is case-insensitive. Defaults shown; override only to fit a repo's
+# triage conventions.
+# issue_bug_labels        = ["bug", "type:bug", "kind/bug"]
+# issue_regression_labels = ["regression"]
+# [connectors.github.issue_severity_labels]   # optional label → incidents.severity map
+# "sev1" = "critical"
+# "sev2" = "high"
+
 [connectors.github_actions]
 # inherits token from [connectors.github] by default;
 # set `token = "..."` here to override with a separate PAT.
@@ -439,6 +449,13 @@ dataset = "production"
     provenance for the parent record.
   - Provenance is written to `manifest.extraction_provenance[*].sampling`
     (structured) and `config_depth.pr_history_sample` (short summary string).
+- `github.issue_bug_labels`, `github.issue_regression_labels`, and
+  `github.issue_severity_labels` are optional. They drive the issue-capture
+  classification: bug-label set (default `["bug", "type:bug", "kind/bug"]`),
+  regression-label set (default `["regression"]`), and an optional label →
+  `incidents.severity` map (default empty). Matching is case-insensitive.
+  Set them only to fit a repo whose triage conventions differ from the
+  defaults.
 - `capture_harness_content` is optional, default `false`. When `true`,
   `harness_artifacts` rows include captured file content; when `false` or
   omitted, only metadata and git timeline are captured.
@@ -725,8 +742,10 @@ Absence is recorded in `extraction_provenance`; the analyser interprets
   `repo_languages`, `harness_artifacts` (working-tree walk + per-path git
   log; content only when `capture_harness_content = true`), `file_metrics`
   (working-tree walk at `head_sha`), and `deploys` (from releases and the
-  Deployments API). Uses git protocol for clone + the GitHub REST/GraphQL
-  APIs.
+  Deployments API). Also captures repo issues as a bug-report stream:
+  bug-labeled issues populate `defects`, regression-labeled issues populate
+  `incidents` with `is_regression=1` (see Behaviour → "GitHub issue capture").
+  Uses git protocol for clone + the GitHub REST/GraphQL APIs.
 - **github_actions** — populates `builds`, `build_jobs`, and `deploys`
   (workflows that use the Deployments API). Shares the github connector's
   token by default; same API host, no extra credential to provision.
@@ -744,7 +763,10 @@ Absence is recorded in `extraction_provenance`; the analyser interprets
   events.
 
 Ticket references parsed from PR/commit text populate `defects` and require
-no connector.
+no connector. The github connector additionally captures repo issues:
+bug-labeled issues populate `defects` (`source = github_issues`) and
+regression-labeled issues populate `incidents` (`source = github_issues`,
+`is_regression=1`).
 
 ---
 
@@ -819,6 +841,18 @@ no connector.
   row regardless of which path emitted it; a permission-gated endpoint
   unreadable inside the inline walk falls back to
   `EndpointStatus{Accessible: false}` exactly as the previous fan-out did.
+- **GitHub issue capture.** The github connector lists repo issues
+  (`Issues.ListByRepo`, `state=all`, sorted `created` ascending) within the
+  global window and classifies each by its label set. Bug-labeled issues emit
+  a `defects` row (`source = github_issues`); regression-labeled issues emit
+  an `incidents` row (`source = github_issues`, `is_regression=1`, `severity`
+  from the configured label map, `release_ref` from the issue milestone). An
+  issue carrying both label kinds emits both rows. Pull requests returned by
+  the issues endpoint are skipped, as are bot-filed issues (consistent with
+  the commit/PR `is_bot` treatment). No issue title or body text is read or
+  stored — only the issue number, timestamps, classified label verdicts, and
+  milestone title. One deterministic row per issue; re-extraction is
+  idempotent.
 - **PR-fetch / clone overlap.** Connectors may implement the optional
   `connector.Prefetcher` interface (`Prefetch(ctx, slug, window) error`),
   in which case `xray run`'s clone phase fires `Prefetch` as a goroutine

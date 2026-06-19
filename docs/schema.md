@@ -284,7 +284,7 @@ Indexed on `(repo, environment, deployed_at)`. Rollback heuristic: in chronologi
 
 ### `incidents`
 
-`PRIMARY KEY (repo, source, id)`. `source` is `sentry`, `bugsnag`, or `honeycomb`.
+`PRIMARY KEY (repo, source, id)`. `source` is `sentry`, `bugsnag`, `honeycomb`, or `github_issues`.
 
 | column            | type    | notes |
 | ----------------- | ------- | ----- |
@@ -304,20 +304,37 @@ Indexed on `(repo, environment, deployed_at)`. Rollback heuristic: in chronologi
 
 Indexed on `(repo, opened_at)`.
 
+`source = github_issues` rows come from regression-labeled GitHub issues
+(see the github connector). They carry `is_regression = 1`, `opened_at` =
+issue created, `resolved_at` = issue closed (`NULL` while open), `id` = the
+issue number, `severity` from the configured issue-label severity map (else
+`NULL`), and `release_ref` from the issue milestone title (best-effort;
+`NULL` when the issue has no milestone). `occurrences`, `deploy_id`,
+`commit_sha`, `acknowledged_at`, and `culprit_ref` are unset. `is_regression`
+here means "an issue carrying a configured regression label", not a
+source-level state — filter by `source` before treating the column as
+comparable.
+
 ### `defects`
 
-`PRIMARY KEY (repo, id)`. Populated by parsing ticket references from PR titles, PR bodies, and commit messages — no ticket-system integration in v1.
+`PRIMARY KEY (repo, id)`. Populated by parsing ticket references from PR titles, PR bodies, and commit messages, and by capturing bug-labeled GitHub issues — no commercial ticket-system integration in v1.
 
 | column       | type | notes |
 | ------------ | ---- | ----- |
 | `id`         | TEXT | `repo:source:scope_id:ref` |
 | `repo`       | TEXT | |
 | `ticket_ref` | TEXT | `PROJ-123`, `ENG-4567`, `#123`, ... |
-| `source`     | TEXT | `pr_title`, `pr_body`, or `commit_message` |
+| `source`     | TEXT | `pr_title`, `pr_body`, `commit_message`, or `github_issues` |
 | `opened_at`  | TEXT | containing PR's opened_at or commit's committed_at |
 | `closed_at`  | TEXT | containing PR's merged_at; `NULL` for commit refs |
 
 Indexed on `(repo, ticket_ref)`.
+
+`source = github_issues` rows come from bug-labeled GitHub issues. `ticket_ref`
+is the bare issue number, `id` is `repo:github_issues:<num>:<num>`, `opened_at`
+= issue created, and `closed_at` = issue closed (`NULL` while open). An issue
+carrying both a bug and a regression label produces a `defects` row here and a
+separate `incidents` row.
 
 ## Source state
 

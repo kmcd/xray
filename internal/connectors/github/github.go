@@ -106,6 +106,13 @@ type Connector struct {
 	inflection *time.Time
 	// bracketSpec is the parsed pr_bracket_window, retained for provenance.
 	bracketSpec *config.DurationSpec
+
+	// Issue-classification label sets (#184), all lowercased for
+	// case-insensitive matching. Populated in New() from config with
+	// defaults applied when the operator leaves a field empty.
+	issueBugLabels map[string]bool   // bug-population labels
+	issueRegLabels map[string]bool   // regression-population labels
+	issueSeverity  map[string]string // label → severity verdict
 }
 
 // prPrefetchResult holds the eventually-available output of a single
@@ -305,6 +312,9 @@ func New(cfg config.GitHubConn, log *slog.Logger) (*Connector, error) {
 	if cfg.PRHistorySample != nil {
 		c.sampleSpec = cfg.PRHistorySample
 	}
+	c.issueBugLabels = lowerSet(cfg.IssueBugLabels, defaultBugLabels)
+	c.issueRegLabels = lowerSet(cfg.IssueRegressionLabels, defaultRegressionLabels)
+	c.issueSeverity = lowerMap(cfg.IssueSeverityLabels)
 
 	// Wrap the outermost transport with the costInterceptor so every GraphQL
 	// response updates the connector's running point totals. The wrap goes
