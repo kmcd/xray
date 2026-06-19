@@ -567,5 +567,108 @@ func TestRun_CloneFailure_OtherReposExtract(t *testing.T) {
 	}
 }
 
+// cancelingConnector inserts a fixed number of commits and then cancels the
+// run context, simulating a SIGTERM that lands right after a connector's work
+// is on disk but before postprocess/finalize. It exercises the partial-artifact
+// path (#183): the already-extracted rows must survive into the archived
+// metrics.sqlite even though the run never completed.
+type cancelingConnector struct {
+	name    string
+	commits int
+	cancel  context.CancelFunc
+}
+
+func (c *cancelingConnector) Name() string                   { return c.name }
+func (c *cancelingConnector) Ping(ctx context.Context) error { return nil }
+func (c *cancelingConnector) Extract(ctx context.Context, repo connector.Repo, w connector.Window, sink connector.Sink) connector.Provenance {
+	prov := connector.NewProvenance(c.name, repo.Slug, w)
+	base := time.Date(2025, 3, 1, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < c.commits; i++ {
+		sha := fmt.Sprintf("%040x", i+1)
+		if err := sink.InsertCommit(model.Commit{
+			SHA:         sha,
+			Repo:        repo.Slug,
+			AuthoredAt:  base.Add(time.Duration(i) * time.Hour),
+			CommittedAt: base.Add(time.Duration(i) * time.Hour),
+		}); err != nil {
+			prov.Errors[fmt.Sprintf("commit_%d", i)] = err.Error()
+			return prov
+		}
+		prov.RowsReturned["commits"]++
+	}
+	// Simulate the signal arriving after this connector's rows are committed.
+	c.cancel()
+	return prov
+}
+
+var _ connector.Connector = (*cancelingConnector)(nil)
+
+func TestRun_PartialArtifactAfterExtract(t *testing.T) {
+	slug := "owner/fixture"
+	bare := setupFakeRemote(t)
+	installInsteadOf(t, map[string]string{slug: bare})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	conn := &cancelingConnector{name: "stub", commits: 3, cancel: cancel}
+
+	cfg := standardCfg(slug)
+	out := filepath.Join(t.TempDir(), "artifact.tar.gz")
+
+	var capturedTmpDir string
+	opts := run.Options{
+		Out:         out,
+		Workers:     1,
+		ToolVersion: "test",
+		Logger:      run.NewLogger(false, true),
+		Connectors:  []connector.Connector{conn},
+		OnTempDir:   func(p string) { capturedTmpDir = p },
+	}
+
+	result, err := run.Run(ctx, cfg, opts)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run err = %v, want context.Canceled", err)
+	}
+	if !result.Interrupted {
+		t.Errorf("Result.Interrupted = false, want true")
+	}
+	if result.ArtifactPath == "" {
+		t.Fatalf("Result.ArtifactPath empty; partial artifact not written (#183)")
+	}
+	if _, statErr := os.Stat(out); statErr != nil {
+		t.Fatalf("partial artifact missing: %v", statErr)
+	}
+
+	dir, m := extractArtifact(t, out)
+
+	// The crux of the fix: the connector's already-committed rows survive into
+	// the archived metrics.sqlite (WAL folded in before packaging).
+	db, err := sql.Open("sqlite", filepath.Join(dir, "metrics.sqlite"))
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+	var commitCount int
+	if err := db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM commits WHERE repo = ?`, slug).Scan(&commitCount); err != nil {
+		t.Fatalf("count commits: %v", err)
+	}
+	if commitCount != conn.commits {
+		t.Errorf("partial artifact commits = %d, want %d", commitCount, conn.commits)
+	}
+
+	// The manifest is marked aborted with a zero completion time.
+	if m["aborted"] != true {
+		t.Errorf("manifest aborted = %v, want true", m["aborted"])
+	}
+	if rc, _ := m["run_completed_at"].(string); rc != "0001-01-01T00:00:00Z" {
+		t.Errorf("run_completed_at = %q, want zero time on aborted run", rc)
+	}
+
+	// Temp dir cleaned after the artifact was written.
+	if _, statErr := os.Stat(capturedTmpDir); statErr == nil {
+		t.Errorf("temp dir %s not cleaned up after partial finalize", capturedTmpDir)
+	}
+}
+
 // Compile-time assertion that stubConnector implements connector.Connector.
 var _ connector.Connector = (*stubConnector)(nil)

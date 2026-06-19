@@ -4,6 +4,8 @@ Generated from `internal/model/schema.go`. The canonical row structs are in `int
 
 Every timestamp is stored as a UTC ISO-8601 (`RFC3339`) string. Booleans are stored as `INTEGER` (0/1). `NULL` means **unknown** — never *absent*. The `extraction_provenance` block in `manifest.json` records which endpoints were inaccessible so that `NULL` can be interpreted correctly.
 
+`manifest.aborted` is `true` when the run was interrupted (SIGINT/SIGTERM) before normal completion; the artifact then holds whatever was extracted up to that point. On an aborted run `run_completed_at` is the zero time, per-connector completeness is read from each `extraction_provenance[].pagination_complete`, and connectors absent from `extraction_provenance` were not attempted. The field is omitted (defaulting to `false`) on a clean run, so it is a non-breaking addition.
+
 ## Author handles (`*_handle` columns)
 
 Every `author_handle` / `committer_handle` / `reviewer_handle` / `commit_coauthors.handle` value is an **opaque token of the form `h_<15 digits>`** (regex `^h_\d{15}$`). The pre-image is one of two namespaces:

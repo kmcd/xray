@@ -69,10 +69,10 @@ func TestRunDegenerateProducesArtifact(t *testing.T) {
 	}
 }
 
-func TestRun_CancelBeforeStart_NoArtifact(t *testing.T) {
+func TestRun_CancelBeforeStart_PartialArtifact(t *testing.T) {
 	// Pre-canceled context: Run reaches the post-clone ctx.Err() gate (no
-	// repos to clone) and returns an interrupted Result with phase set,
-	// no artifact written, and the temp dir cleaned up.
+	// repos to clone) and finalises a partial artifact (issue #183) from the
+	// empty-but-valid store, marked aborted, then cleans up the temp dir.
 	cfg := &config.Config{
 		Window: config.Window{
 			Start: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -107,12 +107,27 @@ func TestRun_CancelBeforeStart_NoArtifact(t *testing.T) {
 	if result.InterruptedPhase != "clone" {
 		t.Errorf("Result.InterruptedPhase = %q, want %q", result.InterruptedPhase, "clone")
 	}
-	if result.ArtifactPath != "" {
-		t.Errorf("Result.ArtifactPath = %q, want empty", result.ArtifactPath)
+	if result.ArtifactPath == "" {
+		t.Fatalf("Result.ArtifactPath empty; interrupted run should write a partial artifact (#183)")
 	}
-	if _, statErr := os.Stat(out); statErr == nil {
-		t.Errorf("artifact %s exists; interrupted run should not produce one", out)
+	if _, statErr := os.Stat(out); statErr != nil {
+		t.Errorf("partial artifact %s missing: %v", out, statErr)
 	}
+
+	// The partial artifact must be marked aborted with a zero completion time.
+	entries := readTarGz(t, out)
+	var m map[string]any
+	if err := json.Unmarshal(entries["manifest.json"], &m); err != nil {
+		t.Fatalf("manifest parse: %v", err)
+	}
+	if m["aborted"] != true {
+		t.Errorf("manifest aborted = %v, want true", m["aborted"])
+	}
+	if rc, _ := m["run_completed_at"].(string); rc != "0001-01-01T00:00:00Z" {
+		t.Errorf("run_completed_at = %q, want zero time on aborted run", rc)
+	}
+
+	// Cleanup still runs after the artifact is written.
 	if capturedTmpDir == "" {
 		t.Errorf("OnTempDir not invoked")
 	}

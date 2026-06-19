@@ -119,6 +119,28 @@ func TestInterruptSummary_KeepClones(t *testing.T) {
 	}
 }
 
+func TestInterruptSummary_PartialArtifact(t *testing.T) {
+	out := InterruptSummary(InterruptSummaryInput{
+		Phase:        "extract",
+		TempDir:      "/tmp/xray-abc",
+		Cleaned:      true,
+		ArtifactPath: "/out/xray-export.tar.gz",
+		ExitCode:     130,
+	})
+	for _, want := range []string{
+		"Partial artifact written to /out/xray-export.tar.gz (run incomplete; manifest aborted=true).",
+		"Re-run from scratch for a complete extraction; runs are non-incremental.",
+		"Exit code: 130.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "No artifact produced") {
+		t.Errorf("partial artifact should not print the no-artifact line:\n%s", out)
+	}
+}
+
 func TestInterruptSummary_NoTempDir(t *testing.T) {
 	out := InterruptSummary(InterruptSummaryInput{
 		Phase:    "clone",

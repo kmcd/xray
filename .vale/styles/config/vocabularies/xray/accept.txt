@@ -396,3 +396,7 @@ SSH
 (?i)extraction_provenance
 CIs
 (?i)mutex
+(?i)boolean
+(?i)retryable
+(?i)checkpoint
+(?i)checkpointed

@@ -148,11 +148,12 @@ func newRunCmd() *cobra.Command {
 			switch {
 			case errors.Is(err, context.Canceled):
 				fmt.Fprint(errOut, run.InterruptSummary(run.InterruptSummaryInput{
-					Phase:    result.InterruptedPhase,
-					Inflight: result.InflightJobs,
-					TempDir:  result.TempDir,
-					Cleaned:  !opts.keepClones,
-					ExitCode: 130,
+					Phase:        result.InterruptedPhase,
+					Inflight:     result.InflightJobs,
+					TempDir:      result.TempDir,
+					Cleaned:      !opts.keepClones,
+					ArtifactPath: result.ArtifactPath,
+					ExitCode:     130,
 				}))
 				return silentCode(err, 130)
 			case errors.Is(err, run.ErrPartial):

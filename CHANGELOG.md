@@ -18,6 +18,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 - **`github`: `deploys.is_prerelease` flag from GitHub Releases.** New non-breaking column `is_prerelease INTEGER NOT NULL DEFAULT 0` on the `deploys` table. Set from `GetPrerelease()` for `source=github` deploy rows; defaults to `0` for `source=github_actions` and `source=honeycomb` where no prerelease signal is available. ([#180])
 
+### Run lifecycle
+
+- **`run`: write a partial artifact on interrupt instead of discarding extracted data.** On SIGINT/SIGTERM, `xray run` checkpoints the SQLite WAL into `metrics.sqlite`, writes a manifest with a new `aborted: true` field, and packages the partial `.tar.gz` to `--out` before removing the temp directory — a multi-hour run that previously produced nothing on a kill now yields whatever it had extracted. `run_completed_at` is the zero time on an aborted run; per-connector completeness is read from each `extraction_provenance[].pagination_complete`, and connectors absent from `extraction_provenance` were not attempted. Exit code stays 130; a second signal still force-exits and skips finalize. The fatal manifest-write and archive-write paths now preserve the temp directory for manual recovery rather than deleting valid rows. The `aborted` field is omitted on clean runs, so it is a non-breaking addition with no `schema_version` bump. ([#183])
+
 ### Schema / docs
 
 - **Canonical `deploys.status` vocabulary: `{success, failed, in_progress}`.** `rolled_back` is the existing boolean column, not a status value. DORA terminal counts: `success` counts as deployment; `in_progress` is excluded; CFR denominator is `success + failed`. ADR 0033 records the decision. ([#180])

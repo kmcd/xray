@@ -127,6 +127,10 @@ func (s *Store) SquashStats() (nSquash, nMerged int, err error) {
 }
 
 // Close releases prepared statements and the underlying database handle.
+// Closing the last connection in WAL mode checkpoints the WAL into the main
+// database file, so metrics.sqlite holds every committed row by the time the
+// archiver reads it (relied on by both the happy path and the partial-finalize
+// path in internal/run, issue #183).
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

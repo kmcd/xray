@@ -261,8 +261,8 @@ func TestEmitRunSummary_EmptyArtifactPath(t *testing.T) {
 func TestRunCmd_InterruptedReturns130(t *testing.T) {
 	// Pre-cancel the context before Run starts so it hits the post-clone
 	// ctx.Err() gate and returns context.Canceled. The cmd wrapper must
-	// surface the interrupt summary on stderr (regardless of mode), emit
-	// no artifact, and return exit code 130.
+	// surface the interrupt summary on stderr (regardless of mode), write a
+	// partial artifact (#183), and return exit code 130.
 	p := writeTOML(t, validTOML)
 	dir := t.TempDir()
 	outPath := filepath.Join(dir, "out.tar.gz")
@@ -280,12 +280,12 @@ func TestRunCmd_InterruptedReturns130(t *testing.T) {
 	if code := exitCodeFor(err); code != 130 {
 		t.Errorf("exit code = %d, want 130", code)
 	}
-	if _, statErr := os.Stat(outPath); statErr == nil {
-		t.Errorf("artifact %s exists; interrupted run should produce none", outPath)
+	if _, statErr := os.Stat(outPath); statErr != nil {
+		t.Errorf("partial artifact %s missing; interrupted run should write one (#183): %v", outPath, statErr)
 	}
 	for _, want := range []string{
 		"Interrupted at phase 'clone'",
-		"No artifact produced",
+		"Partial artifact written to",
 		"Exit code: 130",
 	} {
 		if !strings.Contains(errBuf.String(), want) {

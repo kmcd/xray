@@ -23,6 +23,14 @@ type Manifest struct {
 	RunID             string                 `json:"run_id"`
 	RunStartedAt      time.Time              `json:"run_started_at"`
 	RunCompletedAt    time.Time              `json:"run_completed_at"`
+	// Aborted is true when the run was interrupted (SIGINT/SIGTERM) before
+	// normal completion and the artifact was finalised from whatever had
+	// been extracted so far (issue #183). On an aborted run RunCompletedAt
+	// is the zero time; per-connector completeness is read from each
+	// extraction_provenance[].pagination_complete, and connectors absent
+	// from extraction_provenance were not attempted. omitempty keeps clean
+	// runs byte-identical (field absent when false).
+	Aborted           bool                   `json:"aborted,omitempty"`
 	Window            WindowJSON             `json:"window"`
 	Teams             map[string][]string    `json:"teams"`
 	Repos             []RepoMeta             `json:"repos"`

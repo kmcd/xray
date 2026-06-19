@@ -162,11 +162,12 @@ func BuildRunSummary(in SummaryInput, ok bool) RunSummary {
 // InterruptSummaryInput collects what InterruptSummary needs to render the
 // stderr message produced when ctx is canceled mid-run.
 type InterruptSummaryInput struct {
-	Phase    string        // "clone", "extract", "postprocess"
-	Inflight []InflightJob // populated only for the "extract" phase
-	TempDir  string        // absolute path; "" if no temp dir was created
-	Cleaned  bool          // true when the temp dir was removed (false with --keep-clones)
-	ExitCode int           // 130 for graceful SIGINT
+	Phase        string        // "clone", "extract", "postprocess"
+	Inflight     []InflightJob // populated only for the "extract" phase
+	TempDir      string        // absolute path; "" if no temp dir was created
+	Cleaned      bool          // true when the temp dir was removed (false with --keep-clones)
+	ArtifactPath string        // non-empty when a partial artifact was written (issue #183)
+	ExitCode     int           // 130 for graceful SIGINT
 }
 
 // InterruptSummary formats the stderr block printed on graceful Ctrl-C.
@@ -194,7 +195,12 @@ func InterruptSummary(in InterruptSummaryInput) string {
 		fmt.Fprintf(&b, "Temp directory %s preserved (--keep-clones).\n", in.TempDir)
 	}
 
-	fmt.Fprintln(&b, "No artifact produced. Re-run from scratch to retry; runs are non-incremental.")
+	if in.ArtifactPath != "" {
+		fmt.Fprintf(&b, "Partial artifact written to %s (run incomplete; manifest aborted=true).\n", in.ArtifactPath)
+		fmt.Fprintln(&b, "Re-run from scratch for a complete extraction; runs are non-incremental.")
+	} else {
+		fmt.Fprintln(&b, "No artifact produced. Re-run from scratch to retry; runs are non-incremental.")
+	}
 	fmt.Fprintf(&b, "Exit code: %d.\n", in.ExitCode)
 
 	return b.String()

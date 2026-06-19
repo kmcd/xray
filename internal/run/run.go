@@ -207,8 +207,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (Result, error) 
 				if !extractStarted {
 					phase = "clone"
 				}
-				_ = st.Close()
-				return interruptedResult(tmpDir, phase, snap), ctx.Err()
+				return finalizePartial(tmpDir, dbPath, phase, snap, opts, runID, startedAt, cfg, clones, provs, st, log), ctx.Err()
 			case jobCh <- job{repo: c.repo, conn: conn}:
 				extractStarted = true
 			}
@@ -225,40 +224,26 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (Result, error) 
 		if !extractStarted {
 			phase = "clone"
 		}
-		_ = st.Close()
-		return interruptedResult(tmpDir, phase, snap), err
+		return finalizePartial(tmpDir, dbPath, phase, snap, opts, runID, startedAt, cfg, clones, provs, st, log), err
 	}
 
 	addProv(runPostprocess(ctx, st, log, sink, win))
 
 	if err := ctx.Err(); err != nil {
-		_ = st.Close()
-		return interruptedResult(tmpDir, "postprocess", nil), err
+		return finalizePartial(tmpDir, dbPath, "postprocess", nil, opts, runID, startedAt, cfg, clones, provs, st, log), err
 	}
 
-	// 4. Build manifest.
+	// 4. Build manifest and package the artifact.
 	completedAt := time.Now().UTC()
-	m := buildManifest(opts.ToolVersion, runID, startedAt, completedAt, cfg, clones, provs, st, log)
-	manifestPath, err := writeManifestAndCloseStore(tmpDir, m, st)
+	m := buildManifest(opts.ToolVersion, runID, startedAt, completedAt, cfg, clones, provs, st, log, false)
+	absOut, ar, err := writeArtifact(tmpDir, dbPath, opts.Out, m, st, startedAt)
 	if err != nil {
-		return Result{}, err
-	}
-
-	// 5. Archive.
-	out := opts.Out
-	if out == "" {
-		out = fmt.Sprintf("./xray-export-%s.tar.gz", startedAt.Format("20060102T150405Z"))
-	}
-	absOut, err := filepath.Abs(out)
-	if err != nil {
-		return Result{}, fmt.Errorf("run: resolve out path: %w", err)
-	}
-	ar, err := archive.WriteTarGz(absOut, map[string]string{
-		dbPath:       "metrics.sqlite",
-		manifestPath: "manifest.json",
-	})
-	if err != nil {
-		return Result{}, fmt.Errorf("run: write archive: %w", err)
+		// writeArtifact has already closed the store (folding the WAL into
+		// metrics.sqlite), so the temp dir holds a usable copy of everything
+		// extracted; only manifest serialisation or packaging failed. Preserve
+		// the temp dir for manual recovery rather than discarding it (#183).
+		keep = true
+		return Result{}, fmt.Errorf("%w (temp dir %s preserved for recovery)", err, tmpDir)
 	}
 	log.Info("run: artifact",
 		slog.String("path", absOut),
@@ -307,6 +292,85 @@ func writeManifestAndCloseStore(tmpDir string, m *manifest.Manifest, st *store.S
 		return "", fmt.Errorf("run: close store: %w", err)
 	}
 	return manifestPath, nil
+}
+
+// resolveOutPath returns the absolute artifact path, applying the default
+// ./xray-export-<UTC-timestamp>.tar.gz name when out is empty.
+func resolveOutPath(out string, startedAt time.Time) (string, error) {
+	if out == "" {
+		out = fmt.Sprintf("./xray-export-%s.tar.gz", startedAt.Format("20060102T150405Z"))
+	}
+	return filepath.Abs(out)
+}
+
+// writeArtifact serialises the manifest, closes the store, and packages
+// metrics.sqlite + manifest.json into the resolved --out path. Closing the
+// store folds the WAL into metrics.sqlite before it is read, so the archived
+// db holds every committed row. Shared by the happy path and finalizePartial
+// so the artifact layout and packaging never drift between them. The store is
+// always closed (even on error) by writeManifestAndCloseStore.
+func writeArtifact(tmpDir, dbPath, out string, m *manifest.Manifest, st *store.Store, startedAt time.Time) (string, archive.Result, error) {
+	manifestPath, err := writeManifestAndCloseStore(tmpDir, m, st)
+	if err != nil {
+		return "", archive.Result{}, err
+	}
+	absOut, err := resolveOutPath(out, startedAt)
+	if err != nil {
+		return "", archive.Result{}, fmt.Errorf("run: resolve out path: %w", err)
+	}
+	ar, err := archive.WriteTarGz(absOut, map[string]string{
+		dbPath:       "metrics.sqlite",
+		manifestPath: "manifest.json",
+	})
+	if err != nil {
+		return "", archive.Result{}, fmt.Errorf("run: write archive: %w", err)
+	}
+	return absOut, ar, nil
+}
+
+// finalizePartial captures the recoverable on-disk state when ctx is canceled
+// mid-run (issue #183): it writes a manifest marked aborted and archives the
+// extracted-so-far metrics.sqlite into the configured --out — instead of the
+// old behaviour of discarding the temp dir with everything extracted. The
+// caller's deferred RemoveAll runs after this returns, so the archive is
+// written while tmpDir still exists. On any finalize error the failure is
+// logged and an artifact-less interruptedResult is returned: a clean "no
+// artifact" is preferable to a corrupt one, and the second-signal escape hatch
+// (force exit, skip cleanup) still leaves the raw temp dir behind.
+func finalizePartial(
+	tmpDir, dbPath, phase string,
+	snap []InflightJob,
+	opts Options,
+	runID string,
+	startedAt time.Time,
+	cfg *config.Config,
+	clones []cloned,
+	provs []connector.Provenance,
+	st *store.Store,
+	log *slog.Logger,
+) Result {
+	res := interruptedResult(tmpDir, phase, snap)
+
+	m := buildManifest(opts.ToolVersion, runID, startedAt, time.Time{}, cfg, clones, provs, st, log, true)
+	absOut, ar, err := writeArtifact(tmpDir, dbPath, opts.Out, m, st, startedAt)
+	if err != nil {
+		log.Error("run: partial finalize", slog.String("error", err.Error()))
+		return res
+	}
+
+	log.Info("run: partial artifact",
+		slog.String("path", absOut),
+		slog.Int64("size", ar.Size),
+		slog.String("sha256", ar.SHA256),
+		slog.String("phase", phase),
+	)
+
+	res.ArtifactPath = absOut
+	res.SHA256 = ar.SHA256
+	res.Size = ar.Size
+	res.Duration = time.Since(startedAt)
+	res.Manifest = *m
+	return res
 }
 
 // streamClones fans out one goroutine per repo to clone in parallel. Each
@@ -616,6 +680,7 @@ func buildManifest(
 	provs []connector.Provenance,
 	st *store.Store,
 	log *slog.Logger,
+	aborted bool,
 ) *manifest.Manifest {
 	nSquash, nMerged, sqErr := st.SquashStats()
 	if sqErr != nil {
@@ -631,6 +696,7 @@ func buildManifest(
 		RunID:          runID,
 		RunStartedAt:   startedAt,
 		RunCompletedAt: completedAt,
+		Aborted:        aborted,
 		Window: manifest.WindowJSON{
 			Start: cfg.Window.Start.UTC().Format("2006-01-02"),
 			End:   cfg.Window.End.UTC().Format("2006-01-02"),

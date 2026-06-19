@@ -160,7 +160,7 @@ point and is stable.
 | 1 | Config or pre-flight error; no artifact produced. |
 | 2 | Partial run; artifact produced; one or more connectors failed for one or more repos (failure is recorded in the manifest). |
 | 3 | Fatal error; artifact may or may not exist; investigate the run log. |
-| 130 | Run interrupted by `SIGINT` / `SIGTERM`; no artifact produced. See [Cancellation](#cancellation). |
+| 130 | Run interrupted by `SIGINT` / `SIGTERM`; a partial artifact is written to `--out` (manifest `aborted: true`). See [Cancellation](#cancellation). |
 
 `xray validate` and `xray check` use only exit codes 0 and 1.
 
@@ -170,29 +170,38 @@ point and is stable.
 cooperatively:
 
 - **First signal** → in-flight goroutines drain to the nearest
-  checkpoint, the per-run temp directory `/tmp/xray-<run-id>-<rand>` is
-  removed (preserved with `--keep-clones`), and a summary block is
-  printed to stderr regardless of `--output` mode:
+  checkpoint, then the run finalizes a **partial artifact** from whatever
+  was extracted: the SQLite WAL is checkpointed into `metrics.sqlite`, a
+  manifest is written with `aborted: true` and a zero `run_completed_at`,
+  and both are packaged into the `--out` `.tar.gz`. The per-run temp
+  directory `/tmp/xray-<run-id>-<rand>` is then removed (preserved with
+  `--keep-clones`). A summary block is printed to stderr regardless of
+  `--output` mode:
 
   ```
   Interrupted at phase 'extract' (kmcd/foo:github, kmcd/bar:github in flight).
   Cleaned up temp directory /tmp/xray-…-abc.
-  No artifact produced. Re-run from scratch to retry; runs are non-incremental.
+  Partial artifact written to /abs/path/xray-export-…tar.gz (run incomplete; manifest aborted=true).
+  Re-run from scratch for a complete extraction; runs are non-incremental.
   Exit code: 130.
   ```
 
   Phase is one of `clone`, `extract`, `postprocess`. The in-flight list
-  is included for the `extract` phase only.
+  is included for the `extract` phase only. A connector that did not reach
+  completion is recorded with `pagination_complete: false`, or is absent
+  from `extraction_provenance` if it never ran; the analyser reads the
+  partial artifact accordingly.
 
-- **Second signal** (at any time during graceful drain) → immediate
-  `exit(130)` skipping all cleanup. The temp directory is named in a
-  `force exit; temp dir <path> not cleaned` line on stderr so the
-  operator can remove it manually. Use this when graceful drain is
-  taking too long against a slow API.
+- **Second signal** (at any time during graceful drain or partial-artifact
+  finalize) → immediate `exit(130)` skipping all cleanup. A finalize in
+  progress is abandoned and may leave an incomplete `.tar.gz` at `--out`.
+  The temp directory is named in a `force exit; temp dir <path> not
+  cleaned` line on stderr so the operator can recover it manually. Use
+  this when graceful drain is taking too long against a slow API.
 
-No artifact is produced for either path. Runs are
-non-incremental, so resuming after Ctrl-C means re-running from
-scratch.
+The first path produces a partial, `aborted`-marked artifact; the second
+leaves the raw temp directory for manual recovery. Runs are
+non-incremental, so resuming after Ctrl-C means re-running from scratch.
 
 #### JSON event schema
 
