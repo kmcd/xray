@@ -300,6 +300,7 @@ func TestIsTransientProbeError(t *testing.T) {
 		{"http 502", strErr("Server returned 502 Bad Gateway"), true},
 		{"http 503", strErr("Server returned 503 Service Unavailable"), true},
 		{"http 504", strErr("Server returned 504 Gateway Timeout"), true},
+		{"github transient 5xx", strErr("something went wrong while executing your query on 2026-06-18T09:49:35Z"), true},
 		{"admin scope required", strErr("Resource not accessible: must have admin"), false},
 		{"saml sso", strErr("Resource protected by organization SAML enforcement"), false},
 		{"not found", strErr("Could not resolve to a Repository: NOT_FOUND"), false},

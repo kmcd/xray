@@ -301,7 +301,8 @@ func isTransientProbeError(err error) bool {
 		strings.Contains(low, "secondary rate"),
 		strings.Contains(low, "502"),
 		strings.Contains(low, "503"),
-		strings.Contains(low, "504"):
+		strings.Contains(low, "504"),
+		strings.Contains(low, "something went wrong while executing your query"):
 		return true
 	}
 	return false

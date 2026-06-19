@@ -539,10 +539,12 @@ func (c *Connector) doJSONPOSTWithEOFRetry(ctx context.Context, url string, body
 	}
 }
 
-// isTransientEOF reports whether err is a transient network failure that is
-// safe to retry with the same GraphQL cursor: body-read truncations
-// (io.ErrUnexpectedEOF, io.EOF, "unexpected EOF") and stale-connection TCP
-// resets ("connection reset by peer") that occur after long idle periods.
+// isTransientEOF reports whether err is a transient network or server failure
+// that is safe to retry with the same GraphQL cursor: body-read truncations
+// (io.ErrUnexpectedEOF, io.EOF, "unexpected EOF"), stale-connection TCP resets
+// ("connection reset by peer"), and GitHub's documented transient server-side
+// error ("something went wrong while executing your query") which arrives as an
+// application-layer error over a healthy HTTP 200 connection.
 // See isTransientProbeError in scopes.go for the analogous probe-path check.
 func isTransientEOF(err error) bool {
 	if err == nil {
@@ -553,7 +555,8 @@ func isTransientEOF(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "unexpected eof") ||
-		strings.Contains(msg, "connection reset by peer")
+		strings.Contains(msg, "connection reset by peer") ||
+		strings.Contains(msg, "something went wrong while executing your query")
 }
 
 // isStreamCancel reports whether err is an HTTP/2 stream CANCEL received from

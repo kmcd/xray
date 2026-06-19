@@ -250,6 +250,7 @@ func TestIsTransientEOF_ConnReset(t *testing.T) {
 		{"unexpected EOF string", errors.New("unexpected EOF"), true},
 		{"connection reset by peer", errors.New(`Post "https://api.github.com/graphql": read tcp 1.2.3.4:56789->140.82.113.22:443: read: connection reset by peer`), true},
 		{"Connection reset mixed case", errors.New("Connection reset by peer"), true},
+		{"github transient 5xx", errors.New("something went wrong while executing your query on 2026-06-18T09:49:35Z"), true},
 		{"other error", errors.New("server returned HTTP 500"), false},
 	}
 	for _, tc := range cases {
