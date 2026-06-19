@@ -8,6 +8,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ### Connectors
 
+- **`github`: retry GitHub's transient "Something went wrong while executing your query" server-side 5xx.** The error arrives as an application-layer failure over an HTTP 200 connection and was not caught by the existing network-layer retry predicate. Both `isTransientEOF` (all GraphQL query paths) and `isTransientProbeError` (branch-protection probe path) now recognise this pattern and treat it as retryable. ([#181])
+
+- **`circleci`: bound per-project extraction to 30 minutes.** Multi-level pagination (pipelines → workflows → jobs) on a large project with a degraded API could enter an unbounded retry-per-request loop for hours with no phase completion or error escalation. A per-project `context.WithTimeout(30m)` caps the wall-clock extraction time; the connector logs a WARN and records the truncation in provenance when it fires. ([#182])
+
 - **`github_actions`: resolve non-terminal deploy statuses via workflow run fallback.** Deployments whose latest status is `in_progress`, `queued`, `pending`, or `waiting` now trigger a `ListRepositoryWorkflowRuns` lookup (HEAD SHA, `status=completed`, one result). If a completed run is found, its conclusion is used to determine the terminal status. The endpoint is marked inaccessible after the first 403 and skipped for the remainder of the page; provenance is recorded in `prov.Endpoints["deploy_run_resolve"]`. `startup_failure` and `action_required` workflow conclusions now map to `failed` (previously fell through to `in_progress`). ([#180])
 
 - **`github`: `deploys.is_prerelease` flag from GitHub Releases.** New non-breaking column `is_prerelease INTEGER NOT NULL DEFAULT 0` on the `deploys` table. Set from `GetPrerelease()` for `source=github` deploy rows; defaults to `0` for `source=github_actions` and `source=honeycomb` where no prerelease signal is available. ([#180])

@@ -2,7 +2,9 @@ package circleci
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/kmcd/xray/internal/connector"
 )
@@ -24,20 +26,39 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 	return prov
 }
 
+// maxProjectDuration caps the wall-clock time spent extracting a single
+// CircleCI project. Multi-level pagination (pipelines → workflows → jobs) on a
+// large project with a degraded API can enter a legitimate-but-unbounded retry
+// loop; this bound limits the blast radius. Provenance records the truncation.
+const maxProjectDuration = 30 * time.Minute
+
 func (c *Connector) extractProject(ctx context.Context, projSlug, repoSlug string, window connector.Window, sink connector.Sink, prov *connector.Provenance) {
+	projCtx, cancel := context.WithTimeout(ctx, maxProjectDuration)
+	defer cancel()
+
 	endpointKey := "pipelines:" + projSlug
 
 	// CircleCI returns pipelines newest-first; use window.Start as the
 	// short-circuit point so we don't paginate forever into history.
-	pipelines, complete, err := c.listPipelines(ctx, projSlug, "", window.Start)
+	pipelines, complete, err := c.listPipelines(projCtx, projSlug, "", window.Start)
 	if err != nil {
 		prov.Errors[endpointKey] = err.Error()
 		prov.PaginationComplete = false
-		// 404 / 401-style failures most often mean the token can't see
-		// this project; surface that distinctly in the manifest.
-		prov.Endpoints[endpointKey] = connector.EndpointStatus{
-			Accessible: false,
-			Reason:     err.Error(),
+		if errors.Is(projCtx.Err(), context.DeadlineExceeded) {
+			// Timeout during initial fetch: truncation, not a permission
+			// denial. Do not mark the endpoint inaccessible — the analyser
+			// treats Accessible=false as "no signal", which would be wrong.
+			c.log.Warn("circleci: project extraction timed out",
+				slog.String("project", projSlug),
+				slog.Duration("timeout", maxProjectDuration),
+			)
+		} else {
+			// 404 / 401-style failures most often mean the token can't see
+			// this project; surface that distinctly in the manifest.
+			prov.Endpoints[endpointKey] = connector.EndpointStatus{
+				Accessible: false,
+				Reason:     err.Error(),
+			}
 		}
 		return
 	}
@@ -57,6 +78,18 @@ func (c *Connector) extractProject(ctx context.Context, projSlug, repoSlug strin
 	}()
 
 	for _, p := range pipelines {
+		if err := projCtx.Err(); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				c.log.Warn("circleci: project extraction timed out",
+					slog.String("project", projSlug),
+					slog.Duration("timeout", maxProjectDuration),
+				)
+			}
+			prov.PaginationComplete = false
+			prov.Errors["ctx:"+projSlug] = err.Error()
+			return
+		}
+
 		// Skip pipelines whose created_at falls outside the window. The
 		// pipelines call short-circuits on stopBefore; we still need an
 		// explicit Contains check to filter future-dated pipelines past
@@ -65,7 +98,7 @@ func (c *Connector) extractProject(ctx context.Context, projSlug, repoSlug strin
 			continue
 		}
 
-		workflows, wComplete, err := c.listWorkflowsForPipeline(ctx, p.ID)
+		workflows, wComplete, err := c.listWorkflowsForPipeline(projCtx, p.ID)
 		if err != nil {
 			prov.Errors["workflows:"+p.ID] = err.Error()
 			prov.PaginationComplete = false
@@ -90,7 +123,7 @@ func (c *Connector) extractProject(ctx context.Context, projSlug, repoSlug strin
 				continue
 			}
 
-			jobs, jComplete, err := c.listJobsForWorkflow(ctx, w.ID)
+			jobs, jComplete, err := c.listJobsForWorkflow(projCtx, w.ID)
 			if err != nil {
 				prov.Errors["jobs:"+w.ID] = err.Error()
 				prov.PaginationComplete = false
@@ -112,16 +145,28 @@ func (c *Connector) extractProject(ctx context.Context, projSlug, repoSlug strin
 				}
 			}
 
-			if err := ctx.Err(); err != nil {
+			if err := projCtx.Err(); err != nil {
+				if errors.Is(err, context.DeadlineExceeded) {
+					c.log.Warn("circleci: project extraction timed out",
+						slog.String("project", projSlug),
+						slog.Duration("timeout", maxProjectDuration),
+					)
+				}
 				prov.PaginationComplete = false
-				prov.Errors["ctx"] = err.Error()
+				prov.Errors["ctx:"+projSlug] = err.Error()
 				return
 			}
 		}
 
-		if err := ctx.Err(); err != nil {
+		if err := projCtx.Err(); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				c.log.Warn("circleci: project extraction timed out",
+					slog.String("project", projSlug),
+					slog.Duration("timeout", maxProjectDuration),
+				)
+			}
 			prov.PaginationComplete = false
-			prov.Errors["ctx"] = err.Error()
+			prov.Errors["ctx:"+projSlug] = err.Error()
 			return
 		}
 	}
