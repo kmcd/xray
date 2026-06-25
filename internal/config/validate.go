@@ -283,6 +283,19 @@ func validateHoneycomb(emit func(string, string), h *HoneycombConn) {
 	if h.Dataset == "" {
 		emit("connectors.honeycomb.dataset", `required when [connectors.honeycomb] is present`)
 	}
+	if h.Environment != "" {
+		valid := map[string]bool{
+			"production": true,
+			"staging":    true,
+			"preview":    true,
+			"release":    true,
+			"other":      true,
+		}
+		if !valid[h.Environment] {
+			emit("connectors.honeycomb.environment",
+				`must be one of: production, staging, preview, release, other`)
+		}
+	}
 }
 
 func validateProjectMap(emit func(string, string), path string, projects map[string]string, teamRepos map[string]bool) {

@@ -121,15 +121,42 @@ func (c *Connector) fetchMarkers(ctx context.Context) ([]marker, error) {
 	return out, nil
 }
 
+// canonicalEnvironments is the set of valid deploys.environment values.
+var canonicalEnvironments = map[string]string{
+	"production": "production",
+	"prod":       "production",
+	"staging":    "staging",
+	"stage":      "staging",
+	"preview":    "preview",
+	"release":    "release",
+	"other":      "other",
+}
+
+// resolveEnvironment returns the canonical deploys.environment value for a
+// Honeycomb marker. When cfgEnvironment is non-empty (operator-declared via
+// TOML) it is returned verbatim — config wins. Otherwise markerType is looked
+// up in the synonym map; unknown strings (including the common "deploy") map
+// to "other".
+func resolveEnvironment(cfgEnvironment, markerType string) string {
+	if cfgEnvironment != "" {
+		return cfgEnvironment
+	}
+	if canon, ok := canonicalEnvironments[markerType]; ok {
+		return canon
+	}
+	return "other"
+}
+
 // markerToDeploy maps a Honeycomb marker to a canonical model.Deploy
-// attributed to the supplied repo slug and commit SHA. Pure function: kept
-// separate from HTTP plumbing so the mapping can be unit-tested without a
-// fake server.
-func markerToDeploy(m marker, repoSlug, commitSHA string) model.Deploy {
+// attributed to the supplied repo slug and commit SHA. cfgEnvironment is the
+// operator-declared environment from TOML; when non-empty it takes precedence
+// over the marker type string. Pure function: kept separate from HTTP
+// plumbing so the mapping can be unit-tested without a fake server.
+func markerToDeploy(m marker, repoSlug, commitSHA, cfgEnvironment string) model.Deploy {
 	return model.Deploy{
 		ID:                 m.ID,
 		Repo:               repoSlug,
-		Environment:        m.Type,
+		Environment:        resolveEnvironment(cfgEnvironment, m.Type),
 		DeployedAt:         time.Unix(m.StartTime, 0).UTC(),
 		CommitSHA:          commitSHA,
 		Source:             "honeycomb",
@@ -181,7 +208,7 @@ func (c *Connector) extractDeploys(ctx context.Context, repoSlug string, window 
 			continue
 		}
 
-		d := markerToDeploy(m, repoSlug, sha)
+		d := markerToDeploy(m, repoSlug, sha, c.environment)
 		if err := sink.InsertDeploy(d); err != nil {
 			prov.Errors["deploys:"+m.ID] = err.Error()
 			continue

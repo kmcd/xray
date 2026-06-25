@@ -63,8 +63,9 @@ type rawBugsnag struct {
 }
 
 type rawHoneycomb struct {
-	Token   string `toml:"token"`
-	Dataset string `toml:"dataset"`
+	Token       string `toml:"token"`
+	Dataset     string `toml:"dataset"`
+	Environment string `toml:"environment"`
 }
 
 // Load reads a TOML config file from path and returns the populated Config
@@ -126,8 +127,9 @@ func Load(path string) (*Config, *toml.MetaData, error) {
 	}
 	if rc := raw.Connectors.Honeycomb; rc != nil {
 		cfg.Connectors.Honeycomb = &HoneycombConn{
-			Token:   rc.Token,
-			Dataset: rc.Dataset,
+			Token:       rc.Token,
+			Dataset:     rc.Dataset,
+			Environment: rc.Environment,
 		}
 	}
 

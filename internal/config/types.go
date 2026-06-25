@@ -85,8 +85,9 @@ type BugsnagConn struct {
 }
 
 type HoneycombConn struct {
-	Token   string
-	Dataset string
+	Token       string
+	Dataset     string
+	Environment string // optional; canonical enum: production|staging|preview|release|other
 }
 
 // RepoToTeam returns the team a given repo slug belongs to. Empty string if

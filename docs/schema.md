@@ -260,7 +260,7 @@ Indexed on `(repo, build_id)`.
 | ----------------------- | ------- | ----- |
 | `id`                    | TEXT    | |
 | `repo`                  | TEXT    | |
-| `environment`           | TEXT    | |
+| `environment`           | TEXT    | Canonical values: `production`, `staging`, `preview`, `release`, `other`. Honeycomb: set via `environment` config field (falls back to type-string mapping; unknown strings including `"deploy"` become `"other"`). GitHub Actions: passed through from the GitHub deployment environment field (operator-defined; expected to follow the same vocabulary by convention). |
 | `deployed_at`           | TEXT    | |
 | `commit_sha`            | TEXT    | |
 | `source`                | TEXT    | |

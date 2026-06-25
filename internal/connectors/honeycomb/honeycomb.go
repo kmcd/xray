@@ -18,13 +18,14 @@ const DefaultBaseURL = "https://api.honeycomb.io/1"
 // the GitHub commit URL embedded in each marker; markers with no URL or a
 // URL that doesn't match the current repo are skipped.
 type Connector struct {
-	httpClient *http.Client
-	log        *slog.Logger
-	token      string
-	dataset    string
-	baseURL    string
-	rl         *ratelimit.Transport
-	noCache    bool
+	httpClient  *http.Client
+	log         *slog.Logger
+	token       string
+	dataset     string
+	environment string
+	baseURL     string
+	rl          *ratelimit.Transport
+	noCache     bool
 
 	// once guards the in-process marker memo so that concurrent Extract calls
 	// for different repos share a single HTTP fetch (or disk-cache read) per
@@ -54,13 +55,14 @@ func New(cfg config.HoneycombConn, log *slog.Logger, noCache bool) (*Connector, 
 	}
 	client := &http.Client{Transport: rl}
 	return &Connector{
-		httpClient: client,
-		log:        log,
-		token:      cfg.Token,
-		dataset:    cfg.Dataset,
-		baseURL:    DefaultBaseURL,
-		rl:         rl,
-		noCache:    noCache,
+		httpClient:  client,
+		log:         log,
+		token:       cfg.Token,
+		dataset:     cfg.Dataset,
+		environment: cfg.Environment,
+		baseURL:     DefaultBaseURL,
+		rl:          rl,
+		noCache:     noCache,
 	}, nil
 }
 

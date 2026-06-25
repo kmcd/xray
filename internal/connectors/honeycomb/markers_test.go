@@ -91,7 +91,8 @@ func TestMarkerToDeploy(t *testing.T) {
 		t.Fatalf("want 2 markers, got %d", len(markers))
 	}
 
-	d := markerToDeploy(markers[0], "kmcd/foo", "")
+	// type="production", no config env → exact match in synonym map.
+	d := markerToDeploy(markers[0], "kmcd/foo", "", "")
 	if d.ID != "abc-123" {
 		t.Errorf("ID = %q, want abc-123", d.ID)
 	}
@@ -116,7 +117,7 @@ func TestMarkerToDeploy(t *testing.T) {
 
 	// SHA is propagated when provided.
 	sha := "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-	dWithSHA := markerToDeploy(markers[0], "kmcd/foo", sha)
+	dWithSHA := markerToDeploy(markers[0], "kmcd/foo", sha, "")
 	if dWithSHA.CommitSHA != sha {
 		t.Errorf("CommitSHA = %q, want %q", dWithSHA.CommitSHA, sha)
 	}
@@ -131,16 +132,57 @@ func TestMarkerToDeploy(t *testing.T) {
 		t.Errorf("DeployedAt zone = %v, want UTC", d.DeployedAt.Location())
 	}
 
-	// Marker with no type/message still maps cleanly.
-	d2 := markerToDeploy(markers[1], "kmcd/bar", "")
-	if d2.Environment != "" {
-		t.Errorf("Environment = %q, want empty", d2.Environment)
+	// Config environment overrides marker type.
+	dCfg := markerToDeploy(markers[0], "kmcd/foo", "", "staging")
+	if dCfg.Environment != "staging" {
+		t.Errorf("Environment = %q, want staging (config wins)", dCfg.Environment)
+	}
+
+	// Marker with no type/message: unknown type maps to "other".
+	d2 := markerToDeploy(markers[1], "kmcd/bar", "", "")
+	if d2.Environment != "other" {
+		t.Errorf("Environment = %q, want other", d2.Environment)
 	}
 	if d2.Version != "" {
 		t.Errorf("Version = %q, want empty", d2.Version)
 	}
 	if d2.Repo != "kmcd/bar" {
 		t.Errorf("Repo = %q, want kmcd/bar", d2.Repo)
+	}
+}
+
+func TestResolveEnvironment(t *testing.T) {
+	cases := []struct {
+		name           string
+		cfgEnvironment string
+		markerType     string
+		want           string
+	}{
+		// Config wins over any type string.
+		{"config-staging overrides deploy", "staging", "deploy", "staging"},
+		{"config-production overrides blank", "production", "", "production"},
+		// Canonical pass-through via synonym map.
+		{"canonical production", "", "production", "production"},
+		{"canonical staging", "", "staging", "staging"},
+		{"canonical preview", "", "preview", "preview"},
+		{"canonical release", "", "release", "release"},
+		{"canonical other", "", "other", "other"},
+		// Synonym normalization.
+		{"synonym prod", "", "prod", "production"},
+		{"synonym stage", "", "stage", "staging"},
+		// Unknown strings → other (the Carwow bug case and variants).
+		{"unknown deploy", "", "deploy", "other"},
+		{"blank type", "", "", "other"},
+		{"unknown foo", "", "foo", "other"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveEnvironment(tc.cfgEnvironment, tc.markerType)
+			if got != tc.want {
+				t.Errorf("resolveEnvironment(%q, %q) = %q, want %q",
+					tc.cfgEnvironment, tc.markerType, got, tc.want)
+			}
+		})
 	}
 }
 
