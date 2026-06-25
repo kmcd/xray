@@ -128,6 +128,7 @@ type PR struct {
 	ImageCount             int
 	LinkCount              int
 	IssueRefsCount         int
+	IsBotAuthored          bool
 }
 
 type PRCommit struct {

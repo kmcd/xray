@@ -140,6 +140,7 @@ CREATE TABLE IF NOT EXISTS prs (
     image_count INTEGER,
     link_count INTEGER,
     issue_refs_count INTEGER,
+    is_bot_authored INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (repo, number)
 );
 

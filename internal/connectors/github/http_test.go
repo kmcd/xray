@@ -499,6 +499,40 @@ func TestExtractPRs_ClosingIssuesReferences(t *testing.T) {
 	}
 }
 
+func TestExtractPRs_BotAuthored(t *testing.T) {
+	tests := []struct {
+		name          string
+		login         string
+		wantBotAuthor bool
+	}{
+		{name: "bot login", login: "dependabot[bot]", wantBotAuthor: true},
+		{name: "human login", login: "alice", wantBotAuthor: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(prsMux(t, []prNodeJSON{{
+				Number:    99,
+				Title:     "automated PR",
+				Body:      "body",
+				CreatedAt: "2025-03-01T00:00:00Z",
+				UpdatedAt: "2025-03-02T00:00:00Z",
+				Author:    loginNode{Login: tc.login},
+			}}, nil, nil, false))
+			defer srv.Close()
+
+			c := newTestConnector(t, srv)
+			sink, _ := runExtractPRs(t, c, "kmcd/foo", standardWindow())
+
+			if len(sink.prs) != 1 {
+				t.Fatalf("expected 1 PR row, got %d", len(sink.prs))
+			}
+			if got := sink.prs[0].IsBotAuthored; got != tc.wantBotAuthor {
+				t.Errorf("is_bot_authored = %v, want %v (login=%q)", got, tc.wantBotAuthor, tc.login)
+			}
+		})
+	}
+}
+
 func TestExtractBranches_ProtectionAccessible(t *testing.T) {
 	clone := setupCloneWithRemoteRefs(t, []string{"main"})
 

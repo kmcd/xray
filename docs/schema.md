@@ -161,6 +161,7 @@ Indexed on `(repo, path)` and `(repo, commit_sha)`.
 | `image_count`                | INTEGER | `![alt](url)` occurrences |
 | `link_count`                 | INTEGER | markdown links plus bare URLs |
 | `issue_refs_count`           | INTEGER | count of `<PREFIX>-<N>` and `#<N>` refs in title + body |
+| `is_bot_authored`            | INTEGER | `1` if the PR author login ends with `[bot]`; `0` otherwise |
 
 ### `pr_commits`
 

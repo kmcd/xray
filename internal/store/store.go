@@ -165,7 +165,7 @@ func (s *Store) prepare() error {
 		{&s.stmt.commit, `INSERT OR REPLACE INTO commits (sha, repo, author_handle, committer_handle, authored_at, committed_at, additions, deletions, files_changed, message_subject, author_is_bot, committer_is_bot, signature_verified, landed_via_pr, reverts_sha, is_revert, is_merge, has_hotfix_marker) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`},
 		{&s.stmt.commitFile, `INSERT INTO commit_files (commit_sha, repo, path, additions, deletions, change_type, prev_path) VALUES (?,?,?,?,?,?,?)`},
 		{&s.stmt.commitCoauthor, `INSERT OR REPLACE INTO commit_coauthors (commit_sha, repo, handle, source, kind) VALUES (?,?,?,?,?)`},
-		{&s.stmt.pr, `INSERT OR REPLACE INTO prs (number, repo, title, opened_at, merged_at, closed_at, author_handle, additions, deletions, files_changed, base_branch, head_sha, merge_sha, merge_method, is_draft, ready_for_review_at, first_review_at, commit_count, head_repo, force_pushed_after_review, body_length, template_match, checklist_total, checklist_checked, has_risk_marker, code_block_count, image_count, link_count, issue_refs_count) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`},
+		{&s.stmt.pr, `INSERT OR REPLACE INTO prs (number, repo, title, opened_at, merged_at, closed_at, author_handle, additions, deletions, files_changed, base_branch, head_sha, merge_sha, merge_method, is_draft, ready_for_review_at, first_review_at, commit_count, head_repo, force_pushed_after_review, body_length, template_match, checklist_total, checklist_checked, has_risk_marker, code_block_count, image_count, link_count, issue_refs_count, is_bot_authored) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`},
 		{&s.stmt.prCommit, `INSERT OR IGNORE INTO pr_commits (pr_number, repo, sha) VALUES (?,?,?)`},
 		{&s.stmt.review, `INSERT INTO reviews (pr_number, repo, reviewer_handle, submitted_at, state, body_length) VALUES (?,?,?,?,?,?)`},
 		{&s.stmt.prComment, `INSERT INTO pr_comments (pr_number, repo, author_handle, author_is_bot, created_at, kind, body_length, in_reply_to, path) VALUES (?,?,?,?,?,?,?,?,?)`},
@@ -342,7 +342,7 @@ func (s *Store) InsertPR(p model.PR) error {
 		p.CommitCount, nstr(p.HeadRepo), b2i(p.ForcePushedAfterReview),
 		p.BodyLength, nfloat(p.TemplateMatch),
 		p.ChecklistTotal, p.ChecklistChecked, b2i(p.HasRiskMarker),
-		p.CodeBlockCount, p.ImageCount, p.LinkCount, p.IssueRefsCount,
+		p.CodeBlockCount, p.ImageCount, p.LinkCount, p.IssueRefsCount, b2i(p.IsBotAuthored),
 	)
 	return err
 }

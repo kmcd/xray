@@ -782,6 +782,7 @@ func (c *Connector) emitPR(ctx context.Context, repo connector.Repo, p prGraph, 
 		ImageCount:             imageCount,
 		LinkCount:              linkCount,
 		IssueRefsCount:         issueRefs,
+		IsBotAuthored:          isBot(string(p.Author.Login)),
 	}
 	if p.MergedAt != nil {
 		t := p.MergedAt.UTC()
