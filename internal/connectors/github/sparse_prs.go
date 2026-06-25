@@ -284,6 +284,14 @@ func (c *Connector) extractSparsePRs(ctx context.Context, repo connector.Repo, s
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			defer func() {
+				if r := recover(); r != nil {
+					// Send nil so the consumer is not blocked waiting for this
+					// bucket. Appending a nil slice is a no-op. The bucket
+					// omission is visible in the final row counts.
+					resultCh <- nil
+				}
+			}()
 			resultCh <- c.fetchBucket(ctx, repo.Slug, b, spec)
 		}(b)
 	}

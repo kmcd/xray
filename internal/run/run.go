@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -108,7 +109,53 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (Result, error) 
 		}
 	}()
 
-	inflight := newInflightTracker()
+	// Declare variables that the panic-recover closure and the run body both
+	// need. All are zero-valued here; assignments happen inline below.
+	// The closure captures them by reference and reads current values at
+	// panic time — nil guards handle the case where panic fires before
+	// assignment.
+	type job struct {
+		repo connector.Repo
+		conn connector.Connector
+	}
+	var (
+		inflight *inflightTracker
+		st       *store.Store
+		clones   []cloned
+		provs    []connector.Provenance
+		provMu   sync.Mutex
+		jobCh    chan job
+		dbPath   string
+	)
+
+	// Panic recovery: registered AFTER the cleanup defer so it runs FIRST
+	// (LIFO). If the main Run goroutine panics, write a partial artifact
+	// (aborted=true) via the same finalizePartial path used by SIGINT, then
+	// exit with code 3. keep=true prevents the cleanup defer from removing
+	// tmpDir before the archive is written.
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		stack := make([]byte, 4096)
+		stack = stack[:runtime.Stack(stack, false)]
+		log.Error("run: fatal panic",
+			slog.Any("panic", r),
+			slog.String("stack", string(stack)),
+		)
+		keep = true
+		if st == nil {
+			log.Error("run: panic before store open; no artifact written")
+			os.Exit(3)
+		}
+		var snap []InflightJob
+		if inflight != nil {
+			snap = inflight.snapshot()
+		}
+		_ = finalizePartial(tmpDir, dbPath, "panic", snap, opts, runID, startedAt, cfg, clones, provs, st, log)
+		os.Exit(3)
+	}()
 
 	log.Info("run: start",
 		slog.String("run_id", runID),
@@ -120,30 +167,23 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (Result, error) 
 	win := connector.Window{Start: cfg.Window.Start, End: cfg.Window.End}
 
 	// 1. Open store before workers start so extract goroutines can write rows.
-	dbPath := filepath.Join(tmpDir, "metrics.sqlite")
-	st, err := store.Open(dbPath, opts.ToolVersion)
+	dbPath = filepath.Join(tmpDir, "metrics.sqlite")
+	st, err = store.Open(dbPath, opts.ToolVersion)
 	if err != nil {
 		return Result{}, fmt.Errorf("run: open store: %w", err)
 	}
 
-	type job struct {
-		repo connector.Repo
-		conn connector.Connector
-	}
-
-	var (
-		provMu sync.Mutex
-		provs  []connector.Provenance
-	)
 	addProv := func(p connector.Provenance) {
 		provMu.Lock()
 		provs = append(provs, p)
 		provMu.Unlock()
 	}
 
+	inflight = newInflightTracker()
+
 	// 2. Start the extract worker pool. Workers block on jobCh until jobs
 	// arrive; the channel is closed after all clones have been processed.
-	jobCh := make(chan job)
+	jobCh = make(chan job)
 	var extractWg sync.WaitGroup
 	for i := 0; i < opts.Workers; i++ {
 		extractWg.Add(1)
@@ -163,7 +203,7 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (Result, error) 
 					Kind: progress.PhaseStart, Repo: j.repo.Slug, Connector: j.conn.Name(), Phase: j.conn.Name(), At: time.Now().UTC(),
 				})
 				inflight.add(j.repo.Slug, j.conn.Name())
-				p := j.conn.Extract(ctx, j.repo, win, st)
+				p := safeExtract(ctx, j.conn, j.repo, win, st, log)
 				inflight.done(j.repo.Slug, j.conn.Name())
 				addProv(p)
 				emitExtractResult(sink, j.repo.Slug, j.conn.Name(), p)
@@ -176,7 +216,6 @@ func Run(ctx context.Context, cfg *config.Config, opts Options) (Result, error) 
 	// finish first. Prefetch goroutines (started inside cloneOneRepo) run
 	// concurrently with extract; connectors block on their done channel only
 	// when they actually need the prefetch result.
-	var clones []cloned
 	extractStarted := false
 	cloneCh := streamClones(ctx, cfg, opts, log, sink, tmpDir, git, win)
 	for c := range cloneCh {
@@ -733,6 +772,33 @@ func aggregateMailmapApplied(provs []connector.Provenance) bool {
 		}
 	}
 	return saw
+}
+
+// safeExtract calls conn.Extract under a recover() guard so that a panic
+// inside a connector does not crash the process. The recovered panic is
+// converted into a provenance error ("connector panic: <value>") with
+// PaginationComplete=false, and is logged as an error so the stack trace
+// appears in the run log. Sibling worker goroutines and the run-level state
+// are unaffected — the worker continues to drain jobCh for remaining jobs.
+func safeExtract(ctx context.Context, conn connector.Connector, repo connector.Repo, win connector.Window, st *store.Store, log *slog.Logger) (p connector.Provenance) {
+	p = connector.NewProvenance(conn.Name(), repo.Slug, win)
+	defer func() {
+		if r := recover(); r != nil {
+			stack := make([]byte, 4096)
+			stack = stack[:runtime.Stack(stack, false)]
+			log.Error("run: connector panic",
+				slog.String("repo", repo.Slug),
+				slog.String("connector", conn.Name()),
+				slog.Any("panic", r),
+				slog.String("stack", string(stack)),
+			)
+			key := fmt.Sprintf("%s.panic", conn.Name())
+			p.Errors[key] = fmt.Sprintf("connector panic: %v", r)
+			p.PaginationComplete = false
+		}
+	}()
+	p = conn.Extract(ctx, repo, win, st)
+	return p
 }
 
 // newRunID returns a sortable, opaque run identifier. We don't depend on a

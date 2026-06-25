@@ -672,3 +672,91 @@ func TestRun_PartialArtifactAfterExtract(t *testing.T) {
 
 // Compile-time assertion that stubConnector implements connector.Connector.
 var _ connector.Connector = (*stubConnector)(nil)
+
+// panicConnector inserts one row then panics with a known string. Used to
+// verify that the worker-level safeExtract recover() converts the panic into a
+// provenance error rather than crashing the process.
+type panicConnector struct {
+	name string
+}
+
+func (p *panicConnector) Name() string                   { return p.name }
+func (p *panicConnector) Ping(ctx context.Context) error { return nil }
+func (p *panicConnector) Extract(ctx context.Context, repo connector.Repo, w connector.Window, sink connector.Sink) connector.Provenance {
+	prov := connector.NewProvenance(p.name, repo.Slug, w)
+	base := time.Date(2025, 3, 1, 12, 0, 0, 0, time.UTC)
+	_ = sink.InsertCommit(model.Commit{
+		SHA:         fmt.Sprintf("%040x", 1),
+		Repo:        repo.Slug,
+		AuthoredAt:  base,
+		CommittedAt: base,
+	})
+	prov.RowsReturned["commits"]++
+	panic("intentional test panic")
+}
+
+var _ connector.Connector = (*panicConnector)(nil)
+
+func TestRun_ConnectorPanic_PartialArtifact(t *testing.T) {
+	// A panicking connector must not crash the process: the worker-level
+	// recover() in safeExtract should convert the panic into a provenance
+	// error, sibling jobs continue, and Run returns ErrPartial (not a crash).
+	slug := "owner/fixture"
+	bare := setupFakeRemote(t)
+	installInsteadOf(t, map[string]string{slug: bare})
+
+	conn := &panicConnector{name: "panicking"}
+
+	cfg := standardCfg(slug)
+	out := filepath.Join(t.TempDir(), "artifact.tar.gz")
+	opts := run.Options{
+		Out:         out,
+		Workers:     1,
+		ToolVersion: "test",
+		Logger:      run.NewLogger(false, true),
+		Connectors:  []connector.Connector{conn},
+	}
+
+	result, err := run.Run(context.Background(), cfg, opts)
+	// A panic in Extract is recorded as a provenance error, so Run returns
+	// ErrPartial (artifact present, errors recorded) — not a process crash.
+	if !errors.Is(err, run.ErrPartial) {
+		t.Fatalf("Run err = %v, want ErrPartial", err)
+	}
+	if result.ArtifactPath == "" {
+		t.Fatal("artifact path empty; panicking connector should produce partial artifact")
+	}
+	if _, statErr := os.Stat(result.ArtifactPath); statErr != nil {
+		t.Fatalf("artifact missing: %v", statErr)
+	}
+
+	_, m := extractArtifact(t, result.ArtifactPath)
+	provs, ok := m["extraction_provenance"].([]any)
+	if !ok {
+		t.Fatalf("extraction_provenance not a slice: %T", m["extraction_provenance"])
+	}
+
+	var foundPanic bool
+	for _, p := range provs {
+		pm, ok := p.(map[string]any)
+		if !ok {
+			continue
+		}
+		if pm["connector"] != conn.name {
+			continue
+		}
+		errs, _ := pm["errors"].(map[string]any)
+		key := conn.name + ".panic"
+		if v, ok := errs[key]; ok {
+			if s, ok := v.(string); ok && len(s) > 0 {
+				foundPanic = true
+			}
+		}
+		if pg, _ := pm["pagination_complete"].(bool); pg {
+			t.Errorf("pagination_complete should be false after panic, got true")
+		}
+	}
+	if !foundPanic {
+		t.Errorf("panic not recorded in provenance errors: %v", provs)
+	}
+}

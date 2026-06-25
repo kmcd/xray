@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -343,6 +344,12 @@ func (c *Connector) extractWorkingTreeParallel(ctx context.Context, repo connect
 	go func() {
 		defer producerWg.Done()
 		defer close(fileCh)
+		defer func() {
+			if r := recover(); r != nil {
+				// rootWalkErr is read after both waits; safe to write here.
+				rootWalkErr = fmt.Errorf("walk producer panic: %v", r)
+			}
+		}()
 		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -381,6 +388,14 @@ func (c *Connector) extractWorkingTreeParallel(ctx context.Context, repo connect
 		consumerWg.Add(1)
 		go func(idx int) {
 			defer consumerWg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					if workerProvs[idx].Errors["file_metrics"] == "" {
+						workerProvs[idx].Errors["file_metrics"] = fmt.Sprintf("shard panic: %v", r)
+					}
+					workerProvs[idx].PaginationComplete = false
+				}
+			}()
 			wp := &workerProvs[idx]
 			wl := workerLangs[idx]
 			prog := newProgress(logger, repo.Slug, "file_metrics")
