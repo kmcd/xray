@@ -27,6 +27,7 @@ type bugsnagError struct {
 	ReopenedAt *time.Time `json:"reopened_at"`
 	Release    *struct {
 		AppVersion string `json:"app_version"`
+		Revision   string `json:"revision"`
 	} `json:"release"`
 }
 
@@ -116,7 +117,7 @@ func toIncident(e bugsnagError, repoSlug string) model.Incident {
 		OpenedAt:    e.FirstSeen,
 		Severity:    e.Severity,
 		Occurrences: e.Events,
-		// DeployID and CommitSHA wired by M10 from ReleaseRef.
+		// DeployID has no equivalent in the Bugsnag Data Access API.
 		DeployID:  "",
 		CommitSHA: "",
 		// AcknowledgedAt has no Bugsnag native equivalent.
@@ -132,6 +133,7 @@ func toIncident(e bugsnagError, repoSlug string) model.Incident {
 	}
 	if e.Release != nil {
 		inc.ReleaseRef = e.Release.AppVersion
+		inc.CommitSHA = e.Release.Revision
 	}
 	return inc
 }

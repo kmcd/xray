@@ -15,7 +15,7 @@ func TestToIncident_FixedWithReleaseAndReopen(t *testing.T) {
 		"severity": "error",
 		"events": 42,
 		"reopened_at": "2025-02-10T09:00:00Z",
-		"release": {"app_version": "1.4.7"}
+		"release": {"app_version": "1.4.7", "revision": "deadbeef1234567890"}
 	}`
 
 	var be bugsnagError
@@ -55,10 +55,10 @@ func TestToIncident_FixedWithReleaseAndReopen(t *testing.T) {
 		t.Errorf("ReleaseRef = %q, want 1.4.7", inc.ReleaseRef)
 	}
 	if inc.DeployID != "" {
-		t.Errorf("DeployID = %q, want empty (M10 wires)", inc.DeployID)
+		t.Errorf("DeployID = %q, want empty (no deploy-tracking endpoint)", inc.DeployID)
 	}
-	if inc.CommitSHA != "" {
-		t.Errorf("CommitSHA = %q, want empty (M10 wires)", inc.CommitSHA)
+	if inc.CommitSHA != "deadbeef1234567890" {
+		t.Errorf("CommitSHA = %q, want deadbeef1234567890 from release.revision", inc.CommitSHA)
 	}
 	if inc.AcknowledgedAt != nil {
 		t.Errorf("AcknowledgedAt = %v, want nil (no native concept)", *inc.AcknowledgedAt)
