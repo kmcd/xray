@@ -133,10 +133,17 @@ func toIncident(e bugsnagError, repoSlug string) model.Incident {
 	}
 	if e.Release != nil {
 		inc.ReleaseRef = e.Release.AppVersion
-		inc.CommitSHA = e.Release.Revision
+		if gitSHARe.MatchString(e.Release.Revision) {
+			inc.CommitSHA = e.Release.Revision
+		}
 	}
 	return inc
 }
+
+// gitSHARe matches a 40-character lowercase hex git commit SHA. Used to
+// reject non-SHA revision strings (build numbers, semver tags) before
+// storing in incidents.commit_sha.
+var gitSHARe = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // linkNextRE matches the `<url>; rel="next"` form in a Link header. The
 // header may contain other rels (prev, first, last); only next drives

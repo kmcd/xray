@@ -9,9 +9,11 @@
 //     left blank rather than synthesised (spec rule: emit null where the
 //     source's native shape does not cleanly map).
 //   - AcknowledgedAt is left nil; Bugsnag has no native acknowledge concept.
-//   - CommitSHA is populated from `release.revision` when present; the field
-//     carries the git SHA of the deployed build and is included on every
-//     Bugsnag error payload that has an associated release.
+//   - CommitSHA is populated from `release.revision` when present and the
+//     value is a 40-character hex git SHA. The field is set by the Bugsnag
+//     notifier's `setRevision()` call; it is absent when the notifier is not
+//     configured to send it, and non-SHA revision strings (build numbers,
+//     semver tags) are discarded.
 //   - DeployID is left blank; the Bugsnag Data Access API has no
 //     deploy-tracking endpoint.
 //   - Window filtering is by Bugsnag's `first_seen` field: only errors whose

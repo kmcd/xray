@@ -15,7 +15,7 @@ func TestToIncident_FixedWithReleaseAndReopen(t *testing.T) {
 		"severity": "error",
 		"events": 42,
 		"reopened_at": "2025-02-10T09:00:00Z",
-		"release": {"app_version": "1.4.7", "revision": "deadbeef1234567890"}
+		"release": {"app_version": "1.4.7", "revision": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}
 	}`
 
 	var be bugsnagError
@@ -57,8 +57,8 @@ func TestToIncident_FixedWithReleaseAndReopen(t *testing.T) {
 	if inc.DeployID != "" {
 		t.Errorf("DeployID = %q, want empty (no deploy-tracking endpoint)", inc.DeployID)
 	}
-	if inc.CommitSHA != "deadbeef1234567890" {
-		t.Errorf("CommitSHA = %q, want deadbeef1234567890 from release.revision", inc.CommitSHA)
+	if inc.CommitSHA != "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" {
+		t.Errorf("CommitSHA = %q, want deadbeefdeadbeefdeadbeefdeadbeefdeadbeef from release.revision", inc.CommitSHA)
 	}
 	if inc.AcknowledgedAt != nil {
 		t.Errorf("AcknowledgedAt = %v, want nil (no native concept)", *inc.AcknowledgedAt)
@@ -105,6 +105,51 @@ func TestToIncident_OpenNoReleaseNoReopen(t *testing.T) {
 	}
 	if inc.CulpritRef != "" {
 		t.Errorf("CulpritRef = %q, want empty per spec", inc.CulpritRef)
+	}
+	if inc.CommitSHA != "" {
+		t.Errorf("CommitSHA = %q, want empty when release absent", inc.CommitSHA)
+	}
+}
+
+func TestToIncident_RevisionCases(t *testing.T) {
+	cases := []struct {
+		name       string
+		releaseJSON string
+		wantSHA    string
+	}{
+		{
+			name:        "revision absent",
+			releaseJSON: `{"app_version": "1.4.7"}`,
+			wantSHA:     "",
+		},
+		{
+			name:        "revision is build number, not sha",
+			releaseJSON: `{"app_version": "1.4.7", "revision": "1024"}`,
+			wantSHA:     "",
+		},
+		{
+			name:        "revision is semver, not sha",
+			releaseJSON: `{"app_version": "1.4.7", "revision": "v1.4.7"}`,
+			wantSHA:     "",
+		},
+		{
+			name:        "revision is valid 40-char sha",
+			releaseJSON: `{"app_version": "1.4.7", "revision": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"}`,
+			wantSHA:     "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := `{"id":"x","first_seen":"2025-01-01T00:00:00Z","last_seen":"2025-01-02T00:00:00Z","status":"open","severity":"error","events":1,"release":` + tc.releaseJSON + `}`
+			var be bugsnagError
+			if err := json.Unmarshal([]byte(raw), &be); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			inc := toIncident(be, "kmcd/foo")
+			if inc.CommitSHA != tc.wantSHA {
+				t.Errorf("CommitSHA = %q, want %q", inc.CommitSHA, tc.wantSHA)
+			}
+		})
 	}
 }
 

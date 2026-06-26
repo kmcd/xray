@@ -158,9 +158,14 @@ func linkIncidents(ctx context.Context, db *sql.DB, log *slog.Logger) (int, erro
 		`, p.repo, p.ref, p.ref).Scan(&deployID, &commitSHA)
 		switch err {
 		case nil:
+			// Always set deploy_id; only overwrite commit_sha when the
+			// connector did not already populate it (e.g. from Bugsnag
+			// release.revision), so the per-error SHA is preserved over
+			// the coarser deploy-level SHA.
 			if _, err := db.ExecContext(ctx, `
 				UPDATE incidents
-				SET deploy_id = ?, commit_sha = ?
+				SET deploy_id = ?,
+				    commit_sha = CASE WHEN (commit_sha IS NULL OR commit_sha = '') THEN ? ELSE commit_sha END
 				WHERE repo = ? AND source = ? AND id = ?
 			`, deployID.String, commitSHA.String, p.repo, p.source, p.id); err != nil {
 				return linked, fmt.Errorf("update incident %s: %w", p.id, err)
@@ -189,6 +194,7 @@ func linkIncidents(ctx context.Context, db *sql.DB, log *slog.Logger) (int, erro
 				UPDATE incidents
 				SET commit_sha = ?
 				WHERE repo = ? AND source = ? AND id = ?
+				  AND (commit_sha IS NULL OR commit_sha = '')
 			`, sha.String, p.repo, p.source, p.id); err != nil {
 				return linked, fmt.Errorf("update incident %s commit_sha: %w", p.id, err)
 			}
