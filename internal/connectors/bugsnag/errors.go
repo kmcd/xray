@@ -101,7 +101,7 @@ func (c *Connector) listErrors(
 			rows++
 		}
 
-		next = nextLink(linkHeader)
+		next = connector.NextLink(linkHeader)
 	}
 
 	return rows, true, nil
@@ -145,20 +145,3 @@ func toIncident(e bugsnagError, repoSlug string) model.Incident {
 // storing in incidents.commit_sha.
 var gitSHARe = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
-// linkNextRE matches the `<url>; rel="next"` form in a Link header. The
-// header may contain other rels (prev, first, last); only next drives
-// pagination.
-var linkNextRE = regexp.MustCompile(`<([^>]+)>\s*;\s*rel="next"`)
-
-// nextLink returns the URL of the rel="next" entry in a Link header, or
-// the empty string if absent.
-func nextLink(header string) string {
-	if header == "" {
-		return ""
-	}
-	m := linkNextRE.FindStringSubmatch(header)
-	if len(m) < 2 {
-		return ""
-	}
-	return m[1]
-}

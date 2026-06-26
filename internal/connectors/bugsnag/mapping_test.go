@@ -153,21 +153,3 @@ func TestToIncident_RevisionCases(t *testing.T) {
 	}
 }
 
-func TestNextLink(t *testing.T) {
-	cases := []struct {
-		header, want string
-	}{
-		{"", ""},
-		{`<https://api.bugsnag.com/projects/X/errors?offset=100>; rel="next"`,
-			"https://api.bugsnag.com/projects/X/errors?offset=100"},
-		{`<https://api.bugsnag.com/p?offset=0>; rel="prev", <https://api.bugsnag.com/p?offset=200>; rel="next"`,
-			"https://api.bugsnag.com/p?offset=200"},
-		{`<https://api.bugsnag.com/p?offset=0>; rel="prev"`, ""},
-	}
-	for _, tc := range cases {
-		got := nextLink(tc.header)
-		if got != tc.want {
-			t.Errorf("nextLink(%q) = %q, want %q", tc.header, got, tc.want)
-		}
-	}
-}

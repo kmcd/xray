@@ -7,9 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/kmcd/xray/internal/connector"
@@ -68,11 +66,7 @@ func (c *Connector) listIssues(ctx context.Context, sentrySlug string, window co
 		}
 		all = append(all, page...)
 
-		nextURL, hasNext := parseNextLink(link)
-		if !hasNext {
-			break
-		}
-		next = nextURL
+		next = connector.NextLink(link)
 	}
 	return all, true, nil
 }
@@ -121,83 +115,6 @@ func statsPeriod(w connector.Window) string {
 		days = 1
 	}
 	return fmt.Sprintf("%dd", days)
-}
-
-// linkRel parses a single Link header segment such as
-//
-//	<https://sentry.io/api/0/...?cursor=abc>; rel="next"; results="true"; cursor="abc"
-//
-// returning the URL, the rel value, and a results=true flag. Sentry sets
-// results="false" on the trailing next link of the final page; we treat
-// that as "no more results" to avoid an extra empty fetch.
-var linkSegmentRE = regexp.MustCompile(`<([^>]+)>;\s*(.*)`)
-
-func parseNextLink(header string) (string, bool) {
-	if header == "" {
-		return "", false
-	}
-	for _, raw := range splitLinkHeader(header) {
-		m := linkSegmentRE.FindStringSubmatch(raw)
-		if len(m) != 3 {
-			continue
-		}
-		urlStr := m[1]
-		params := m[2]
-		if !linkParamEquals(params, "rel", "next") {
-			continue
-		}
-		// Sentry-specific: results="false" means this next link is empty.
-		if linkParamEquals(params, "results", "false") {
-			return "", false
-		}
-		return urlStr, true
-	}
-	return "", false
-}
-
-// splitLinkHeader splits a Link header on commas that separate segments
-// without disturbing commas inside angle brackets. Sentry URLs do not
-// contain commas in practice, but the safer split is cheap.
-func splitLinkHeader(h string) []string {
-	var out []string
-	depth := 0
-	last := 0
-	for i, r := range h {
-		switch r {
-		case '<':
-			depth++
-		case '>':
-			if depth > 0 {
-				depth--
-			}
-		case ',':
-			if depth == 0 {
-				out = append(out, strings.TrimSpace(h[last:i]))
-				last = i + 1
-			}
-		}
-	}
-	out = append(out, strings.TrimSpace(h[last:]))
-	return out
-}
-
-func linkParamEquals(params, key, want string) bool {
-	for _, p := range strings.Split(params, ";") {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		eq := strings.IndexByte(p, '=')
-		if eq < 0 {
-			continue
-		}
-		k := strings.TrimSpace(p[:eq])
-		v := strings.Trim(strings.TrimSpace(p[eq+1:]), `"`)
-		if k == key && v == want {
-			return true
-		}
-	}
-	return false
 }
 
 // mapIssue projects a Sentry issue onto a canonical Incident row. Returns
