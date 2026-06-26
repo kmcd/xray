@@ -6,6 +6,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+## [0.4.13] — 2026-06-26
+
+v0.4.13 rounds out the incident and deploy signal: Bugsnag incidents now carry `commit_sha` from the release revision, GitHub repo issues flow into `incidents` and `defects` as a configurable bug-report stream, Honeycomb deploy environments are resolved from config rather than silently defaulting to the raw marker-type string, and the worker pool now recovers panics and writes a partial artifact on interrupt instead of discarding hours of extracted data.
+
 ### Connectors
 
 - **`bugsnag`: populate `incidents.commit_sha` from `release.revision`.** The Bugsnag Data Access API returns a `revision` field (git SHA of the deployed build) in the error payload's `release` object. xray now captures this as `incidents.commit_sha`, enabling the incident→commit→file_complexity_history join chain without a separate post-processing step. Rows where `release` is absent or `revision` is empty store NULL. No schema change; the column was already present. ([#197])
