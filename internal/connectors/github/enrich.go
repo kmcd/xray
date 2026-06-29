@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+
+	"github.com/kmcd/xray/internal/connector"
 )
 
 // enrichBatchSize is the maximum number of commits batched into a single
@@ -88,7 +90,7 @@ func (c *Connector) enrichOneBatch(ctx context.Context, owner, name string, shas
 	sb.WriteString(`") {`)
 	emitted := 0
 	for i, sha := range shas {
-		if !isFullSHA(sha) {
+		if !connector.IsFullSHA(sha) {
 			continue
 		}
 		fmt.Fprintf(&sb, ` a%d: object(oid: "%s") { ... on Commit { signature { isValid } } }`, i, sha)

@@ -137,6 +137,11 @@ func TestToIncident_RevisionCases(t *testing.T) {
 			releaseJSON: `{"app_version": "1.4.7", "revision": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"}`,
 			wantSHA:     "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
 		},
+		{
+			name:        "revision is uppercase sha, normalized to lowercase",
+			releaseJSON: `{"app_version": "1.4.7", "revision": "A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2"}`,
+			wantSHA:     "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

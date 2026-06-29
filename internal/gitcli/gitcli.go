@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/kmcd/xray/internal/connector"
 )
 
 // Client is a thin wrapper around the system git binary. If GitHubToken is
@@ -430,7 +432,7 @@ func (c *Client) HeadAndDefaultBranch(ctx context.Context, clonePath string) (st
 	// strings.Split always returns at least one element, so a leading SHA
 	// check is sufficient; len(lines) >= 1 is invariant.
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if !isHex40(lines[0]) {
+	if !connector.IsFullSHA(lines[0]) {
 		if err != nil {
 			return "", "", err
 		}
@@ -458,18 +460,6 @@ func parseOriginHEADRef(s string) string {
 		}
 	}
 	return "main"
-}
-
-func isHex40(s string) bool {
-	if len(s) != 40 {
-		return false
-	}
-	for _, r := range s {
-		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-			return false
-		}
-	}
-	return true
 }
 
 // CommitRecord is a parsed git log entry covering everything the github

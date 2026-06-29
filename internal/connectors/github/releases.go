@@ -214,8 +214,8 @@ func resolveReleaseSHA(ctx context.Context, rest *gh.Client, owner, name string,
 		}
 	}
 	target := r.GetTargetCommitish()
-	if isFullSHA(target) {
-		return strings.ToLower(target)
+	if sha, ok := connector.NormalizeFullSHA(target); ok {
+		return sha
 	}
 	if target == "" {
 		return ""
@@ -227,18 +227,3 @@ func resolveReleaseSHA(ctx context.Context, rest *gh.Client, owner, name string,
 	return strings.ToLower(sha)
 }
 
-func isFullSHA(s string) bool {
-	if len(s) != 40 {
-		return false
-	}
-	for _, r := range s {
-		switch {
-		case r >= '0' && r <= '9':
-		case r >= 'a' && r <= 'f':
-		case r >= 'A' && r <= 'F':
-		default:
-			return false
-		}
-	}
-	return true
-}

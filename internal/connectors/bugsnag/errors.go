@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
@@ -133,15 +132,11 @@ func toIncident(e bugsnagError, repoSlug string) model.Incident {
 	}
 	if e.Release != nil {
 		inc.ReleaseRef = e.Release.AppVersion
-		if gitSHARe.MatchString(e.Release.Revision) {
-			inc.CommitSHA = e.Release.Revision
+		if sha, ok := connector.NormalizeFullSHA(e.Release.Revision); ok {
+			inc.CommitSHA = sha
 		}
 	}
 	return inc
 }
 
-// gitSHARe matches a 40-character lowercase hex git commit SHA. Used to
-// reject non-SHA revision strings (build numbers, semver tags) before
-// storing in incidents.commit_sha.
-var gitSHARe = regexp.MustCompile(`^[0-9a-f]{40}$`)
 

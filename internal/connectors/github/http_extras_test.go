@@ -222,26 +222,6 @@ func TestExtractReleases_Forbidden(t *testing.T) {
 	}
 }
 
-func TestIsFullSHA(t *testing.T) {
-	cases := []struct {
-		in   string
-		want bool
-	}{
-		{"0123456789abcdef0123456789abcdef01234567", true},
-		{"0123456789ABCDEF0123456789ABCDEF01234567", true},
-		{"main", false},
-		{"", false},
-		{"0123456789abcdef0123456789abcdef0123456", false}, // 39 chars
-		{"0123456789abcdef0123456789abcdef012345678", false},
-		{"zzzz56789abcdef0123456789abcdef0123456788", false},
-	}
-	for _, c := range cases {
-		if got := isFullSHA(c.in); got != c.want {
-			t.Errorf("isFullSHA(%q) = %v, want %v", c.in, got, c.want)
-		}
-	}
-}
-
 func TestRequestedIdentity(t *testing.T) {
 	cases := []struct {
 		name string
