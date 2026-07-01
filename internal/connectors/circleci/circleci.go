@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/kmcd/xray/internal/config"
 	"github.com/kmcd/xray/internal/ratelimit"
@@ -14,12 +15,16 @@ const DefaultBaseURL = "https://circleci.com/api/v2"
 
 // Connector implements connector.Connector against CircleCI v2.
 type Connector struct {
-	httpClient *http.Client
-	log        *slog.Logger
-	token      string
-	baseURL    string
-	projects   map[string]string // circleci project slug -> repo slug
-	rl         *ratelimit.Transport
+	httpClient   *http.Client
+	log          *slog.Logger
+	token        string
+	baseURL      string
+	projects     map[string]string // circleci project slug -> repo slug
+	rl           *ratelimit.Transport
+	bracketStart *time.Time
+	bracketSpec  *config.DurationSpec
+	sampleSpec   *config.HistorySampleSpec
+	inflection   *time.Time
 }
 
 // Config is the connector's input. BaseURL is exposed only for tests.
@@ -41,14 +46,25 @@ func New(cfg config.CircleCIConn, log *slog.Logger) (*Connector, error) {
 		Log:    log,
 	}
 	client := &http.Client{Transport: rl}
-	return &Connector{
+	c := &Connector{
 		httpClient: client,
 		log:        log,
 		token:      cfg.Token,
 		baseURL:    DefaultBaseURL,
 		projects:   cfg.Projects,
 		rl:         rl,
-	}, nil
+	}
+	if cfg.BuildInflection != nil && cfg.BuildBracketWindow != nil {
+		bw := cfg.BuildBracketWindow
+		bs := cfg.BuildInflection.AddDate(-bw.Years, -bw.Months, -bw.Days)
+		c.bracketStart = &bs
+		c.inflection = cfg.BuildInflection
+		c.bracketSpec = cfg.BuildBracketWindow
+	}
+	if cfg.BuildHistorySample != nil {
+		c.sampleSpec = cfg.BuildHistorySample
+	}
+	return c, nil
 }
 
 // BudgetSnapshot returns the current rate-limit budget for this connector.

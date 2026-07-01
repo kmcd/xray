@@ -349,6 +349,10 @@ token = "ghp_..."
 
 [connectors.circleci]
 token = "..."
+# Sparse-historical build sampling — reduces workflow/job API cost for long windows.
+# build_inflection     = "2023-06-01"   # operator-supplied inflection date
+# build_bracket_window = "12m"          # full fidelity on each side of inflection; units y/m/w/d
+# build_history_sample = "monthly:50"   # N builds/month before bracket; append :random for seeded shuffle
 # map circleci project slugs to repo slugs so builds tag to the right repo/team
 [connectors.circleci.projects]
 "gh/owner/repo" = "owner/repo"
@@ -449,6 +453,22 @@ dataset = "production"
     provenance for the parent record.
   - Provenance is written to `manifest.extraction_provenance[*].sampling`
     (structured) and `config_depth.pr_history_sample` (short summary string).
+- `circleci.build_inflection`, `circleci.build_bracket_window`, `circleci.build_history_sample`
+  enable sparse-historical build sampling (issue #203) for bracketed-rollout
+  engagements. Same inflection/bracket model as the GitHub connector:
+  - `build_inflection` (required for sparse mode): operator-supplied inflection
+    date `YYYY-MM-DD`.
+  - `build_bracket_window` (required with `build_inflection`): duration string
+    `Nu` where `u ∈ {y, m, w, d}`. Full-fidelity slice = `(build_inflection - build_bracket_window)` to `window.end`.
+  - `build_history_sample` (optional): `"monthly:N"` or `"monthly:N:random"`.
+    When set, a single pipeline-list pass collects all pre-bracket pipelines
+    cheaply, then N per calendar-month bucket are selected before fetching
+    the expensive workflow and job records. Default strategy (`newest_first`)
+    keeps the most recent N in each month. Append `:random` for a deterministic
+    seeded random sample from `(repo_slug, bucket_month)`. `N` must be in [1, 100].
+    Unlike the GitHub implementation there is no search-cap/weekly-split path.
+  - Provenance is written to `manifest.extraction_provenance[*].sampling`
+    (structured) and `config_depth.build_history_sample` (short summary string).
 - `github.issue_bug_labels`, `github.issue_regression_labels`, and
   `github.issue_severity_labels` are optional. They drive the issue-capture
   classification: bug-label set (default `["bug", "type:bug", "kind/bug"]`),
@@ -571,13 +591,19 @@ keys mean the connector ran at full depth. Keys in use:
   bracket+recent slice should be read as "out of scope" not "no signal."
 - `pr_history_sample`: when set (via `pr_history_sample`), records the sampling
   strategy string (e.g. `"monthly:20"`). The per-bucket counts are in `sampling`.
+- `build_history_sample`: when set (via `build_history_sample` on the circleci
+  connector), records the sampling strategy string (e.g. `"monthly:50"`). The
+  per-bucket counts are in `sampling`.
 
-`sampling` (present only when `pr_inflection` is configured) provides per-bucket
-target/actual/total counts for the pre-bracket sparse slice. The analyser uses
-`actual / total` per bucket to compute per-month inclusion rates and propagate
-confidence intervals on metrics derived from sparse data. Pre-bracket buckets
-with `actual == total` degenerate to full-fidelity (sample frame exceeded the
-population); the analyser treats these as point estimates, not CIs.
+`sampling` (present when `pr_inflection` is configured for the github connector,
+or when `build_inflection` is configured for the circleci connector) provides
+per-bucket target/actual/total counts for the pre-bracket sparse slice.
+Strategy values: `search_default_relevance` | `random` (github); `newest_first` |
+`random` (circleci). The analyser uses `actual / total` per bucket to compute
+per-month inclusion rates and propagate confidence intervals on metrics derived
+from sparse data. Pre-bracket buckets with `actual == total` degenerate to
+full-fidelity (sample frame exceeded the population); the analyser treats these
+as point estimates, not CIs.
 
 ### `metrics.sqlite`
 
@@ -752,6 +778,9 @@ Absence is recorded in `extraction_provenance`; the analyser interprets
 - **circleci** — populates `builds` and `build_jobs`. Uses
   `[connectors.circleci.projects]` to map CircleCI project slugs
   (`gh/<owner>/<name>`) to repos, same pattern as sentry and bugsnag.
+  Supports sparse-historical build sampling via `build_inflection`,
+  `build_bracket_window`, and `build_history_sample` to reduce workflow/job
+  API cost for long pre-inflection baselines.
 - **sentry** — populates `incidents`. Uses `[connectors.sentry.projects]`
   to map sentry projects to repos. Largest install base of any error
   tracker; the connector most prospects will already have in place.

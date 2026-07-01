@@ -46,8 +46,11 @@ type rawGitHubActions struct {
 }
 
 type rawCircleCI struct {
-	Token    string            `toml:"token"`
-	Projects map[string]string `toml:"projects"`
+	Token              string            `toml:"token"`
+	Projects           map[string]string `toml:"projects"`
+	BuildInflection    string            `toml:"build_inflection"`
+	BuildBracketWindow string            `toml:"build_bracket_window"`
+	BuildHistorySample string            `toml:"build_history_sample"`
 }
 
 type rawSentry struct {
@@ -109,7 +112,11 @@ func Load(path string) (*Config, *toml.MetaData, error) {
 		cfg.Connectors.GitHubActions = &GitHubActionsConn{Token: tok}
 	}
 	if rc := raw.Connectors.CircleCI; rc != nil {
-		cfg.Connectors.CircleCI = &CircleCIConn{Token: rc.Token, Projects: rc.Projects}
+		conn, err := parseCircleCIConn(rc)
+		if err != nil {
+			return nil, nil, err
+		}
+		cfg.Connectors.CircleCI = conn
 	}
 	if rc := raw.Connectors.Sentry; rc != nil {
 		cfg.Connectors.Sentry = &SentryConn{
@@ -179,6 +186,34 @@ func parseGitHubConn(rc *rawGitHub) (*GitHubConn, error) {
 	conn.IssueBugLabels = rc.IssueBugLabels
 	conn.IssueRegressionLabels = rc.IssueRegressionLabels
 	conn.IssueSeverityLabels = rc.IssueSeverityLabels
+	return conn, nil
+}
+
+// parseCircleCIConn converts a rawCircleCI struct into a CircleCIConn, parsing
+// all optional sparse-historical sampling fields.
+func parseCircleCIConn(rc *rawCircleCI) (*CircleCIConn, error) {
+	conn := &CircleCIConn{Token: rc.Token, Projects: rc.Projects}
+	if rc.BuildInflection != "" {
+		t, err := parseInflectionDate(rc.BuildInflection)
+		if err != nil {
+			return nil, fmt.Errorf("connectors.circleci.build_inflection: %w", err)
+		}
+		conn.BuildInflection = &t
+	}
+	if rc.BuildBracketWindow != "" {
+		d, err := parseDurationSpec(rc.BuildBracketWindow)
+		if err != nil {
+			return nil, fmt.Errorf("connectors.circleci.build_bracket_window: %w", err)
+		}
+		conn.BuildBracketWindow = &d
+	}
+	if rc.BuildHistorySample != "" {
+		s, err := parseHistorySample(rc.BuildHistorySample)
+		if err != nil {
+			return nil, fmt.Errorf("connectors.circleci.build_history_sample: %w", err)
+		}
+		conn.BuildHistorySample = &s
+	}
 	return conn, nil
 }
 

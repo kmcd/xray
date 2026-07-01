@@ -68,8 +68,11 @@ type GitHubActionsConn struct {
 }
 
 type CircleCIConn struct {
-	Token    string
-	Projects map[string]string // circleci project slug -> repo slug
+	Token             string
+	Projects          map[string]string  // circleci project slug -> repo slug
+	BuildInflection    *time.Time         // nil = no sparse mode
+	BuildBracketWindow *DurationSpec      // nil = no sparse mode
+	BuildHistorySample *HistorySampleSpec // nil = skip pre-bracket sampling
 }
 
 type SentryConn struct {

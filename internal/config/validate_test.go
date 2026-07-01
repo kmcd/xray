@@ -472,6 +472,132 @@ pr_history_sample = "monthly:20:random"
 `,
 			wantOK: true,
 		},
+		// circleci sparse-historical build sampling
+		{
+			name: "circleci build sampling fully configured",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.circleci]
+token = "x"
+build_inflection = "2023-06-01"
+build_bracket_window = "12m"
+build_history_sample = "monthly:50"
+[connectors.circleci.projects]
+"gh/a/b" = "a/b"
+`,
+			wantOK: true,
+		},
+		{
+			name: "build_inflection without build_bracket_window",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.circleci]
+token = "x"
+build_inflection = "2023-06-01"
+[connectors.circleci.projects]
+"gh/a/b" = "a/b"
+`,
+			want: []string{"build_inflection requires build_bracket_window"},
+		},
+		{
+			name: "build_bracket_window without build_inflection",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.circleci]
+token = "x"
+build_bracket_window = "12m"
+[connectors.circleci.projects]
+"gh/a/b" = "a/b"
+`,
+			want: []string{"build_bracket_window requires build_inflection"},
+		},
+		{
+			name: "build_history_sample without build_inflection",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.circleci]
+token = "x"
+build_history_sample = "monthly:50"
+[connectors.circleci.projects]
+"gh/a/b" = "a/b"
+`,
+			want: []string{"build_history_sample requires build_inflection"},
+		},
+		{
+			name: "build_inflection outside global window",
+			toml: `window = "2024-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.circleci]
+token = "x"
+build_inflection = "2020-01-01"
+build_bracket_window = "6m"
+[connectors.circleci.projects]
+"gh/a/b" = "a/b"
+`,
+			want: []string{"inflection date 2020-01-01 is outside global window"},
+		},
+		{
+			name: "build_bracket_window covers entire window",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.circleci]
+token = "x"
+build_inflection = "2023-06-01"
+build_bracket_window = "36m"
+[connectors.circleci.projects]
+"gh/a/b" = "a/b"
+`,
+			want: []string{"bracket start 2020-06-01 reaches or precedes global window start 2021-01-01"},
+		},
+		{
+			name: "build_inflection malformed date",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.circleci]
+token = "x"
+build_inflection = "not-a-date"
+build_bracket_window = "12m"
+[connectors.circleci.projects]
+"gh/a/b" = "a/b"
+`,
+			wantErr: true,
+		},
+		{
+			name: "build_bracket_window malformed",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.circleci]
+token = "x"
+build_inflection = "2023-06-01"
+build_bracket_window = "notavalid"
+[connectors.circleci.projects]
+"gh/a/b" = "a/b"
+`,
+			wantErr: true,
+		},
+		{
+			name: "circleci build sampling with random suffix",
+			toml: `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.circleci]
+token = "x"
+build_inflection = "2023-06-01"
+build_bracket_window = "12m"
+build_history_sample = "monthly:50:random"
+[connectors.circleci.projects]
+"gh/a/b" = "a/b"
+`,
+			wantOK: true,
+		},
 	}
 
 	for _, tc := range cases {

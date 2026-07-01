@@ -6,6 +6,10 @@ The analyser refuses to load artifacts at an unknown `schema_version`. See the [
 
 ## [Unreleased]
 
+### Connectors
+
+- **`circleci`: sparse-historical build sampling (`build_history_sample`).** Three new optional fields under `[connectors.circleci]` enable a two-region extraction strategy for long-window engagements: `build_inflection = "YYYY-MM-DD"` sets the operator-supplied inflection date; `build_bracket_window = "Nu"` defines the full-fidelity bracket — `(build_inflection - build_bracket_window)` to `window.end` is extracted at full fidelity; `build_history_sample = "monthly:N"` (or `monthly:N:random`) enables sparse sampling of the pre-bracket period. A single pipeline-list pass collects all pre-bracket pipelines cheaply, then N per calendar-month bucket are selected before fetching the expensive workflow and job records. Default strategy (`newest_first`) keeps the most recent N per month; `:random` applies a deterministic FNV-seeded shuffle from `(repo_slug, bucket_month)` for stable re-extractions. No search-cap/weekly-split path (unlike the GitHub implementation). Provenance is written to `manifest.extraction_provenance[*].sampling` and `config_depth.build_history_sample`. No `schema_version` bump. Also raises the per-project extraction timeout from 30m to 2h as a safety net for full-fidelity runs. ([#203])
+
 ## [0.4.13] — 2026-06-26
 
 v0.4.13 rounds out the incident and deploy signal: Bugsnag incidents now carry `commit_sha` from the release revision, GitHub repo issues flow into `incidents` and `defects` as a configurable bug-report stream, Honeycomb deploy environments are resolved from config rather than silently defaulting to the raw marker-type string, and the worker pool now recovers panics and writes a partial artifact on interrupt instead of discarding hours of extracted data.

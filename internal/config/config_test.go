@@ -267,6 +267,52 @@ pr_history_sample = "monthly:20:random"
 	}
 }
 
+func TestLoadCircleCISparseConfig(t *testing.T) {
+	p := writeTempTOML(t, `window = "2021-01-01..2026-06-15"
+[teams]
+t = ["a/b"]
+[connectors.circleci]
+token = "cc_x"
+build_inflection = "2023-06-01"
+build_bracket_window = "12m"
+build_history_sample = "monthly:50"
+[connectors.circleci.projects]
+"gh/a/b" = "a/b"
+`)
+	cfg, _, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	cc := cfg.Connectors.CircleCI
+	if cc == nil {
+		t.Fatal("CircleCI connector is nil")
+	}
+	if cc.BuildInflection == nil {
+		t.Fatal("BuildInflection is nil")
+	}
+	if got := cc.BuildInflection.Format("2006-01-02"); got != "2023-06-01" {
+		t.Errorf("BuildInflection = %s, want 2023-06-01", got)
+	}
+	if cc.BuildBracketWindow == nil {
+		t.Fatal("BuildBracketWindow is nil")
+	}
+	if cc.BuildBracketWindow.Months != 12 {
+		t.Errorf("BuildBracketWindow.Months = %d, want 12", cc.BuildBracketWindow.Months)
+	}
+	if cc.BuildBracketWindow.Raw != "12m" {
+		t.Errorf("BuildBracketWindow.Raw = %q, want 12m", cc.BuildBracketWindow.Raw)
+	}
+	if cc.BuildHistorySample == nil {
+		t.Fatal("BuildHistorySample is nil")
+	}
+	if cc.BuildHistorySample.N != 50 {
+		t.Errorf("BuildHistorySample.N = %d, want 50", cc.BuildHistorySample.N)
+	}
+	if cc.BuildHistorySample.Random {
+		t.Error("BuildHistorySample.Random should be false")
+	}
+}
+
 func TestParseDurationSpec(t *testing.T) {
 	tests := []struct {
 		in      string

@@ -17,6 +17,26 @@ import (
 func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window connector.Window, sink connector.Sink) connector.Provenance {
 	prov := connector.NewProvenance(c.Name(), repo.Slug, window)
 
+	if c.bracketStart != nil && c.sampleSpec != nil {
+		if prov.ConfigDepth == nil {
+			prov.ConfigDepth = map[string]string{}
+		}
+		strategy := "newest_first"
+		if c.sampleSpec != nil {
+			prov.ConfigDepth["build_history_sample"] = c.sampleSpec.Raw
+			if c.sampleSpec.Random {
+				strategy = "random"
+			}
+		}
+		prov.Sampling = &connector.SamplingProvenance{
+			InflectionDate: c.inflection.Format("2006-01-02"),
+			BracketWindow:  c.bracketSpec.Raw,
+			BracketStart:   c.bracketStart.Format("2006-01-02"),
+			BracketEnd:     window.End.Format("2006-01-02"),
+			Strategy:       strategy,
+		}
+	}
+
 	for ps, rs := range c.projects {
 		if rs == repo.Slug {
 			c.extractProject(ctx, ps, repo.Slug, window, sink, &prov)
@@ -30,7 +50,9 @@ func (c *Connector) Extract(ctx context.Context, repo connector.Repo, window con
 // CircleCI project. Multi-level pagination (pipelines → workflows → jobs) on a
 // large project with a degraded API can enter a legitimate-but-unbounded retry
 // loop; this bound limits the blast radius. Provenance records the truncation.
-const maxProjectDuration = 30 * time.Minute
+// 2h is the safety-net default; build_history_sample (issue #203) reduces
+// volume enough that this ceiling is rarely reached on normal runs.
+const maxProjectDuration = 2 * time.Hour
 
 func (c *Connector) extractProject(ctx context.Context, projSlug, repoSlug string, window connector.Window, sink connector.Sink, prov *connector.Provenance) {
 	projCtx, cancel := context.WithTimeout(ctx, maxProjectDuration)
@@ -69,6 +91,12 @@ func (c *Connector) extractProject(ctx context.Context, projSlug, repoSlug strin
 		prov.PaginationComplete = false
 	}
 	prov.Endpoints[endpointKey] = connector.EndpointStatus{Accessible: true}
+
+	// In sparse mode: partition pipelines at bracketStart, sample N per
+	// calendar month from the pre-bracket set, and walk only the union of
+	// full-fidelity + sampled pipelines through the expensive workflow+job
+	// fetches. In non-sparse mode this is a no-op.
+	pipelines = c.selectPipelines(pipelines, repoSlug, window, prov)
 
 	// Hot-table batches flushed once at the end of this project's walk.
 	bB := openBuildsBatch(sink)

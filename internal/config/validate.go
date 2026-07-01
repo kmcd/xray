@@ -160,6 +160,8 @@ func Validate(cfg *Config, meta *toml.MetaData, file string) []Diagnostic {
 
 	if c.CircleCI != nil {
 		validateCircleCI(emit, c.CircleCI, teamRepos)
+		validateCircleCISparseConfig(emit, c.CircleCI)
+		validateCircleCISparseWindow(emit, c.CircleCI, cfg.Window)
 	}
 	if c.Sentry != nil {
 		validateSentry(emit, c.Sentry, teamRepos)
@@ -237,6 +239,49 @@ func validateCircleCI(emit func(string, string), c *CircleCIConn, teamRepos map[
 		return
 	}
 	validateProjectMap(emit, "connectors.circleci.projects", c.Projects, teamRepos)
+}
+
+// validateCircleCISparseConfig validates the sparse-historical build sampling
+// fields (build_inflection, build_bracket_window, build_history_sample).
+func validateCircleCISparseConfig(emit func(string, string), c *CircleCIConn) {
+	hasInflection := c.BuildInflection != nil
+	hasBracket := c.BuildBracketWindow != nil
+	hasSample := c.BuildHistorySample != nil
+
+	if hasInflection && !hasBracket {
+		emit("connectors.circleci.build_inflection",
+			"build_inflection requires build_bracket_window to define the full-fidelity bracket size")
+	}
+	if hasBracket && !hasInflection {
+		emit("connectors.circleci.build_bracket_window",
+			"build_bracket_window requires build_inflection to anchor the bracket")
+	}
+	if hasSample && !hasInflection {
+		emit("connectors.circleci.build_history_sample",
+			"build_history_sample requires build_inflection (and build_bracket_window) to be set")
+	}
+}
+
+// validateCircleCISparseWindow validates the sparse config against the global
+// window once we know both are set.
+func validateCircleCISparseWindow(emit func(string, string), c *CircleCIConn, globalWindow Window) {
+	if c.BuildInflection == nil || c.BuildBracketWindow == nil || globalWindow.Raw == "" {
+		return
+	}
+	infl := *c.BuildInflection
+	bw := c.BuildBracketWindow
+	bracketStart := infl.AddDate(-bw.Years, -bw.Months, -bw.Days)
+	if infl.After(globalWindow.End) || infl.Before(globalWindow.Start) {
+		emit("connectors.circleci.build_inflection",
+			fmt.Sprintf("inflection date %s is outside global window %s",
+				infl.Format("2006-01-02"), globalWindow.Raw))
+	}
+	if !bracketStart.After(globalWindow.Start) {
+		emit("connectors.circleci.build_bracket_window",
+			fmt.Sprintf("bracket start %s reaches or precedes global window start %s; "+
+				"reduce build_bracket_window or adjust build_inflection",
+				bracketStart.Format("2006-01-02"), globalWindow.Start.Format("2006-01-02")))
+	}
 }
 
 func validateSentry(emit func(string, string), s *SentryConn, teamRepos map[string]bool) {
