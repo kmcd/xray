@@ -293,3 +293,57 @@ func TestSelectPipelines_EmptyMonthRecorded(t *testing.T) {
 		t.Errorf("Dec total = %d, want 0", monthCounts["2021-12"])
 	}
 }
+
+// TestSelectPipelines_MultiProjectMerge verifies that calling selectPipelines
+// twice with the same prov (two CircleCI project slugs → same repo) merges
+// bucket counts rather than producing duplicate month entries.
+func TestSelectPipelines_MultiProjectMerge(t *testing.T) {
+	inflection := time.Date(2022, 4, 1, 0, 0, 0, 0, time.UTC)
+	bw := &config.DurationSpec{Months: 1, Raw: "1m"}
+	bracketStart := inflection.AddDate(0, -1, 0) // 2022-03-01
+	spec := &config.HistorySampleSpec{Strategy: "monthly", N: 10, Random: false, Raw: "monthly:10"}
+	c := &Connector{
+		bracketStart: &bracketStart,
+		bracketSpec:  bw,
+		inflection:   &inflection,
+		sampleSpec:   spec,
+	}
+	window := connector.Window{
+		Start: time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC),
+		End:   time.Date(2022, 4, 30, 0, 0, 0, 0, time.UTC),
+	}
+	// Project A: 2 Jan pre-bracket pipelines.
+	psA := []pipeline{
+		{ID: "a1", CreatedAt: time.Date(2022, 1, 5, 0, 0, 0, 0, time.UTC)},
+		{ID: "a2", CreatedAt: time.Date(2022, 1, 20, 0, 0, 0, 0, time.UTC)},
+		{ID: "a3", CreatedAt: time.Date(2022, 3, 5, 0, 0, 0, 0, time.UTC)}, // full fidelity
+	}
+	// Project B: 3 Jan pre-bracket pipelines.
+	psB := []pipeline{
+		{ID: "b1", CreatedAt: time.Date(2022, 1, 10, 0, 0, 0, 0, time.UTC)},
+		{ID: "b2", CreatedAt: time.Date(2022, 1, 15, 0, 0, 0, 0, time.UTC)},
+		{ID: "b3", CreatedAt: time.Date(2022, 1, 25, 0, 0, 0, 0, time.UTC)},
+	}
+	prov := connector.NewProvenance("circleci", "a/b", window)
+	prov.Sampling = &connector.SamplingProvenance{}
+
+	c.selectPipelines(psA, "a/b", window, &prov)
+	c.selectPipelines(psB, "a/b", window, &prov)
+
+	// Must have exactly one entry per month, not two "2022-01" entries.
+	seen := map[string]int{}
+	for _, b := range prov.Sampling.Buckets {
+		seen[b.Month]++
+	}
+	for month, count := range seen {
+		if count > 1 {
+			t.Errorf("month %s appears %d times in Buckets, want 1", month, count)
+		}
+	}
+	// Jan total should be 2+3=5, merged across both projects.
+	for _, b := range prov.Sampling.Buckets {
+		if b.Month == "2022-01" && b.Total != 5 {
+			t.Errorf("2022-01 Total = %d, want 5 (merged across 2 projects)", b.Total)
+		}
+	}
+}

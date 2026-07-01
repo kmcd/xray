@@ -16,7 +16,7 @@ import (
 // → jobs per run) that, against a degraded API, can enter a legitimate-but-
 // unbounded retry loop; this bound limits the blast radius. Provenance records
 // the truncation. Mirrors circleci's maxProjectDuration.
-const maxRepoDuration = 30 * time.Minute
+const maxRepoDuration = 2 * time.Hour
 
 // Extract pulls workflow runs (builds + build_jobs) and deployments
 // (deploys, source=github_actions) for the given repo within window. Errors

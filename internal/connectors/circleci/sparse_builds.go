@@ -1,7 +1,6 @@
 package circleci
 
 import (
-	"hash/fnv"
 	"math/rand"
 	"sort"
 	"time"
@@ -9,49 +8,18 @@ import (
 	"github.com/kmcd/xray/internal/connector"
 )
 
-// monthBucket holds the UTC date range for one calendar month in the
-// pre-bracket sparse slice.
-type monthBucket struct {
-	Label string    // "YYYY-MM"
-	Start time.Time // inclusive (UTC midnight)
-	End   time.Time // inclusive (last second of the period)
-}
+// monthBucket is an alias for the shared connector.MonthBucket.
+type monthBucket = connector.MonthBucket
 
-// monthBuckets generates calendar-month buckets covering slice. Bucket
-// boundaries are UTC-midnight aligned; the first and last bucket are clipped
-// to slice.Start / slice.End respectively.
+// monthBuckets returns calendar-month buckets covering slice.
+// Delegates to connector.MonthBuckets.
 func monthBuckets(slice connector.Window) []monthBucket {
-	var out []monthBucket
-	cur := time.Date(slice.Start.Year(), slice.Start.Month(), 1, 0, 0, 0, 0, time.UTC)
-	for !cur.After(slice.End) {
-		next := cur.AddDate(0, 1, 0)
-		end := next.Add(-time.Second)
-		if end.After(slice.End) {
-			end = slice.End
-		}
-		start := cur
-		if start.Before(slice.Start) {
-			start = slice.Start
-		}
-		out = append(out, monthBucket{
-			Label: cur.Format("2006-01"),
-			Start: start,
-			End:   end,
-		})
-		cur = next
-	}
-	return out
+	return connector.MonthBuckets(slice)
 }
 
-// bucketSeed returns a deterministic uint64 seed from repo slug + bucket label.
-// Each (slug, label) pair gets a distinct seed to avoid correlated bias in
-// random mode.
+// bucketSeed delegates to connector.BucketSeed.
 func bucketSeed(slug, label string) uint64 {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(slug))
-	_, _ = h.Write([]byte{0})
-	_, _ = h.Write([]byte(label))
-	return h.Sum64()
+	return connector.BucketSeed(slug, label)
 }
 
 // samplePipelines shuffles pipelines with the deterministic seed and returns
@@ -129,12 +97,26 @@ func (c *Connector) selectPipelines(pipelines []pipeline, repoSlug string, windo
 		}
 		selected = append(selected, picked...)
 		if prov.Sampling != nil {
-			prov.Sampling.Buckets = append(prov.Sampling.Buckets, connector.SampleBucket{
-				Month:  b.Label,
-				Target: c.sampleSpec.N,
-				Actual: len(picked),
-				Total:  total,
-			})
+			// Merge into an existing bucket for this month if present (two
+			// CircleCI project slugs can map to the same repo slug; each call
+			// contributes independent pipelines to the same per-repo tally).
+			merged := false
+			for i := range prov.Sampling.Buckets {
+				if prov.Sampling.Buckets[i].Month == b.Label {
+					prov.Sampling.Buckets[i].Total += total
+					prov.Sampling.Buckets[i].Actual += len(picked)
+					merged = true
+					break
+				}
+			}
+			if !merged {
+				prov.Sampling.Buckets = append(prov.Sampling.Buckets, connector.SampleBucket{
+					Month:  b.Label,
+					Target: c.sampleSpec.N,
+					Actual: len(picked),
+					Total:  total,
+				})
+			}
 		}
 	}
 	return selected

@@ -3,7 +3,6 @@ package github
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
 	"log/slog"
 	"math/rand"
 	"sort"
@@ -31,13 +30,9 @@ type prSearchQuery struct {
 	} `graphql:"search(query: $query, type: ISSUE, first: $first, after: $after)"`
 }
 
-// monthBucket holds the UTC date range for one calendar-month (or weekly
-// sub-bucket) in the pre-bracket sparse slice.
-type monthBucket struct {
-	Label string    // "YYYY-MM" or "YYYY-MM-W1" for weekly sub-buckets
-	Start time.Time // inclusive (UTC midnight)
-	End   time.Time // inclusive (last second of the period)
-}
+// monthBucket is an alias for the shared connector.MonthBucket, used locally
+// within sparse_prs to avoid verbose package prefixes throughout this file.
+type monthBucket = connector.MonthBucket
 
 // bucketResult is the output of one bucket fetch goroutine.
 type bucketResult struct {
@@ -46,31 +41,11 @@ type bucketResult struct {
 	err   error
 }
 
-// monthBuckets generates calendar-month buckets covering slice. Bucket
-// boundaries are UTC-midnight aligned; the first and last bucket are clipped
-// to slice.Start / slice.End respectively.
+// monthBuckets returns calendar-month buckets covering slice.
+// Delegates to connector.MonthBuckets; defined as a local alias so callers
+// within this file don't need the package prefix.
 func monthBuckets(slice connector.Window) []monthBucket {
-	var out []monthBucket
-	// Advance to the first day of the month containing slice.Start.
-	cur := time.Date(slice.Start.Year(), slice.Start.Month(), 1, 0, 0, 0, 0, time.UTC)
-	for !cur.After(slice.End) {
-		next := cur.AddDate(0, 1, 0)
-		end := next.Add(-time.Second) // last second of the month
-		if end.After(slice.End) {
-			end = slice.End
-		}
-		start := cur
-		if start.Before(slice.Start) {
-			start = slice.Start
-		}
-		out = append(out, monthBucket{
-			Label: cur.Format("2006-01"),
-			Start: start,
-			End:   end,
-		})
-		cur = next
-	}
-	return out
+	return connector.MonthBuckets(slice)
 }
 
 // weeklyBucketsFor splits one month bucket into 7-day sub-buckets. Used when
@@ -96,15 +71,9 @@ func weeklyBucketsFor(m monthBucket) []monthBucket {
 	return out
 }
 
-// bucketSeed returns a deterministic uint64 seed from repo slug + bucket label.
-// Same (slug, label) always produces the same seed; different repos and
-// buckets get distinct seeds to avoid correlated bias in random mode.
+// bucketSeed delegates to connector.BucketSeed.
 func bucketSeed(slug, label string) uint64 {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(slug))
-	_, _ = h.Write([]byte{0}) // separator
-	_, _ = h.Write([]byte(label))
-	return h.Sum64()
+	return connector.BucketSeed(slug, label)
 }
 
 // randomPickN shuffles nodes with the deterministic seed and returns the
